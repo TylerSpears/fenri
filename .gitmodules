@@ -1,9 +1,0 @@
-[submodule "docs/sources/Pytorch-UNet"]
-	path = docs/sources/Pytorch-UNet
-	url = git@github.com:milesial/Pytorch-UNet.git
-[submodule "docs/sources/FROC"]
-	path = docs/sources/FROC
-	url = git@github.com:fpgdubost/FROC.git
-[submodule "docs/sources/Unet-Segmentation-Pytorch-Nest-of-Unets"]
-	path = docs/sources/Unet-Segmentation-Pytorch-Nest-of-Unets
-	url = git@github.com:bigmb/Unet-Segmentation-Pytorch-Nest-of-Unets.git
