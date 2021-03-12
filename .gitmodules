@@ -1,0 +1,9 @@
+[submodule "sources/iqt"]
+	path = sources/iqt
+	url = git@github.com:ucl-mig/iqt.git
+[submodule "sources/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images"]
+	path = sources/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images
+	url = git@github.com:sbb-gh/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images.git
+[submodule "docker/opengl"]
+	path = docker/opengl
+	url = https://gitlab.com/nvidia/container-images/opengl.git

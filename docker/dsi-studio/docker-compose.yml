@@ -1,0 +1,25 @@
+
+services:
+    qt5-base:
+        container_name: _dsi-qt5-base
+        image: "theshadowx/qt5:default_qt5_bionic@sha256:212060a7ce061529e79153199ca269b633f72f2e71ea9715fc9812e56021017b"
+    nvidia-base:
+        container_name: _dsi-nvidia-base
+        build:
+            context: ../opengl/base
+            cache_from:
+                - _dsi-qt5-base
+            args:
+                from: "_dsi-qt5-base"
+        profiles:
+            - "nvidia"
+        depends_on:
+            - qt5-base
+    app:
+        build:
+            context: ./
+            dockerfile: Dockerfile
+            args:
+                BASE: "_dsi-nvidia-base"
+        depends_on:
+            - nvidia-base
