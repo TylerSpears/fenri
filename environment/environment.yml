@@ -1,0 +1,22 @@
+name: pitn
+channels:
+  - pytorch
+  - defaults
+  - conda-forge
+dependencies:
+  - pip
+  - torchvision
+  - scipy
+  - numpy
+  - python=3.8
+  - cudatoolkit
+  - scikit-learn
+  - ipython
+  - matplotlib
+  - pandas
+  - scikit-image
+  - pytorch
+  - nb_conda_kernels
+  - prefect
+  - pretty_errors
+prefix: /opt/miniconda/envs/pitn
