@@ -810,4 +810,6 @@ lightning_logs/
 *.npy
 
 # ignore results files and directories
-results/
+results/*
+!results/README*
+
