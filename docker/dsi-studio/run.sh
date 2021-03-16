@@ -18,4 +18,4 @@ x11docker \
     --env NVIDIA_VISIBLE_DEVICES="all" \
     --env NVIDIA_DRIVER_CAPABILITIES="graphics,utility,compute" \
     -- \
-    mysi:latest
+    dsi-studio:latest dsi_studio

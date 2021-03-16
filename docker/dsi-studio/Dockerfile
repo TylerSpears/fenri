@@ -23,7 +23,7 @@ FROM ${BASE}
 
 # Prepare environment
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
         curl \
         ca-certificates \
         xvfb \
@@ -92,8 +92,9 @@ RUN mkdir /opt/dsi-studio \
     && rm -rf imageformats \
     && rm -rf platforms \
     && rm -rf styles \
-    && mv ../build/dsi_studio . \
-    && rm -rf /opt/dsi-studio/src /opt/dsi-studio/build
+    # && mv ../build/dsi_studio . \
+    && rm -rf /opt/dsi-studio/src
+    #/opt/dsi-studio/build
 
 ENV PATH="$PATH:/opt/dsi-studio/dsi_studio_64"
 
