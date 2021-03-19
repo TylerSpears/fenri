@@ -1,31 +1,35 @@
-#
-# Taken from
-# <medium.com/@benjamin.botto/opengl-and-cuda-applications-in-docker-af0eece000f1>
-
-ARG BASE
-FROM ${BASE}
-
-# Dependencies for glvnd and X11.
-# RUN apt-get update \
-#   && apt-get install -y -qq --no-install-recommends \
-#     libglvnd0 \
-#     libgl1 \
-#     libglx0 \
-#     libegl1 \
-#     libxext6 \
-#     libx11-6 \
-#   && rm -rf /var/lib/apt/lists/*
-# # Env vars for the nvidia-container-runtime.
-
-
+# Dockerfile to build DSI-Studio with and without nvidia GPU support.
 # Taken from
 # <https://raw.githubusercontent.com/frankyeh/DSI-Studio/master/Dockerfile>
 
-# Prepare environment
-RUN apt-get update && \
+ARG BASE
+ARG _USER=${USER}
+FROM ${BASE}
+
+# Install dependencies
+USER root
+# Install Qt5
+# Pull local timezone info using curl. From:
+# <https://github.com/CEA-LIST/Cingulata/blob/157b4c66441e4e253e06a0abe1508976605100d8/Dockerfile.bfv#L12>
+RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
         curl \
-        ca-certificates \
+        ca-certificates && \
+    ln -snf /usr/share/zoneinfo/$(curl https://ipapi.co/timezone) /etc/localtime && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        qt5-default \
+        libqt5opengl5-dev \
+        libqt5core5a \
+        libqt5charts5-dev \
+        libglvnd0 \
+        libgl1 \
+        libglx0 \
+        libegl1 \
+        libxext6 \
+        libx11-6 \
+        # libqt5location5 \
+        # libqt5multimedia5 \
+        # qtbase5-private-dev && \
         xvfb \
         build-essential \
         autoconf \
@@ -33,8 +37,10 @@ RUN apt-get update && \
         pkg-config \
         libfontconfig1 \
         libfreetype6 \
+        ## already installed?
         libgl1-mesa-dev \
         libglu1-mesa-dev \
+        ##
         libgomp1 \
         libice6 \
         libxcursor1 \
@@ -48,8 +54,10 @@ RUN apt-get update && \
         zlib1g \
         zlib1g-dev \
         unzip \
+        ## already installed?
         libgl1-mesa-dev \
         libglu1-mesa-dev \
+        ##
         freeglut3-dev \
         mesa-utils \
         g++ \
@@ -81,10 +89,13 @@ RUN mkdir /opt/dsi-studio \
     && git clone https://github.com/frankyeh/TIPL.git \
     && mv TIPL src/tipl \
     && mkdir build && cd build \
+    && qmake "CONFIG += warn_off" ../src
+RUN cd /opt/dsi-studio/build && make \
+    && make clean \
     && cd /opt/dsi-studio \
-    && curl -sSL 'https://pitt.box.com/shared/static/n3ln8k7bakr7y5p0ekm3g4s0ucdmqkia.zip' --output "dsi-studio.zip"\
-    && unzip dsi-studio.zip \
-    && rm dsi-studio.zip \
+    && curl -sSL 'https://pitt.box.com/shared/static/n3ln8k7bakr7y5p0ekm3g4s0ucdmqkia.zip' --output "dsi-studio_windows_extra_files.zip" \
+    && unzip dsi-studio_windows_extra_files.zip \
+    && rm dsi-studio_windows_extra_files.zip \
     && cd dsi_studio_64 \
     && rm *.dll \
     && rm *.exe \
@@ -92,10 +103,10 @@ RUN mkdir /opt/dsi-studio \
     && rm -rf imageformats \
     && rm -rf platforms \
     && rm -rf styles \
-    # && mv ../build/dsi_studio . \
-    && rm -rf /opt/dsi-studio/src
-    #/opt/dsi-studio/build
+    && mv ../build/dsi_studio . \
+    && rm -rf /opt/dsi-studio/src /opt/dsi-studio/build
 
-ENV PATH="$PATH:/opt/dsi-studio/dsi_studio_64"
+# ENV PATH="$PATH:/opt/dsi-studio/dsi_studio_64"
 
-ENTRYPOINT ["dsi_studio"]
+# ENTRYPOINT ["dsi_studio"]
+USER ${_USER}

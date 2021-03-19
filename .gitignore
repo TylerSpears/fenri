@@ -100,8 +100,9 @@ CMakeUserPresets.json
 
 ### Code ###
 .vscode/*
-!.vscode/tasks.json
-!.vscode/launch.json
+.vscode
+#!.vscode/tasks.json
+#!.vscode/launch.json
 *.code-workspace
 
 ### CUDA ###
