@@ -3,7 +3,6 @@
 # <https://raw.githubusercontent.com/frankyeh/DSI-Studio/master/Dockerfile>
 
 ARG BASE
-ARG _USER=${USER}
 FROM ${BASE}
 
 # Install dependencies
@@ -60,8 +59,8 @@ RUN apt-get update -y && \
         ##
         freeglut3-dev \
         mesa-utils \
-        g++ \
-        gcc \
+        g++-7 \
+        gcc-7 \
         make \
         zlib1g-dev \
         git \
@@ -80,6 +79,10 @@ RUN apt-get update -y && \
 #     qt512wayland qt512x11extras qt512xmlpatterns qt512charts-no-lgpl \
 #     && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
+ENV CC="gcc-7" \
+    CXX="g++-7"
+ENV QMAKE_CC=${CC} \
+    QMAKE_CXX=${CXX}
 
 # Install DSI Studio
 RUN mkdir /opt/dsi-studio \
@@ -89,8 +92,8 @@ RUN mkdir /opt/dsi-studio \
     && git clone https://github.com/frankyeh/TIPL.git \
     && mv TIPL src/tipl \
     && mkdir build && cd build \
-    && qmake "CONFIG += warn_off" ../src
-RUN cd /opt/dsi-studio/build && make \
+    && qmake "CONFIG += warn_off" QMAKE_CC="$QMAKE_CC" QMAKE_CXX="$QMAKE_CXX" ../src \
+    && cd /opt/dsi-studio/build && make -j 4 \
     && make clean \
     && cd /opt/dsi-studio \
     && curl -sSL 'https://pitt.box.com/shared/static/n3ln8k7bakr7y5p0ekm3g4s0ucdmqkia.zip' --output "dsi-studio_windows_extra_files.zip" \
@@ -106,7 +109,11 @@ RUN cd /opt/dsi-studio/build && make \
     && mv ../build/dsi_studio . \
     && rm -rf /opt/dsi-studio/src /opt/dsi-studio/build
 
-# ENV PATH="$PATH:/opt/dsi-studio/dsi_studio_64"
+# Set to avoid error by XKB. See
+# <https://stackoverflow.com/questions/56353346/xkbcommon-error-failed-to-add-default-include-path>
+ENV QT_XKB_CONFIG_ROOT=/usr/share/X11/xkb \
+    PATH="$PATH:/opt/dsi-studio/dsi_studio_64"
 
-# ENTRYPOINT ["dsi_studio"]
-USER ${_USER}
+CMD ["dsi_studio"]
+RUN useradd --create-home --no-log-init --shell /bin/bash guest
+USER guest

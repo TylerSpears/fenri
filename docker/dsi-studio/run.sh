@@ -13,9 +13,8 @@ x11docker \
     -- \
     --rm \
     --ipc=host \
+    --user $UID:$GROUPS \
     --volume "$TMP_DATA_DIR":/srv/tmp \
     --volume "$DATA_DIR":/srv/data \
-    --env NVIDIA_VISIBLE_DEVICES="all" \
-    --env NVIDIA_DRIVER_CAPABILITIES="graphics,utility,compute" \
     -- \
-    dsi-studio:latest dsi_studio
+    dsi-studio:latest
