@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 TMP_DATA_DIR="/srv/tmp"
 DATA_DIR="/srv/data"
