@@ -7,11 +7,58 @@ Code taken from:
 <github.com/sbb-gh/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images>
 """
 
-import torch as t
-import torch.nn as nn
+import torch
+import torch.nn.functional as F
+import einops
 
 
-class ESPCN_RN(nn.Module):
+class ESPCNShuffle(einops.layers.torch.Rearrange):
+
+    _pattern = "b (c r1 r2 r3) h w d -> b c (h r1) (w r2) (d r3)"
+
+    def __init__(self, num_channels, downsample_factor):
+        self._num_channels = num_channels
+        self._downsample_factor = downsample_factor
+        self._rearrange_kwargs = {
+            "c": self._num_channels,
+            "r1": self._downsample_factor,
+            "r2": self._downsample_factor,
+            "r3": self._downsample_factor,
+        }
+        super().__init__(self._pattern, **self._rearrange_kwargs)
+
+
+# Basic conv net definition.
+class ThreeConv(torch.nn.Module):
+    """Basic three-layer 3D conv network for DIQT."""
+
+    def __init__(self, channels: int, downsample_factor: int):
+        super().__init__()
+        self.channels = channels
+        self.downsample_factor = downsample_factor
+
+        # Set up Conv layers.
+        self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(3, 3, 3))
+        self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
+        self.conv3 = torch.nn.Conv3d(
+            100, self.channels * (self.downsample_factor ** 3), kernel_size=(3, 3, 3)
+        )
+        self.output_shuffle = ESPCNShuffle(self.channels, self.downsample_factor)
+
+    def forward(self, x):
+        #         breakpoint()
+        y_hat = self.conv1(x)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv2(y_hat)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv3(y_hat)
+
+        # Shuffle output.
+        y_hat = self.output_shuffle(y_hat)
+        return y_hat
+
+
+class ESPCN_RN(torch.nn.Module):
     """ESPCN_RN-N (N:=no_RevNet_layers), from
     Deeper Image Quality Transfer: Training Low-Memory Neural Networks for 3D Images
 
@@ -39,8 +86,9 @@ class ESPCN_RN(nn.Module):
             no_RevNet_layers=no_RevNet_layers,
             memory_efficient=memory_efficient,
         )
-        self.conv0 = nn.Sequential(
-            nn.Conv3d(noChansin0, noChansout0, kernel_size=3, padding=0), nn.ReLU()
+        self.conv0 = torch.nn.Sequential(
+            torch.nn.Conv3d(noChansin0, noChansout0, kernel_size=3, padding=0),
+            torch.nn.ReLU(),
         )
 
         noChansin1, noChansout1 = 50, 100
@@ -50,8 +98,9 @@ class ESPCN_RN(nn.Module):
             no_RevNet_layers=no_RevNet_layers,
             memory_efficient=memory_efficient,
         )
-        self.conv1 = nn.Sequential(
-            nn.Conv3d(noChansin1, noChansout1, kernel_size=1, padding=0), nn.ReLU()
+        self.conv1 = torch.nn.Sequential(
+            torch.nn.Conv3d(noChansin1, noChansout1, kernel_size=1, padding=0),
+            torch.nn.ReLU(),
         )
 
         noChansin2, noChansout2 = 100, no_chans_out
@@ -61,8 +110,8 @@ class ESPCN_RN(nn.Module):
             no_RevNet_layers=no_RevNet_layers,
             memory_efficient=memory_efficient,
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv3d(noChansin2, noChansout2, kernel_size=3, padding=0)
+        self.conv2 = torch.nn.Sequential(
+            torch.nn.Conv3d(noChansin2, noChansout2, kernel_size=3, padding=0)
         )
 
     def forward(self, X):
@@ -81,21 +130,21 @@ class ESPCN_RN(nn.Module):
 
         conv2_root = self.inpConv2.requires_grad_()
         Y = self.conv2(conv2_root)
-        t.autograd.backward([Y], [YGrad])
+        torch.autograd.backward([Y], [YGrad])
         _, YGrad = self.rn2.backward(self.inpConv2, conv2_root.grad)
 
         conv1_root = self.inpConv1.requires_grad_()
         Y = self.conv1(conv1_root)
-        t.autograd.backward([Y], [YGrad])
+        torch.autograd.backward([Y], [YGrad])
         _, YGrad = self.rn1.backward(self.inpConv1, conv1_root.grad)
 
         conv0_root = self.inpConv0.requires_grad_()
         Y = self.conv0(conv0_root)
-        t.autograd.backward([Y], [YGrad])
+        torch.autograd.backward([Y], [YGrad])
         _, _ = self.rn0.backward(self.inpConv0, conv0_root.grad)
 
 
-class RevNet(nn.Module):
+class RevNet(torch.nn.Module):
     """RevNet Class"""
 
     def __init__(
@@ -123,35 +172,35 @@ class RevNet(nn.Module):
         for layer in range(no_RevNet_layers):
             """
             # An example of another (basic) residual block
-            Basic = nn.Sequential(nn.BatchNorm3d(noChans2),
-                                nn.ReLU(),
-                                nn.Conv3d(noChans2, noChans2, kernel_size=3, padding=1),
-                                nn.BatchNorm3d(noChans2),
-                                nn.ReLU(),
-                                nn.Conv3d(noChans2, noChans1, kernel_size=3, padding=1))
+            Basic = torch.nn.Sequential(torch.nn.BatchNorm3d(noChans2),
+                                torch.nn.ReLU(),
+                                torch.nn.Conv3d(noChans2, noChans2, kernel_size=3, padding=1),
+                                torch.nn.BatchNorm3d(noChans2),
+                                torch.nn.ReLU(),
+                                torch.nn.Conv3d(noChans2, noChans1, kernel_size=3, padding=1))
             """
-            residual_1 = nn.Sequential(
-                nn.BatchNorm3d(noChans1),
-                nn.ReLU(),
-                nn.Conv3d(noChans1, noChans1, kernel_size=1, padding=0),
-                nn.BatchNorm3d(noChans1),
-                nn.ReLU(),
-                nn.Conv3d(noChans1, noChans1, kernel_size=3, padding=1),
-                nn.BatchNorm3d(noChans1),
-                nn.ReLU(),
-                nn.Conv3d(noChans1, noChans2, kernel_size=1, padding=0),
+            residual_1 = torch.nn.Sequential(
+                torch.nn.BatchNorm3d(noChans1),
+                torch.nn.ReLU(),
+                torch.nn.Conv3d(noChans1, noChans1, kernel_size=1, padding=0),
+                torch.nn.BatchNorm3d(noChans1),
+                torch.nn.ReLU(),
+                torch.nn.Conv3d(noChans1, noChans1, kernel_size=3, padding=1),
+                torch.nn.BatchNorm3d(noChans1),
+                torch.nn.ReLU(),
+                torch.nn.Conv3d(noChans1, noChans2, kernel_size=1, padding=0),
             )
 
-            residual_2 = nn.Sequential(
-                nn.BatchNorm3d(noChans1),
-                nn.ReLU(),
-                nn.Conv3d(noChans1, noChans1, kernel_size=1, padding=0),
-                nn.BatchNorm3d(noChans1),
-                nn.ReLU(),
-                nn.Conv3d(noChans1, noChans1, kernel_size=3, padding=1),
-                nn.BatchNorm3d(noChans1),
-                nn.ReLU(),
-                nn.Conv3d(noChans1, noChans2, kernel_size=1, padding=0),
+            residual_2 = torch.nn.Sequential(
+                torch.nn.BatchNorm3d(noChans1),
+                torch.nn.ReLU(),
+                torch.nn.Conv3d(noChans1, noChans1, kernel_size=1, padding=0),
+                torch.nn.BatchNorm3d(noChans1),
+                torch.nn.ReLU(),
+                torch.nn.Conv3d(noChans1, noChans1, kernel_size=3, padding=1),
+                torch.nn.BatchNorm3d(noChans1),
+                torch.nn.ReLU(),
+                torch.nn.Conv3d(noChans1, noChans2, kernel_size=1, padding=0),
             )
 
             setattr(self, "F" + str(layer), residual_1)
@@ -187,7 +236,7 @@ class RevNet(nn.Module):
         for layer_no in range(self.no_RevNet_layers):
             # Least memory saving option
             if self.memory_efficient:
-                with t.no_grad():
+                with torch.no_grad():
                     Y = self.ForwardPassLayer(layer_no, X)
                     X = Y
             # Forward pass agnostic if self.memory_efficient=False
@@ -195,8 +244,8 @@ class RevNet(nn.Module):
                 Y = self.ForwardPassLayer(layer_no, X)
                 X = Y
             del Y
-            t.cuda.empty_cache()
-        X = t.cat((X[0], X[1]), 1)
+            torch.cuda.empty_cache()
+        X = torch.cat((X[0], X[1]), 1)
         return X
 
     def BackwardsPassLayer(self, layer_no, Y, YHat):
@@ -211,20 +260,20 @@ class RevNet(nn.Module):
 
         y1, y2 = Y
         y1Hat, y2Hat = YHat
-        with t.no_grad():
+        with torch.no_grad():
             z1 = y1  # DO need to make a copy here? id(z1)=id(y1)
             x2 = y2 - getattr(self, "G" + str(layer_no))(z1)
             x1 = z1 - getattr(self, "F" + str(layer_no))(x2)
         z1.requires_grad_()
         y2Part = getattr(self, "G" + str(layer_no))(z1)
-        t.autograd.backward([y2Part], [y2Hat])
+        torch.autograd.backward([y2Part], [y2Hat])
         z1.grad += y1Hat
         x2.requires_grad_()
         z1Part = getattr(self, "F" + str(layer_no))(x2)
-        t.autograd.backward([z1Part], [z1.grad])
+        torch.autograd.backward([z1Part], [z1.grad])
         x2.grad += y2Hat
         del y1, y2, Y, y2Part
-        t.cuda.empty_cache()
+        torch.cuda.empty_cache()
         return ((x1, x2), (z1.grad, x2.grad))
 
     def backward(self, Y, YHat):
@@ -252,6 +301,6 @@ class RevNet(nn.Module):
         for layer_no in reversed(range(self.no_RevNet_layers)):
             (Y, YHat) = self.BackwardsPassLayer(layer_no, Y, YHat)
             print(layer_no)
-        Y = t.cat((Y[0], Y[1]), 1)
-        YHat = t.cat((YHat[0], YHat[1]), 1)
+        Y = torch.cat((Y[0], Y[1]), 1)
+        YHat = torch.cat((YHat[0], YHat[1]), 1)
         return (Y, YHat)
