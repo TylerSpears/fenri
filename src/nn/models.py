@@ -10,6 +10,7 @@ Code taken from:
 import torch
 import torch.nn.functional as F
 import einops
+from ..data import norm
 
 
 class ESPCNShuffle(einops.layers.torch.Rearrange):
@@ -30,12 +31,15 @@ class ESPCNShuffle(einops.layers.torch.Rearrange):
 
 # Basic conv net definition.
 class ThreeConv(torch.nn.Module):
-    """Basic three-layer 3D conv network for DIQT."""
+    """Basic three-layer 3D conv network for DIQT.
 
-    def __init__(self, channels: int, downsample_factor: int):
+    Assumes input shape is `B x C x H x W x D`."""
+
+    def __init__(self, channels: int, downsample_factor: int, norm_method=None):
         super().__init__()
         self.channels = channels
         self.downsample_factor = downsample_factor
+        self.norm_method = norm_method
 
         # Set up Conv layers.
         self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(3, 3, 3))
@@ -45,8 +49,26 @@ class ThreeConv(torch.nn.Module):
         )
         self.output_shuffle = ESPCNShuffle(self.channels, self.downsample_factor)
 
-    def forward(self, x):
-        #         breakpoint()
+        if self.norm_method is not None:
+            if "instance" in self.norm_method.casefold():
+                self.norm = torch.nn.InstanceNorm3d(
+                    self.channels,
+                )
+                self.norm_method = "instance"
+            elif "batch" in self.norm_method.casefold():
+                self.norm = torch.nn.BatchNorm3d(self.channels)
+                self.norm_method = "batch"
+            else:
+                raise RuntimeError(
+                    f"ERROR: Invalid norm method '{self.norm_method}', "
+                    + f"expected one of '{('instance', 'batch')}'"
+                )
+        else:
+            self.norm = None
+
+    def forward(self, x, denorm_output=True):
+        if self.norm is not None:
+            x = self.norm(x)
         y_hat = self.conv1(x)
         y_hat = F.relu(y_hat)
         y_hat = self.conv2(y_hat)
@@ -55,6 +77,23 @@ class ThreeConv(torch.nn.Module):
 
         # Shuffle output.
         y_hat = self.output_shuffle(y_hat)
+
+        # De-norm output, if requested.
+        # Assume BCHWD input shape.
+        if denorm_output:
+            if self.norm_method == "instance":
+                mean = torch.mean(x, dim=(2, 3, 4), keepdim=True)
+                # Use biased estimator as done by pytorch in its normalization.
+                var = torch.var(x, dim=(2, 3, 4), keepdim=True, unbiased=False)
+            elif self.norm_method == "batch":
+                mean = torch.mean(x, dim=(0, 2, 3, 4), keepdim=True)
+                # Use biased estimator as done by pytorch in its normalization.
+                var = torch.var(x, dim=(0, 2, 3, 4), keepdim=True, unbiased=False)
+            else:
+                mean = torch.zeros(1, 1, 1, 1, 1).to(x)
+                var = torch.ones(1, 1, 1, 1, 1).to(x)
+            y_hat = norm.denormalize_batch(y_hat, mean, var)
+
         return y_hat
 
 
