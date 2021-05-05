@@ -1,7 +1,7 @@
 import torch
 
 
-def normalize_batch(batch, mean, var):
+def normalize_batch(batch, mean, var, eps=1e-10):
     """Normalize a batch of patches to have mean 0 and variance 1 in the given dimensions.
 
     The normalization occurs according to the dimensionality of the mean and var passed.
@@ -9,25 +9,21 @@ def normalize_batch(batch, mean, var):
         (1, C, 1, 1, 1)
     """
 
-    epsilon = 1e-5
-    return (batch - mean) / torch.sqrt(var + epsilon)
+    return (batch - mean) / torch.sqrt(var + eps)
 
 
-def denormalize_batch(normal_batch, mean, var):
-    """De-normalize a batch to have mean 0 and variance 1 in the given dimensions.
+def denormalize_batch(normal_batch, mean, var, eps=1e-10):
+    """De-normalize a batch to have given mean and variance.
 
     Inverse of `normalize_batch`.
 
     The normalization occurs according to the dimensionality of the mean and var passed.
-        For example, to perform channel-wise normalization, mean and var must have shape
-        (1, C, 1, 1, 1)
     """
 
-    epsilon = 1e-5
-    return (normal_batch * torch.sqrt(var + epsilon)) + mean
+    return (normal_batch * torch.sqrt(var + eps)) + mean
 
 
-def normalize_dti(dti, mean, var):
+def normalize_dti(dti, mean, var, eps=1e-10):
     """Normalize a 6-channel DTI tensor to have mean 0 and variance 1.
 
     The normalization occurs according to the dimensionality of the mean and var passed.
@@ -35,12 +31,10 @@ def normalize_dti(dti, mean, var):
         (C x 1 x 1 x 1)
     """
 
-    epsilon = 1e-5
-    return (dti - mean) / torch.sqrt(var + epsilon)
+    return (dti - mean) / torch.sqrt(var + eps)
 
 
-def denormalize_dti(normal_dti, mean, var):
+def denormalize_dti(normal_dti, mean, var, eps=1e-10):
     """Inverse of DTI normalization."""
 
-    epsilon = 1e-5
-    return (normal_dti * torch.sqrt(var + epsilon)) + mean
+    return (normal_dti * torch.sqrt(var + eps)) + mean

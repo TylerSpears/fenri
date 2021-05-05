@@ -10,7 +10,6 @@ Code taken from:
 import torch
 import torch.nn.functional as F
 import einops
-from ..data import norm
 
 
 class ESPCNShuffle(einops.layers.torch.Rearrange):
@@ -51,12 +50,10 @@ class ThreeConv(torch.nn.Module):
 
         if self.norm_method is not None:
             if "instance" in self.norm_method.casefold():
-                self.norm = torch.nn.InstanceNorm3d(
-                    self.channels,
-                )
+                self.norm = torch.nn.InstanceNorm3d(self.channels, eps=1e-10)
                 self.norm_method = "instance"
             elif "batch" in self.norm_method.casefold():
-                self.norm = torch.nn.BatchNorm3d(self.channels)
+                self.norm = torch.nn.BatchNorm3d(self.channels, eps=1e-10)
                 self.norm_method = "batch"
             else:
                 raise RuntimeError(
@@ -66,7 +63,7 @@ class ThreeConv(torch.nn.Module):
         else:
             self.norm = None
 
-    def forward(self, x, denorm_output=True):
+    def forward(self, x, norm_output=False):
         if self.norm is not None:
             x = self.norm(x)
         y_hat = self.conv1(x)
@@ -78,21 +75,12 @@ class ThreeConv(torch.nn.Module):
         # Shuffle output.
         y_hat = self.output_shuffle(y_hat)
 
-        # De-norm output, if requested.
-        # Assume BCHWD input shape.
-        if denorm_output:
-            if self.norm_method == "instance":
-                mean = torch.mean(x, dim=(2, 3, 4), keepdim=True)
-                # Use biased estimator as done by pytorch in its normalization.
-                var = torch.var(x, dim=(2, 3, 4), keepdim=True, unbiased=False)
-            elif self.norm_method == "batch":
-                mean = torch.mean(x, dim=(0, 2, 3, 4), keepdim=True)
-                # Use biased estimator as done by pytorch in its normalization.
-                var = torch.var(x, dim=(0, 2, 3, 4), keepdim=True, unbiased=False)
-            else:
-                mean = torch.zeros(1, 1, 1, 1, 1).to(x)
-                var = torch.ones(1, 1, 1, 1, 1).to(x)
-            y_hat = norm.denormalize_batch(y_hat, mean, var)
+        # Normalize/standardize output, if requested.
+        if norm_output:
+            if isinstance(self.norm, torch.nn.InstanceNorm3d):
+                y_hat = F.instance_norm(y_hat, eps=self.norm.eps)
+            elif isinstance(self.norm, torch.nn.BatchNorm3d):
+                y_hat = F.batch_norm(y_hat, eps=self.norm.eps)
 
         return y_hat
 
