@@ -143,9 +143,29 @@ class MultiresSampler(torchio.LabelSampler):
             # Include the index in the subject.
             patch_subj["index_ini"] = np.array(source_index_ini).astype(int)
             # Crop low-res image and add to the subject.
+            downsample_factor = subject[self.low_res_key][self.downsample_factor_key]
+            # Calculate offset of lr patch index according to the extension over
+            # the original hr space; i.e., the lr patch covers more distance in
+            # real-world coordinates than the hr patch, to give spatial context to the
+            # prediction, and that needs to be accounted for by an offset in the lr
+            # patch index.
+            zero_extension_patch_size = (
+                np.asarray(self.source_spatial_patch_size) // downsample_factor
+            )
+            # Find offset relative to the patch size if there was no extension factor,
+            # and divide by 2 in each dimension because we only need to adjust the
+            # starting index.
+            lr_extension_offset = np.round(
+                (
+                    np.asarray(self.low_res_spatial_patch_size)
+                    - zero_extension_patch_size
+                )
+                / 2
+            )
+
             lr_index_ini = tuple(
-                np.array(source_index_ini).astype(int)
-                // subject[self.low_res_key][self.downsample_factor_key]
+                (np.array(source_index_ini).astype(int) // downsample_factor)
+                - lr_extension_offset
             )
 
             lr_patch = extract_patch(
@@ -153,6 +173,10 @@ class MultiresSampler(torchio.LabelSampler):
                 img_spatial_shape=subject[self.low_res_key]["data"].shape[1:],
                 index_ini=lr_index_ini,
                 patch_size=self.low_res_spatial_patch_size,
+            )
+
+            print(
+                f"FR patch index: {source_index_ini} | LR patch index: {lr_index_ini}"
             )
             if lr_patch.numel() == 0:
                 raise RuntimeError(
