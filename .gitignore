@@ -814,3 +814,5 @@ lightning_logs/
 results/*
 !results/README*
 
+# Keep the repo root lib directory.
+!/lib/
