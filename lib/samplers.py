@@ -46,16 +46,55 @@ def extract_patch(img, img_spatial_shape, index_ini, patch_size) -> torchio.Imag
     return img[:, i0:i1, j0:j1, k0:k1]
 
 
-def map_fr_locations_to_lr(fr_locations, downsample_factor, low_res_sample_extension):
-    loc_ini, loc_fin = np.split(fr_locations, 2, axis=-1)
-    lengths = loc_fin - loc_ini
-    # Find length of extension for each dimension in fr voxel space.
-    one_side_ext_len = (lengths * low_res_sample_extension) - lengths
-    ext_fr_ini = loc_ini - one_side_ext_len
-    ext_fr_fin = loc_fin + one_side_ext_len
-    lr_ini = np.round(ext_fr_ini / downsample_factor).astype(int)
-    lr_fin = np.round(ext_fr_fin / downsample_factor).astype(int)
-    return np.concatenate([lr_ini, lr_fin], axis=-1)
+def map_fr_init_idx_to_lr(
+    fr_idx, downsample_factor, low_res_sample_extension, fr_patch_size
+):
+    """Maps starting indices of patches in FR space to LR space."""
+
+    # Batch-ify the input, if not done already.
+    if len(fr_idx.shape) == 1:
+        batch_fr_idx = fr_idx.reshape(1, -1)
+    else:
+        batch_fr_idx = fr_idx
+
+    # Find offset between the original FR patch index and the "oversampled" FR patch
+    # index.
+    idx_delta = np.round(
+        (
+            np.round(np.asarray(fr_patch_size) * low_res_sample_extension)
+            - np.asarray(fr_patch_size)
+        )
+        / 2
+    )
+    expanded_fr_idx = batch_fr_idx - idx_delta
+
+    # Now perform simple downscaling.
+    lr_idx = np.floor(expanded_fr_idx / downsample_factor)
+
+    # Undo batch-ification, if necessary.
+    if len(fr_idx.shape) == 1:
+        lr_idx = lr_idx.squeeze()
+
+    return lr_idx
+
+
+def map_fr_coord_to_lr(
+    fr_coords, downsample_factor, low_res_sample_extension, fr_patch_size
+):
+    fr_index_ini = fr_coords[:, :3]
+    lr_index_ini = map_fr_init_idx_to_lr(
+        fr_index_ini,
+        downsample_factor=downsample_factor,
+        low_res_sample_extension=low_res_sample_extension,
+        fr_patch_size=fr_patch_size,
+    )
+    lr_lengths = np.floor(
+        np.round(np.asarray(fr_patch_size) * low_res_sample_extension)
+        / downsample_factor
+    )
+    lr_coord = np.concatenate([lr_index_ini, lr_index_ini + lr_lengths], axis=-1)
+
+    return lr_coord
 
 
 # Custom sampler for sampling multiple volumes of different resolutions.
@@ -89,7 +128,7 @@ class MultiresSampler(torchio.LabelSampler):
         self,
         source_img_key,
         low_res_key,
-        downsample_factor_key,
+        downsample_factor,
         source_spatial_patch_size: tuple,
         low_res_spatial_patch_size: tuple,
         label_name,
@@ -103,7 +142,7 @@ class MultiresSampler(torchio.LabelSampler):
         )
         self.source_img_key = source_img_key
         self.low_res_key = low_res_key
-        self.downsample_factor_key = downsample_factor_key
+        self.downsample_factor = downsample_factor
         self.subj_keys_to_copy = subj_keys_to_copy
         self.source_spatial_patch_size = source_spatial_patch_size
         self.low_res_spatial_patch_size = low_res_spatial_patch_size
@@ -161,24 +200,14 @@ class MultiresSampler(torchio.LabelSampler):
 
             # Include the index in the subject.
             patch_subj["index_ini"] = np.array(source_index_ini).astype(int)
-            # Crop low-res image and add to the subject.
-            downsample_factor = subject[self.low_res_key][self.downsample_factor_key]
 
-            # Need the full 6-coordinate location for the map_fr_locations_to_lr
-            # function.
-            fr_patch_coords = np.concatenate(
-                [
-                    source_index_ini,
-                    np.asarray(source_index_ini) + self.source_spatial_patch_size,
-                ],
-                axis=0,
-            )
-            lr_patch_coords = map_fr_locations_to_lr(
-                fr_patch_coords,
-                downsample_factor=downsample_factor,
+            # Crop low-res image and add to the subject.
+            lr_index_ini = map_fr_init_idx_to_lr(
+                source_index_ini,
+                downsample_factor=self.downsample_factor,
                 low_res_sample_extension=self.low_res_sample_extension,
+                fr_patch_size=self.source_spatial_patch_size,
             )
-            lr_index_ini = lr_patch_coords[:3]
             lr_patch = extract_patch(
                 subject[self.low_res_key]["data"],
                 img_spatial_shape=subject[self.low_res_key]["data"].shape[1:],
@@ -216,12 +245,14 @@ class MultiresGridSampler(torchio.GridSampler):
         downsample_factor,
         source_spatial_patch_size: tuple,
         low_res_spatial_patch_size: tuple,
+        source_mask=None,
         low_res_sample_extension=1.0,
         subj_keys_to_copy=tuple(),
         **kwargs,
     ):
 
         super().__init__(patch_size=source_spatial_patch_size, **kwargs)
+
         self.source_img_key = source_img_key
         self.low_res_key = low_res_key
         self.downsample_factor = downsample_factor
@@ -229,34 +260,74 @@ class MultiresGridSampler(torchio.GridSampler):
         self.source_spatial_patch_size = source_spatial_patch_size
         self.low_res_spatial_patch_size = low_res_spatial_patch_size
         self.low_res_sample_extension = low_res_sample_extension
+        self.source_mask = source_mask
 
-        # Pad the FR volume further to account for lr sample extension, adjust
-        # the FR locations for the same reason.
-        self.subject, self.locations = self._adjust_fr_for_extension(
-            subject=self.subject,
-            # fr_key=self.source_img_key,
-            locations=self.locations,
-            low_res_sample_extension=self.low_res_sample_extension,
-            fr_patch_size=self.source_spatial_patch_size,
-            padding_mode=self.padding_mode,
+        # Filter locations based upon mask, if given.
+        if self.source_mask is not None:
+            # Remove channel dimension, if found in the mask.
+            if len(self.source_mask.shape) > 3:
+                self.source_mask = self.source_mask[0]
+            patch_idx_ini = self.locations[:, :3]
+            patch_idx_centers = np.floor(
+                patch_idx_ini + (np.asarray(source_spatial_patch_size) / 2)
+            )
+            locs_to_keep = self.source_mask[
+                tuple(torch.from_numpy(patch_idx_centers.T).long())
+            ]
+            locs_to_keep = locs_to_keep.reshape(patch_idx_ini.shape[0])
+            new_locs = self.locations[:, :3][locs_to_keep]
+            lengths = (
+                self.locations[:, 3:][locs_to_keep]
+                - self.locations[:, :3][locs_to_keep]
+            )
+            self.locations = np.concatenate([new_locs, new_locs + lengths], axis=-1)
+        # Determine beforehand whether any of the LR locations go out of bounds.
+        self.lr_locations = map_fr_coord_to_lr(
+            self.locations,
+            self.downsample_factor,
+            self.low_res_sample_extension,
+            self.source_spatial_patch_size,
         )
+        if np.min(self.lr_locations) < 0:
+            raise ValueError(
+                "ERROR: Invalid mapping less than 0 from FR volume to LR volume."
+            )
 
-        # Pad the LR volume to match the patch overlap in the FR and the LR sample
-        # extension.
-        self.subject = self._pad_lr(
-            subject=self.subject,
-            lr_key=self.low_res_key,
-            downsample_factor=self.downsample_factor,
-            fr_patch_overlap=self.patch_overlap,
-            low_res_sample_extension=self.low_res_sample_extension,
-            fr_patch_size=self.source_spatial_patch_size,
-            padding_mode=self.padding_mode,
-        )
+        lr_shape = self.subject[self.low_res_key]["data"].shape
+        if np.any(np.max(self.lr_locations[:, 3:], axis=0) >= lr_shape[1:]):
+            raise ValueError(
+                "ERROR: Invalid mapping out of bounds from FR volume to LR volume."
+            )
+        # # Pad the FR volume further to account for lr sample extension, adjust
+        # # the FR locations for the same reason.
+        # self.subject, self.locations = self._adjust_fr_for_extension(
+        #     subject=self.subject,
+        #     # fr_key=self.source_img_key,
+        #     locations=self.locations,
+        #     low_res_sample_extension=self.low_res_sample_extension,
+        #     fr_patch_size=self.source_spatial_patch_size,
+        #     padding_mode=self.padding_mode,
+        # )
+
+        # # Pad the LR volume to match the patch overlap in the FR and the LR sample
+        # # extension.
+        # self.subject = self._pad_lr(
+        #     subject=self.subject,
+        #     lr_key=self.low_res_key,
+        #     downsample_factor=self.downsample_factor,
+        #     fr_patch_overlap=self.patch_overlap,
+        #     low_res_sample_extension=self.low_res_sample_extension,
+        #     fr_patch_size=self.source_spatial_patch_size,
+        #     padding_mode=self.padding_mode,
+        # )
 
     def __getitem__(self, index):
 
+        # Index into locations to get corresponding patch indices.
         location = self.locations[index]
+        lr_location = self.lr_locations[index]
         source_index_ini = location[:3]
+        lr_index_ini = lr_location[:3]
 
         subj_fields_transfer = dict(
             ((k, self.subject[k]) for k in self.subj_keys_to_copy)
@@ -292,15 +363,7 @@ class MultiresGridSampler(torchio.GridSampler):
         patch_subj["index_ini"] = np.array(source_index_ini).astype(int)
         patch_subj[torchio.LOCATION] = location
 
-        # Need the full 6-coordinate location for the map_fr_locations_to_lr function.
-        fr_patch_coords = location
         # Crop low-res image and add to the subject.
-        lr_patch_coords = map_fr_locations_to_lr(
-            fr_patch_coords,
-            downsample_factor=self.downsample_factor,
-            low_res_sample_extension=self.low_res_sample_extension,
-        )
-        lr_index_ini = lr_patch_coords[:3]
         lr_patch = extract_patch(
             self.subject[self.low_res_key]["data"],
             img_spatial_shape=self.subject[self.low_res_key]["data"].shape[1:],
@@ -323,77 +386,77 @@ class MultiresGridSampler(torchio.GridSampler):
 
         return patch_subj
 
-    def _adjust_fr_for_extension(
-        self,
-        subject,
-        # fr_key,
-        locations,
-        low_res_sample_extension,
-        fr_patch_size,
-        padding_mode,
-    ):
+    # def _adjust_fr_for_extension(
+    #     self,
+    #     subject,
+    #     # fr_key,
+    #     locations,
+    #     low_res_sample_extension,
+    #     fr_patch_size,
+    #     padding_mode,
+    # ):
 
-        if padding_mode is not None and low_res_sample_extension != 1:
+    #     if padding_mode is not None and low_res_sample_extension != 1:
 
-            padding = np.ceil(
-                np.asarray(fr_patch_size) * low_res_sample_extension
-            ).astype(int)
-            padding = padding.repeat(2)
-            padder = torchio.transforms.Pad(padding, padding_mode=padding_mode)
-            subject = padder(subject)
-            locations[:3] += padding
-            locations[3:] += padding
+    #         padding = np.ceil(
+    #             np.asarray(fr_patch_size) * low_res_sample_extension
+    #         ).astype(int)
+    #         padding = padding.repeat(2)
+    #         padder = torchio.transforms.Pad(padding, padding_mode=padding_mode)
+    #         subject = padder(subject)
+    #         locations[:3] += padding
+    #         locations[3:] += padding
 
-        # return both subject & adjusted locations
-        return subject, locations
+    #     # return both subject & adjusted locations
+    #     return subject, locations
 
-    def _pad_lr(
-        self,
-        subject,
-        lr_key,
-        downsample_factor,
-        fr_patch_overlap,
-        low_res_sample_extension,
-        fr_patch_size,
-        padding_mode,
-    ):
-        # Don't pad if the pad mode isn't specified.
-        if padding_mode is not None:
-            lr = subject[lr_key]["data"]
+    # def _pad_lr(
+    #     self,
+    #     subject,
+    #     lr_key,
+    #     downsample_factor,
+    #     fr_patch_overlap,
+    #     low_res_sample_extension,
+    #     fr_patch_size,
+    #     padding_mode,
+    # ):
+    #     # Don't pad if the pad mode isn't specified.
+    # if padding_mode is not None:
+    #     lr = subject[lr_key]["data"]
 
-            if isinstance(padding_mode, numbers.Number):
-                kwargs = {"mode": "constant", "constant_values": padding_mode}
-            else:
-                kwargs = {"mode": padding_mode}
+    #     if isinstance(padding_mode, numbers.Number):
+    #         kwargs = {"mode": "constant", "constant_values": padding_mode}
+    #     else:
+    #         kwargs = {"mode": padding_mode}
 
-            # Don't pad for patch overlap if none exists.
-            if not (0 == np.asarray(fr_patch_overlap)).all():
-                lr_patch_overlap = np.asarray(fr_patch_overlap) // downsample_factor
-                # Now convert padding values to match `np.pad`. This is a nested
-                # sequence of padding values for each dimension:
-                # ((before_1, after_1), (before_2, after_2), ...)
-                lr_overlap_padding = (lr_patch_overlap // 2).astype(int)
-                lr_overlap_padding = lr_overlap_padding.repeat(2)
-                # We don't want to pad the channels dim (dimension 0), so indicate 0
-                # padding in the front.
-                lr_overlap_padding = np.concatenate(([0, 0], lr_overlap_padding))
-                # Split to create a nested iterable of iterables.
-                lr_overlap_padding = np.split(lr_overlap_padding, 4)
-                lr = np.pad(lr, lr_overlap_padding, **kwargs)
+    #     # Don't pad for patch overlap if none exists.
+    #     if not (0 == np.asarray(fr_patch_overlap)).all():
+    #         lr_patch_overlap = np.asarray(fr_patch_overlap) // downsample_factor
+    #         # Now convert padding values to match `np.pad`. This is a nested
+    #         # sequence of padding values for each dimension:
+    #         # ((before_1, after_1), (before_2, after_2), ...)
+    #         lr_overlap_padding = (lr_patch_overlap // 2).astype(int)
+    #         lr_overlap_padding = lr_overlap_padding.repeat(2)
+    #         # We don't want to pad the channels dim (dimension 0), so indicate 0
+    #         # padding in the front.
+    #         lr_overlap_padding = np.concatenate(([0, 0], lr_overlap_padding))
+    #         # Split to create a nested iterable of iterables.
+    #         lr_overlap_padding = np.split(lr_overlap_padding, 4)
+    #         lr = np.pad(lr, lr_overlap_padding, **kwargs)
 
-            # An extension of 1 does not need to be padded.
-            if low_res_sample_extension != 1:
+    #     # An extension of 1 does not need to be padded.
+    #     if low_res_sample_extension != 1:
 
-                ext_padding = np.ceil(
-                    np.asarray(fr_patch_size)
-                    / downsample_factor
-                    * low_res_sample_extension
-                ).astype(int)
-                ext_padding = ext_padding.repeat(2)
-                ext_padding = np.concatenate(([0, 0], ext_padding))
-                ext_padding = np.split(ext_padding, 4)
-                lr = np.pad(lr, ext_padding, **kwargs)
+    #         ext_padding = np.ceil(
+    #             np.asarray(fr_patch_size)
+    #             / downsample_factor
+    #             * low_res_sample_extension
+    #         ).astype(int)
+    #         ext_padding = ext_padding.repeat(2)
+    #         ext_padding = np.concatenate(([0, 0], ext_padding))
+    #         ext_padding = np.split(ext_padding, 4)
+    #         lr = np.pad(lr, ext_padding, **kwargs)
 
-            subject[lr_key]["data"] = lr
+    #     subject[lr_key]["data"] = lr
 
-        return subject
+    # return subject

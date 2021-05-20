@@ -1,7 +1,7 @@
 import torch
 
 
-def normalize_batch(batch, mean, var, eps=1e-10):
+def normalize_batch(batch, mean, var, eps=1 ** (-10)):
     """Normalize a batch of patches to have mean 0 and variance 1 in the given dimensions.
 
     The normalization occurs according to the dimensionality of the mean and var passed.
@@ -12,7 +12,7 @@ def normalize_batch(batch, mean, var, eps=1e-10):
     return (batch - mean) / torch.sqrt(var + eps)
 
 
-def denormalize_batch(normal_batch, mean, var, eps=1e-10):
+def denormalize_batch(normal_batch, mean, var, eps=1 ** (-10)):
     """De-normalize a batch to have given mean and variance.
 
     Inverse of `normalize_batch`.
@@ -23,7 +23,7 @@ def denormalize_batch(normal_batch, mean, var, eps=1e-10):
     return (normal_batch * torch.sqrt(var + eps)) + mean
 
 
-def normalize_dti(dti, mean, var, eps=1e-10):
+def normalize_dti(dti, mean, var, eps=1 ** (-10)):
     """Normalize a 6-channel DTI tensor to have mean 0 and variance 1.
 
     The normalization occurs according to the dimensionality of the mean and var passed.
@@ -34,7 +34,7 @@ def normalize_dti(dti, mean, var, eps=1e-10):
     return (dti - mean) / torch.sqrt(var + eps)
 
 
-def denormalize_dti(normal_dti, mean, var, eps=1e-10):
+def denormalize_dti(normal_dti, mean, var, eps=1 ** (-10)):
     """Inverse of DTI normalization."""
 
     return (normal_dti * torch.sqrt(var + eps)) + mean

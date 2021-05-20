@@ -3,8 +3,11 @@
 import numpy as np
 import torch
 import torchio
+from torchio.transforms.preprocessing.label.label_transform import LabelTransform
 import skimage
 import skimage.transform
+import skimage.morphology
+import scipy
 import dipy
 import dipy.core
 import dipy.reconst
@@ -29,7 +32,7 @@ class BValSelectionTransform(torchio.SpatialTransform):
         self.bvec_key = bvec_key
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
-        print(f"Selecting with bvals: Subject {subject.subj_id}", flush=True)
+        print(f"Selecting with bvals: Subject {subject.subj_id}...", flush=True, end='')
 
         for img in self.get_images(subject):
             bvals = img[self.bval_key]
@@ -39,29 +42,59 @@ class BValSelectionTransform(torchio.SpatialTransform):
             img[self.bvec_key] = img[self.bvec_key][scans_to_keep, :]
             img.set_data(img.data[scans_to_keep, ...])
             img[self.bval_key] = img[self.bval_key][scans_to_keep]
-        print("\tSelected", flush=True)
+        print("Selected", flush=True)
+        return subject
+
+
+class DilateMaskTransform(LabelTransform):
+    def __init__(self, dilation_size: int = None, st_elem=None, **kwargs):
+
+        super().__init__(**kwargs)
+        if (dilation_size is None and st_elem is None) or (
+            dilation_size is not None and st_elem is not None
+        ):
+            raise TypeError(
+                "ERROR: One and only one of dilate_size or st_elem may be set, got "
+                + f"dilation_size: {dilation_size} and st_elem: {st_elem}"
+            )
+
+        if st_elem is None:
+            self.st_elem = skimage.morphology.ball(radius=dilation_size)
+        else:
+            self.st_elem = st_elem
+
+    def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
+        """Based off code in `torchio.transforms.KeepLargestComponent"""
+
+        for image in self.get_images(subject):
+            if image.num_channels > 1:
+                message = (
+                    "The number of input channels must be 1,"
+                    f" but it is {image.num_channels}"
+                )
+                raise RuntimeError(message)
+            # Remove channel dimension, which should just be 1.
+            mask = image.tensor.detach().cpu().bool().numpy()[0]
+            dilated_mask = scipy.ndimage.binary_dilation(mask, self.st_elem)
+            dilated_mask = torch.from_numpy(dilated_mask[None, ...]).to(image.tensor)
+            image.set_data(dilated_mask)
+
         return subject
 
 
 class MeanDownsampleTransform(torchio.SpatialTransform):
-    """Mean downsampling transformation.
+    def __init__(self, downsample_factor: int, **kwargs):
 
-    sample_extension: the extension of the low-res patch size relative to the full-res
-        patch size.
+        """Mean downsampling transformation.
 
-    Ex. sample_extension of 1.5
-
-    Expects volumes in canonical (RAS+) format with *channels first.*
-    """
-
-    def __init__(self, downsample_factor: int, spatial_padding: int = 0, **kwargs):
+        Expects volumes in canonical (RAS+) format with *channels first.*
+        """
         super().__init__(**kwargs)
 
         self.downsample_factor = downsample_factor
-        self.spatial_padding = spatial_padding
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
-        print(f"Downsampling: Subject {subject.subj_id}", flush=True)
+        print(f"Downsampling: Subject {subject.subj_id}...", flush=True, end='')
         # Get reference to Image objects that have been included for transformation.
 
         for img in self.get_images(subject):
@@ -89,10 +122,10 @@ class MeanDownsampleTransform(torchio.SpatialTransform):
             # Pad with a small number of 0's to account for sampling at the edge of the
             # full-res image.
             # Don't pad dims that were not scaled.
-            padding_mask = (dim_factors - 1).astype(bool).astype(int)
-            padding = self.spatial_padding * padding_mask
-            padding = [(0, p) for p in padding.tolist()]
-            downsample_vol = np.pad(downsample_vol, pad_width=padding, mode="constant")
+            # padding_mask = (dim_factors - 1).astype(bool).astype(int)
+            # padding = self.spatial_padding * padding_mask
+            # padding = [(0, p) for p in padding.tolist()]
+            # downsample_vol = np.pad(downsample_vol, pad_width=padding, mode="constant")
 
             downsample_vol = torch.from_numpy(
                 downsample_vol.astype(img_ndarray.dtype)
@@ -105,7 +138,7 @@ class MeanDownsampleTransform(torchio.SpatialTransform):
                 scaled_affine[(0, 1, 2), (0, 1, 2)] * self.downsample_factor
             )
             img.affine = scaled_affine
-        print("\tDownsampled", flush=True)
+        print("Downsampled", flush=True)
         return subject
 
 
@@ -129,7 +162,7 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
 
-        print(f"Fitting to DTI: Subject {subject.subj_id}", flush=True)
+        print(f"Fitting to DTI: Subject {subject.subj_id}...", flush=True, end='')
         mask_img = subject[self.mask_img_key] if self.mask_img_key is not None else None
         for img in self.get_images(subject):
 
@@ -141,7 +174,7 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
             tensor_model = dipy.reconst.dti.TensorModel(
                 gradient_table, fit_method=self.fit_method, **self.tensor_model_kwargs
             )
-            print(f"\tDWI shape: {img.data.shape}", flush=True)
+            print(f"...DWI shape: {img.data.shape}...", flush=True, end='')
             # dipy does not like the channels being first, apparently.
             if mask_img is not None:
                 dti = tensor_model.fit(
@@ -160,8 +193,8 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
                     np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
                 ).to(img.data)
             )
-            print(f"\tDTI shape: {img.shape}", flush=True)
-        print(f"\tFitted DTI model: {img.data.shape}", flush=True)
+            print(f"...DTI shape: {img.shape}...", flush=True, end='')
+        print(f"Fitted DTI model: {img.data.shape}", flush=True)
 
         return subject
 
