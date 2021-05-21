@@ -32,7 +32,7 @@ class BValSelectionTransform(torchio.SpatialTransform):
         self.bvec_key = bvec_key
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
-        print(f"Selecting with bvals: Subject {subject.subj_id}...", flush=True, end='')
+        print(f"Selecting with bvals: Subject {subject.subj_id}...", flush=True, end="")
 
         for img in self.get_images(subject):
             bvals = img[self.bval_key]
@@ -63,8 +63,16 @@ class DilateMaskTransform(LabelTransform):
         else:
             self.st_elem = st_elem
 
+        if dilation_size is not None and dilation_size == 0:
+            self._skip_dilation = True
+        else:
+            self._skip_dilation = False
+
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
         """Based off code in `torchio.transforms.KeepLargestComponent"""
+
+        if self._skip_dilation:
+            return subject
 
         for image in self.get_images(subject):
             if image.num_channels > 1:
@@ -94,7 +102,7 @@ class MeanDownsampleTransform(torchio.SpatialTransform):
         self.downsample_factor = downsample_factor
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
-        print(f"Downsampling: Subject {subject.subj_id}...", flush=True, end='')
+        print(f"Downsampling: Subject {subject.subj_id}...", flush=True, end="")
         # Get reference to Image objects that have been included for transformation.
 
         for img in self.get_images(subject):
@@ -162,7 +170,7 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
 
-        print(f"Fitting to DTI: Subject {subject.subj_id}...", flush=True, end='')
+        print(f"Fitting to DTI: Subject {subject.subj_id}...", flush=True, end="")
         mask_img = subject[self.mask_img_key] if self.mask_img_key is not None else None
         for img in self.get_images(subject):
 
@@ -174,7 +182,7 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
             tensor_model = dipy.reconst.dti.TensorModel(
                 gradient_table, fit_method=self.fit_method, **self.tensor_model_kwargs
             )
-            print(f"...DWI shape: {img.data.shape}...", flush=True, end='')
+            print(f"...DWI shape: {img.data.shape}...", flush=True, end="")
             # dipy does not like the channels being first, apparently.
             if mask_img is not None:
                 dti = tensor_model.fit(
@@ -193,7 +201,7 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
                     np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
                 ).to(img.data)
             )
-            print(f"...DTI shape: {img.shape}...", flush=True, end='')
+            print(f"...DTI shape: {img.shape}...", flush=True, end="")
         print(f"Fitted DTI model: {img.data.shape}", flush=True)
 
         return subject
