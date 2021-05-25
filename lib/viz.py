@@ -1,3 +1,5 @@
+import collections
+
 import numpy as np
 import torch
 import torchio
@@ -49,3 +51,56 @@ def direction_map(dti, channels_first=True) -> np.ndarray:
         return direction_map.transpose(3, 0, 1, 2)
 
     return direction_map
+
+
+# Return type wrapper
+MultiresGridSample = collections.namedtuple(
+    "MultiresGridSample",
+    ("low_res", "full_res", "full_res_locations"),
+)
+
+# Collate function for the DataLoader to combine multiple samples with locations.
+def collate_locations(samples, full_res_key: str, low_res_key: str):
+    full_res_stack = torch.stack([subj[full_res_key].data for subj in samples])
+    full_res_location_stack = torch.stack(
+        [torch.as_tensor(subj["location"]) for subj in samples]
+    )
+    # Assume the low-res data are dicts, not `torchio.Image`'s
+    low_res_stack = torch.stack([subj[low_res_key]["data"] for subj in samples])
+
+    return MultiresGridSample(
+        low_res=low_res_stack,
+        full_res=full_res_stack,
+        full_res_locations=full_res_location_stack,
+    )
+
+
+class SubGridAggregator(torchio.GridAggregator):
+    def __init__(
+        self,
+        spatial_shape,
+        patch_overlap,
+        location_offset=0,
+        overlap_mode: str = "crop",
+    ):
+
+        self.volume_padded = True
+        if np.isscalar(patch_overlap):
+            patch_overlap = (patch_overlap,) * 3
+        self.patch_overlap = patch_overlap
+        self.spatial_shape = spatial_shape
+        if np.isscalar(location_offset):
+            location_offset = (location_offset,) * 3
+        self.location_offset = torch.as_tensor(location_offset)
+
+        self._output_tensor = None
+        self.parse_overlap_mode(overlap_mode)
+        self.overlap_mode = overlap_mode
+        self._avgmask_tensor = None
+
+    def add_batch(self, batch_tensor: torch.Tensor, locations: torch.Tensor) -> None:
+        adjusted_locs = locations.clone()
+        adjusted_locs[:, :3] = adjusted_locs[:, :3] - self.location_offset
+        adjusted_locs[:, 3:] = adjusted_locs[:, 3:] - self.location_offset
+
+        return super().add_batch(batch_tensor, adjusted_locs)
