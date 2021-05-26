@@ -10,6 +10,8 @@ Code taken from:
 import torch
 import torch.nn.functional as F
 import einops
+import einops.layers
+import einops.layers.torch
 
 
 class ESPCNShuffle(einops.layers.torch.Rearrange):

@@ -267,6 +267,7 @@ class MultiresGridSampler(torchio.GridSampler):
             # Remove channel dimension, if found in the mask.
             if len(self.source_mask.shape) > 3:
                 self.source_mask = self.source_mask[0]
+            self.source_mask = self.source_mask.bool()
             patch_idx_ini = self.locations[:, :3]
             patch_idx_centers = np.floor(
                 patch_idx_ini + (np.asarray(source_spatial_patch_size) / 2)
