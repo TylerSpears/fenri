@@ -268,14 +268,18 @@ class MultiresGridSampler(torchio.GridSampler):
             if len(self.source_mask.shape) > 3:
                 self.source_mask = self.source_mask[0]
             self.source_mask = self.source_mask.bool()
+            # Find centers of all patches in the grid.
             patch_idx_ini = self.locations[:, :3]
             patch_idx_centers = np.floor(
                 patch_idx_ini + (np.asarray(source_spatial_patch_size) / 2)
             )
+            # Index into the mask with the patch centers and retrieve the boolean value
+            # at that center.
             locs_to_keep = self.source_mask[
                 tuple(torch.from_numpy(patch_idx_centers.T).long())
             ]
             locs_to_keep = locs_to_keep.reshape(patch_idx_ini.shape[0])
+            # Keep only those patches whose centers were True in the mask.
             new_locs = self.locations[:, :3][locs_to_keep]
             lengths = (
                 self.locations[:, 3:][locs_to_keep]
