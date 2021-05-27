@@ -268,24 +268,17 @@ class MultiresGridSampler(torchio.GridSampler):
             if len(self.source_mask.shape) > 3:
                 self.source_mask = self.source_mask[0]
             self.source_mask = self.source_mask.bool()
-            # Find centers of all patches in the grid.
-            patch_idx_ini = self.locations[:, :3]
-            patch_idx_centers = np.floor(
-                patch_idx_ini + (np.asarray(source_spatial_patch_size) / 2)
-            )
-            # Index into the mask with the patch centers and retrieve the boolean value
-            # at that center.
-            locs_to_keep = self.source_mask[
-                tuple(torch.from_numpy(patch_idx_centers.T).long())
-            ]
-            locs_to_keep = locs_to_keep.reshape(patch_idx_ini.shape[0])
-            # Keep only those patches whose centers were True in the mask.
-            new_locs = self.locations[:, :3][locs_to_keep]
-            lengths = (
-                self.locations[:, 3:][locs_to_keep]
-                - self.locations[:, :3][locs_to_keep]
-            )
-            self.locations = np.concatenate([new_locs, new_locs + lengths], axis=-1)
+            # Sample into mask with all locations to get patches of booleans.
+            locs_to_keep = list()
+            for loc in self.locations:
+                patch = self.source_mask[
+                    loc[0] : loc[3], loc[1] : loc[4], loc[2] : loc[5]
+                ]
+                locs_to_keep.append(bool(patch.any()))
+            locs_to_keep = torch.stack(locs_to_keep).bool()
+            # Keep only those patches with at least 1 voxel overlapping the mask.
+            self.locations = self.locations[locs_to_keep]
+
         # Determine beforehand whether any of the LR locations go out of bounds.
         self.lr_locations = map_fr_coord_to_lr(
             self.locations,
@@ -303,28 +296,6 @@ class MultiresGridSampler(torchio.GridSampler):
             raise ValueError(
                 "ERROR: Invalid mapping out of bounds from FR volume to LR volume."
             )
-        # # Pad the FR volume further to account for lr sample extension, adjust
-        # # the FR locations for the same reason.
-        # self.subject, self.locations = self._adjust_fr_for_extension(
-        #     subject=self.subject,
-        #     # fr_key=self.source_img_key,
-        #     locations=self.locations,
-        #     low_res_sample_extension=self.low_res_sample_extension,
-        #     fr_patch_size=self.source_spatial_patch_size,
-        #     padding_mode=self.padding_mode,
-        # )
-
-        # # Pad the LR volume to match the patch overlap in the FR and the LR sample
-        # # extension.
-        # self.subject = self._pad_lr(
-        #     subject=self.subject,
-        #     lr_key=self.low_res_key,
-        #     downsample_factor=self.downsample_factor,
-        #     fr_patch_overlap=self.patch_overlap,
-        #     low_res_sample_extension=self.low_res_sample_extension,
-        #     fr_patch_size=self.source_spatial_patch_size,
-        #     padding_mode=self.padding_mode,
-        # )
 
     def __getitem__(self, index):
 
