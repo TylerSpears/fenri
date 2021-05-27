@@ -275,7 +275,7 @@ class MultiresGridSampler(torchio.GridSampler):
                     loc[0] : loc[3], loc[1] : loc[4], loc[2] : loc[5]
                 ]
                 locs_to_keep.append(bool(patch.any()))
-            locs_to_keep = torch.stack(locs_to_keep).bool()
+            locs_to_keep = torch.as_tensor(locs_to_keep).bool()
             # Keep only those patches with at least 1 voxel overlapping the mask.
             self.locations = self.locations[locs_to_keep]
 
