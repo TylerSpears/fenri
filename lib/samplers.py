@@ -2,6 +2,7 @@ import collections
 import typing
 from typing import Generator
 import numbers
+import warnings
 
 import numpy as np
 import torch
@@ -17,6 +18,25 @@ def collate_subj(samples, full_res_key: str, low_res_key: str):
     low_res_stack = torch.stack([subj[low_res_key]["data"] for subj in samples])
 
     return MultiresSample(low_res=low_res_stack, full_res=full_res_stack)
+
+
+# Similar setup, but for collating with the full-res mask.
+MultiresMaskSample = collections.namedtuple(
+    "MultiresMaskSample", ("low_res", "full_res", "full_res_mask")
+)
+
+
+def collate_subj_mask(
+    samples, full_res_key: str, low_res_key: str, full_res_mask_key: str
+):
+    lr, fr = collate_subj(samples, full_res_key=full_res_key, low_res_key=low_res_key)
+
+    fr_masks = torch.stack(
+        [torch.as_tensor(subj[full_res_mask_key]) for subj in samples]
+    )
+    fr_masks = fr_masks.bool()
+
+    return MultiresMaskSample(low_res=lr, full_res=fr, full_res_mask=fr_masks)
 
 
 def extract_patch(img, img_spatial_shape, index_ini, patch_size) -> torchio.Image:
@@ -133,6 +153,7 @@ class MultiresSampler(torchio.LabelSampler):
         low_res_spatial_patch_size: tuple,
         label_name,
         low_res_sample_extension=1.0,
+        source_mask_key: str = None,
         subj_keys_to_copy=tuple(),
         **kwargs,
     ):
@@ -147,6 +168,7 @@ class MultiresSampler(torchio.LabelSampler):
         self.source_spatial_patch_size = source_spatial_patch_size
         self.low_res_spatial_patch_size = low_res_spatial_patch_size
         self.low_res_sample_extension = low_res_sample_extension
+        self.source_mask_key = source_mask_key
 
     def __call__(
         self, subject: torchio.Subject, num_patches=None
@@ -197,6 +219,20 @@ class MultiresSampler(torchio.LabelSampler):
                     )
                 ),
             )
+
+            if self.source_mask_key is not None:
+                # Create a new subject that only contains patches.
+                # Add the patch from the full-res image into the subject.
+                mask_tensor = extract_patch(
+                    subject[self.source_mask_key].data,
+                    img_spatial_shape=subject[self.source_mask_key].shape[1:],
+                    index_ini=source_index_ini,
+                    patch_size=self.source_spatial_patch_size,
+                )
+
+                patch_subj[self.source_mask_key] = mask_tensor.bool()
+            # else:
+            #     mask_tensor = torch.ones_like(source_tensor[0, ...])[None, ...].bool()
 
             # Include the index in the subject.
             patch_subj["index_ini"] = np.array(source_index_ini).astype(int)
@@ -316,12 +352,15 @@ class MultiresGridSampler(torchio.GridSampler):
         )
         if np.min(self.lr_locations) < 0:
             to_remove = np.min(self.lr_locations, axis=1) < 0
-            print("Removed ", to_remove.sum(), " locations out of ", self.lr_locations.shape[0])
+            warnings.warn(
+                f"Removed {to_remove.sum()}"
+                + f" locations out of {self.lr_locations.shape[0]}"
+            )
             self.lr_locations = self.lr_locations[~to_remove]
             self.locations = self.locations[~to_remove]
-#             raise ValueError(
-#                 "ERROR: Invalid mapping less than 0 from FR volume to LR volume."
-#             )
+        #             raise ValueError(
+        #                 "ERROR: Invalid mapping less than 0 from FR volume to LR volume."
+        #             )
 
         lr_shape = self.subject[self.low_res_key]["data"].shape
         if np.any(np.max(self.lr_locations[:, 3:], axis=0) >= lr_shape[1:]):
@@ -344,8 +383,8 @@ class MultiresGridSampler(torchio.GridSampler):
         # Create a new subject that only contains patches.
         # Add the patch from the full-res image into the subject.
         source_tensor = extract_patch(
-            self.subject[self.source_img_key]['data'],
-            img_spatial_shape=self.subject[self.source_img_key]['data'].shape[1:],
+            self.subject[self.source_img_key]["data"],
+            img_spatial_shape=self.subject[self.source_img_key]["data"].shape[1:],
             index_ini=source_index_ini,
             patch_size=self.source_spatial_patch_size,
         )
@@ -371,6 +410,17 @@ class MultiresGridSampler(torchio.GridSampler):
         patch_subj["index_ini"] = np.array(source_index_ini).astype(int)
         patch_subj[torchio.LOCATION] = location
 
+        # Include the source mask in the return.
+        patch_source_mask = extract_patch(
+            self.source_mask[None, ...],
+            img_spatial_shape=self.source_mask.shape,
+            index_ini=source_index_ini,
+            patch_size=self.source_spatial_patch_size,
+        )
+        patch_subj["source_mask"] = patch_source_mask[0]
+
+        # Include the subj ID
+        patch_subj["subj_id"] = self.subject["subj_id"]
         # Crop low-res image and add to the subject.
         lr_patch = extract_patch(
             self.subject[self.low_res_key]["data"],

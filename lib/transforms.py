@@ -13,6 +13,7 @@ import dipy.core
 import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
+import joblib
 
 
 class BValSelectionTransform(torchio.SpatialTransform):
@@ -150,12 +151,47 @@ class MeanDownsampleTransform(torchio.SpatialTransform):
         return subject
 
 
+def fit_dti(
+    dwi: np.ndarray,
+    bvals: np.ndarray,
+    bvecs: np.ndarray,
+    fit_method: str,
+    mask: np.ndarray = None,
+    **tensor_model_kwargs,
+) -> np.ndarray:
+
+    gradient_table = dipy.core.gradients.gradient_table_from_bvals_bvecs(
+        bvals=bvals,
+        bvecs=bvecs,
+    )
+
+    tensor_model = dipy.reconst.dti.TensorModel(
+        gradient_table, fit_method=fit_method, **tensor_model_kwargs
+    )
+    # dipy does not like the channels being first, apparently.
+    if mask is not None:
+        dti = tensor_model.fit(
+            np.moveaxis(dwi, 0, -1),
+            mask=mask.squeeze().astype(bool),
+        )
+    else:
+        dti = tensor_model.fit(np.moveaxis(dwi, 0, -1))
+
+    # Pull only the lower-triangular part of the DTI (the non-symmetric
+    # coefficients.)
+    # Do it all in one line to minimize the time that the DTI's have to be
+    # duplicated in memory.
+    dti = np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
+    return dti
+
+
 class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
     def __init__(
         self,
         bval_key,
         bvec_key,
         mask_img_key=None,
+        cache_dir=None,
         fit_method="WLS",
         tensor_model_kwargs=dict(),
         **kwargs,
@@ -167,40 +203,68 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
         self.mask_img_key = mask_img_key
         self.fit_method = fit_method
         self.tensor_model_kwargs = tensor_model_kwargs
+        self._cache_dir = cache_dir
+        # If caching should be used, override the _fit_dti method in this instantiation
+        # with a cached variant.
+        if self._cache_dir is not None:
+            self._memory = joblib.Memory(self._cache_dir, compress=3, verbose=0)
+            self._fit_dti = self._memory.cache(fit_dti)
+        else:
+            self._memory = None
+
+    def _fit_dti(self, *args, **kwargs):
+        """Dummy method to wrap the globally-defined `fit_dti` function.
+
+        This method will be overwritten by __init__() if caching is used.
+        """
+        return fit_dti(*args, **kwargs)
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
 
         print(f"Fitting to DTI: Subject {subject.subj_id}...", flush=True, end="")
         mask_img = subject[self.mask_img_key] if self.mask_img_key is not None else None
+        if mask_img is not None:
+            mask_img = mask_img.tensor.detach().cpu().numpy().squeeze().astype(bool)
         for img in self.get_images(subject):
 
-            gradient_table = dipy.core.gradients.gradient_table_from_bvals_bvecs(
+            dti = self._fit_dti(
+                img.numpy(),
                 bvals=img[self.bval_key],
                 bvecs=img[self.bvec_key],
+                fit_method=self.fit_method,
+                mask=mask_img,
+                **self.tensor_model_kwargs,
             )
 
-            tensor_model = dipy.reconst.dti.TensorModel(
-                gradient_table, fit_method=self.fit_method, **self.tensor_model_kwargs
-            )
-            print(f"...DWI shape: {img.data.shape}...", flush=True, end="")
-            # dipy does not like the channels being first, apparently.
-            if mask_img is not None:
-                dti = tensor_model.fit(
-                    np.moveaxis(img.numpy(), 0, -1),
-                    mask=mask_img.numpy().squeeze().astype(bool),
-                )
-            else:
-                dti = tensor_model.fit(np.moveaxis(img.numpy(), 0, -1))
+            img.set_data(torch.from_numpy(dti).to(img.data))
 
-            # Pull only the lower-triangular part of the DTI (the non-symmetric
-            # coefficients.)
-            # Do it all in one line to minimize the time that the DTI's have to be
-            # duplicated in memory.
-            img.set_data(
-                torch.from_numpy(
-                    np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
-                ).to(img.data)
-            )
+            # gradient_table = dipy.core.gradients.gradient_table_from_bvals_bvecs(
+            #     bvals=img[self.bval_key],
+            #     bvecs=img[self.bvec_key],
+            # )
+
+            # tensor_model = dipy.reconst.dti.TensorModel(
+            #     gradient_table, fit_method=self.fit_method, **self.tensor_model_kwargs
+            # )
+            # print(f"...DWI shape: {img.data.shape}...", flush=True, end="")
+            # # dipy does not like the channels being first, apparently.
+            # if mask_img is not None:
+            #     dti = tensor_model.fit(
+            #         np.moveaxis(img.numpy(), 0, -1),
+            #         mask=mask_img.numpy().squeeze().astype(bool),
+            #     )
+            # else:
+            #     dti = tensor_model.fit(np.moveaxis(img.numpy(), 0, -1))
+
+            # # Pull only the lower-triangular part of the DTI (the non-symmetric
+            # # coefficients.)
+            # # Do it all in one line to minimize the time that the DTI's have to be
+            # # duplicated in memory.
+            # img.set_data(
+            #     torch.from_numpy(
+            #         np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
+            #     ).to(img.data)
+            # )
             print(f"...DTI shape: {img.shape}...", flush=True, end="")
         print(f"Fitted DTI model: {img.data.shape}", flush=True)
 
