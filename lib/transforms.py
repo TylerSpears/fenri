@@ -182,6 +182,9 @@ def fit_dti(
     # Do it all in one line to minimize the time that the DTI's have to be
     # duplicated in memory.
     dti = np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
+
+    print("Not cached")
+
     return dti
 
 
@@ -207,7 +210,7 @@ class FitDTITransform(torchio.SpatialTransform, torchio.IntensityTransform):
         # If caching should be used, override the _fit_dti method in this instantiation
         # with a cached variant.
         if self._cache_dir is not None:
-            self._memory = joblib.Memory(self._cache_dir, compress=3, verbose=0)
+            self._memory = joblib.Memory(self._cache_dir, verbose=2)
             self._fit_dti = self._memory.cache(fit_dti)
         else:
             self._memory = None
