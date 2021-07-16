@@ -152,7 +152,7 @@ class MultiresSampler(torchio.LabelSampler):
         source_spatial_patch_size: tuple,
         low_res_spatial_patch_size: tuple,
         label_name,
-        low_res_sample_extension=1.0,
+        low_res_sample_extension,
         source_mask_key: str = None,
         subj_keys_to_copy=tuple(),
         **kwargs,
