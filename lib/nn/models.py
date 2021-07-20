@@ -87,6 +87,41 @@ class ThreeConv(torch.nn.Module):
         return y_hat
 
 
+# Single-layer FC/MPL for debugging
+class DebugFC(torch.nn.Module):
+    """Single-layer FC with no non-linearity, for debugging.
+
+    Assumes inputs have dimensions `B x C x H x W x D`.
+
+    Parameters:
+        input_shape: tuple
+            Shape of input *excluding* batch dimension.
+
+        output_shape: tuple
+            Shape of output *excluding* batch dimension.
+    """
+
+    def __init__(self, input_shape, output_shape):
+        super().__init__()
+
+        self.input_shape = input_shape
+        self.output_shape = output_shape
+        self.lin1 = torch.nn.Linear(
+            torch.prod(torch.as_tensor(self.input_shape)).int().item(),
+            torch.prod(torch.as_tensor(self.output_shape)).int().item(),
+            bias=True,
+        )
+
+    def forward(self, x, *args, **kwargs):
+
+        batch_size = x.shape[0]
+        x = x.view(batch_size, -1)
+        y_hat = self.lin1(x)
+        y_hat = y_hat.view(batch_size, *self.output_shape)
+
+        return y_hat
+
+
 class ESPCN_RN(torch.nn.Module):
     """ESPCN_RN-N (N:=no_RevNet_layers), from
     Deeper Image Quality Transfer: Training Low-Memory Neural Networks for 3D Images
