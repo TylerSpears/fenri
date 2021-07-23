@@ -22,4 +22,3 @@ docker run \
 #    --volume /media/tyler/data:/srv/data \
 #    -- \
 #    fsl:6.0.4 "$@"
-

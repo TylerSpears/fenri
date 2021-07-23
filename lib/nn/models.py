@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Module containing, RevNet and DIQT Network
 
 Created by Stefano B. Blumberg to illustrate methodology utilised in:

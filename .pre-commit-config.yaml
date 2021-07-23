@@ -1,6 +1,6 @@
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v2.5.0
+    rev: v4.0.1
     hooks:
     -   id: check-yaml
     -   id: check-added-large-files
@@ -8,3 +8,8 @@ repos:
     -   id: check-ast
     -   id: detect-private-key
     -   id: fix-encoding-pragma
+    -   id: check-symlinks
+    -   id: end-of-file-fixer
+    -   id: mixed-line-ending
+    -   id: pretty-format-json
+        args: ['--autofix', '--no-sort-keys']

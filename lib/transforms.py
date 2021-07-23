@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # torchio.Transform functions/objects.
 
 import numpy as np

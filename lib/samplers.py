@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import collections
 import typing
 from typing import Generator
