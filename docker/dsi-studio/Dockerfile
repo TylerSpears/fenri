@@ -1,114 +1,60 @@
-# Dockerfile to build DSI-Studio with and without nvidia GPU support.
 # Taken from
-# <https://raw.githubusercontent.com/frankyeh/DSI-Studio/master/Dockerfile>
+# <https://github.com/frankyeh/DSI-Studio/tree/master/build_packages/ubuntu_2004>
+# Modified to keep the container around for running DSI.
 
-ARG BASE
-FROM ${BASE}
+ARG BASE=ubuntu:20.04
+FROM $BASE as builder-stage
 
-# Install dependencies
-USER root
-# Install Qt5
-# Pull local timezone info using curl. From:
-# <https://github.com/CEA-LIST/Cingulata/blob/157b4c66441e4e253e06a0abe1508976605100d8/Dockerfile.bfv#L12>
-RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-        curl \
-        ca-certificates && \
-    ln -snf /usr/share/zoneinfo/$(curl https://ipapi.co/timezone) /etc/localtime && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-        qt5-default \
-        libqt5opengl5-dev \
-        libqt5core5a \
-        libqt5charts5-dev \
-        libglvnd0 \
-        libgl1 \
-        libglx0 \
-        libegl1 \
-        libxext6 \
-        libx11-6 \
-        # libqt5location5 \
-        # libqt5multimedia5 \
-        # qtbase5-private-dev && \
-        xvfb \
-        build-essential \
-        autoconf \
-        libtool \
-        pkg-config \
-        libfontconfig1 \
-        libfreetype6 \
-        ## already installed?
-        libgl1-mesa-dev \
-        libglu1-mesa-dev \
-        ##
-        libgomp1 \
-        libice6 \
-        libxcursor1 \
-        libxft2 \
-        libxinerama1 \
-        libxrandr2 \
-        libxrender1 \
-        libxt6 \
-        wget \
-        libboost-all-dev \
-        zlib1g \
-        zlib1g-dev \
-        unzip \
-        ## already installed?
-        libgl1-mesa-dev \
-        libglu1-mesa-dev \
-        ##
-        freeglut3-dev \
-        mesa-utils \
-        g++-7 \
-        gcc-7 \
-        make \
-        zlib1g-dev \
-        git \
-        software-properties-common && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+ENV DEBIAN_FRONTEND noninteractive
 
-# # Get newer qt5
-# RUN add-apt-repository ppa:beineri/opt-qt-5.12.2-bionic \
-#     && apt-get update \
-#     && apt install -y --no-install-recommends \
-#     freetds-common libclang1-5.0 libllvm5.0 libodbc1 libsdl2-2.0-0 libsndio6.1 \
-#     libsybdb5 libxcb-xinerama0 qt5123d qt512base qt512canvas3d \
-#     qt512connectivity qt512declarative qt512graphicaleffects \
-#     qt512imageformats qt512location qt512multimedia qt512scxml qt512svg \
-#     qt512wayland qt512x11extras qt512xmlpatterns qt512charts-no-lgpl \
-#     && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+# Prepare environment
+RUN apt update && apt full-upgrade -y && \
+  apt install -y --no-install-recommends \
+  unzip \
+  curl \
+  make \
+  git \
+  libboost-all-dev \
+  zlib1g-dev \
+  ca-certificates \
+  qt5-qmake \
+  qt5-default \
+  libqt5charts5-dev \
+  libqt5opengl5-dev \
+  gcc \
+  g++ && \
+  apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-ENV CC="gcc-7" \
-    CXX="g++-7"
-ENV QMAKE_CC=${CC} \
-    QMAKE_CXX=${CXX}
+ADD "https://api.github.com/repos/frankyeh/DSI-Studio/commits?per_page=1" latest_commit
+ADD "https://api.github.com/repos/frankyeh/TIPL/commits?per_page=1" latest_commit
 
-# Install DSI Studio
 RUN mkdir /opt/dsi-studio \
-    && cd /opt/dsi-studio \
-    && git clone https://github.com/frankyeh/DSI-Studio.git \
-    && mv DSI-Studio src \
-    && git clone https://github.com/frankyeh/TIPL.git \
-    && mv TIPL src/tipl \
-    && mkdir build && cd build \
-    && qmake "CONFIG += warn_off" QMAKE_CC="$QMAKE_CC" QMAKE_CXX="$QMAKE_CXX" ../src \
-    && cd /opt/dsi-studio/build && make -j 4 \
-    && make clean \
-    && cd /opt/dsi-studio \
-    && curl -sSL 'https://pitt.box.com/shared/static/n3ln8k7bakr7y5p0ekm3g4s0ucdmqkia.zip' --output "dsi-studio_windows_extra_files.zip" \
-    && unzip dsi-studio_windows_extra_files.zip \
-    && rm dsi-studio_windows_extra_files.zip \
-    && cd dsi_studio_64 \
-    && rm *.dll \
-    && rm *.exe \
-    && rm -rf iconengines \
-    && rm -rf imageformats \
-    && rm -rf platforms \
-    && rm -rf styles \
-    && mv ../build/dsi_studio . \
-    && rm -rf /opt/dsi-studio/src /opt/dsi-studio/build
+  && cd /opt/dsi-studio \
+  && git clone https://github.com/frankyeh/DSI-Studio.git \
+  && mv DSI-Studio src \
+  && git clone https://github.com/frankyeh/TIPL.git \
+  && mv TIPL src/tipl \
+  && mkdir -p /opt/dsi-studio/build \
+  && cd /opt/dsi-studio/build \
+  && qmake ../src/dsi_studio.pro \
+  && make -k -j4 \
+  && cd /opt/dsi-studio \
+  && curl -sSLO 'https://www.dropbox.com/s/pib533irglhnwy7/dsi_studio_64.zip' \
+  && unzip dsi_studio_64.zip \
+  && rm dsi_studio_64.zip \
+  && cd dsi_studio_64 \
+  && rm *.dll \
+  && rm *.exe \
+  && rm -rf iconengines \
+  && rm -rf imageformats \
+  && rm -rf platforms \
+  && rm -rf styles \
+  && mv ../build/dsi_studio . \
+  && rm -rf /opt/dsi-studio/src /opt/dsi-studio/build
 
+#Create an empty container and transfer only the compiled software out
+#FROM scratch
+#COPY --from=builder-stage /opt/dsi-studio/dsi_studio_64 /
 # Set to avoid error by XKB. See
 # <https://stackoverflow.com/questions/56353346/xkbcommon-error-failed-to-add-default-include-path>
 ENV QT_XKB_CONFIG_ROOT=/usr/share/X11/xkb \
@@ -117,3 +63,4 @@ ENV QT_XKB_CONFIG_ROOT=/usr/share/X11/xkb \
 CMD ["dsi_studio"]
 RUN useradd --create-home --no-log-init --shell /bin/bash guest
 USER guest
+
