@@ -7,12 +7,24 @@ DSI_CACHE_DIR="${DSI_CACHE_DIR:-$HOME/.cache/dsi-studio}"
 
 mkdir --parents $DSI_CONFIG_DIR $DSI_CACHE_DIR
 
+case $1 in
+    nvidia)
+        DSI_RUNTIME="nvidia"
+        IMG_TAG="nvidia"
+        ;;
+    *)
+        DSI_RUNTIME="runc"
+        IMG_TAG="cpu"
+        ;;
+esac
+
+
 x11docker \
     --hostipc \
     --clipboard \
     --user=RETAIN \
     --gpu \
-    --iglx \
+    --runtime=$DSI_RUNTIME \
     --hostdisplay \
     --group-add video --group-add render \
     --runasroot "ldconfig" \
@@ -25,4 +37,4 @@ x11docker \
     --volume "$TMP_DATA_DIR":/srv/tmp \
     --volume "$DATA_DIR":/srv/data \
     -- \
-    dsi-studio:latest
+    tylerspears/dsi-studio:$IMG_TAG
