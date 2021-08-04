@@ -61,6 +61,8 @@ ENV QT_XKB_CONFIG_ROOT=/usr/share/X11/xkb \
     PATH="$PATH:/opt/dsi-studio/dsi_studio_64"
 
 CMD ["dsi_studio"]
-RUN useradd --create-home --no-log-init --shell /bin/bash guest
+RUN useradd --create-home --no-log-init --shell /bin/bash guest && mkdir /home/guest/build
 USER guest
-
+COPY Dockerfile /home/guest/build/Dockerfile
+COPY build.sh /home/guest/build/build.sh
+COPY run.sh /home/guest/build/run.sh
