@@ -7,7 +7,7 @@ case $1 in
         BUILD_TAG="nvidia"
         ;;
     *)
-        BASE_IMG="${BASE_IMG:-ubuntu/20.04}"
+        BASE_IMG="${BASE_IMG:-ubuntu:20.04}"
         BUILD_TAG="cpu"
         ;;
 esac
