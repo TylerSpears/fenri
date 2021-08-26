@@ -7,3 +7,9 @@
 [submodule "docker/opengl"]
 	path = docker/opengl
 	url = https://gitlab.com/nvidia/container-images/opengl.git
+[submodule "sources/BasicSR"]
+	path = sources/BasicSR
+	url = https://github.com/xinntao/BasicSR
+[submodule "sources/LPTN"]
+	path = sources/LPTN
+	url = https://github.com/csjliang/LPTN
