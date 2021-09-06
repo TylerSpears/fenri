@@ -16,6 +16,8 @@ import dipy.reconst.dti
 import dipy.segment.mask
 import joblib
 
+from . import coords
+
 
 class BValSelectionTransform(torchio.SpatialTransform):
     """Sub-selects scans that are within a certain range of bvals.
@@ -136,6 +138,86 @@ class MeanDownsampleTransform(torchio.SpatialTransform):
             # padding = self.spatial_padding * padding_mask
             # padding = [(0, p) for p in padding.tolist()]
             # downsample_vol = np.pad(downsample_vol, pad_width=padding, mode="constant")
+
+            downsample_vol = torch.from_numpy(
+                downsample_vol.astype(img_ndarray.dtype)
+            ).to(img.data.dtype)
+            img.set_data(downsample_vol)
+
+            scaled_affine = img.affine.copy()
+            # Scale the XYZ coordinates on the main diagonal.
+            scaled_affine[(0, 1, 2), (0, 1, 2)] = (
+                scaled_affine[(0, 1, 2), (0, 1, 2)] * self.downsample_factor
+            )
+            img.affine = scaled_affine
+        print("Downsampled", flush=True)
+        return subject
+
+
+class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
+    def __init__(self, source_vox_size: float, target_vox_size: float, **kwargs):
+
+        """Mean downsampling by a non-integer factor > 1.
+
+        Expects volumes in canonical (RAS+) format with *channels first.*
+        """
+        super().__init__(**kwargs)
+
+        self.source_vox_size = source_vox_size
+        self.target_vox_size = target_vox_size
+        self.downsample_factor = self.target_vox_size / self.source_vox_size
+
+    @staticmethod
+    def downscale_image(
+        img: np.ndarray,
+        source_vox_size: float,
+        target_vox_size: float,
+        padding_kwargs={"mode": "constant", "constant_values": 0.0},
+    ):
+        img_shape = img.shape if img.ndim < 4 else img.shape[-3:]
+        idx, weights = coords.transform.fraction_downsample_idx_weights(
+            img_shape, source_vox_size, target_vox_size
+        )
+
+        pad_amt = np.max(
+            np.clamp(
+                (idx.max(axis=(1, 2, 3, 4)) + 1) - np.asarray(img_shape), 0, np.inf
+            )
+        )
+        weighted = list()
+        channel_iter = iter(img) if img.ndim == 4 else list(img)
+        for channel_img in channel_iter:
+
+            padded_img = np.pad(channel_img, (0, pad_amt) * 3, **padding_kwargs)
+            patches = padded_img[tuple(idx)]
+            weighted.append((patches * weights).sum(axis=0))
+
+        weighted = np.stack(weighted)
+        if img.ndim < 4:
+            weighted = weighted[0]
+
+        return weighted
+
+    def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
+        print(
+            f"Downsampling fractional amount: Subject {subject.subj_id}...",
+            flush=True,
+            end="",
+        )
+
+        # Get reference to Image objects that have been included for transformation.
+        for img in self.get_images(subject):
+            img["downsample_factor"] = self.downsample_factor
+            if self.downsample_factor == 1:
+                continue
+
+            img_ndarray = img.data.numpy()
+
+            downsample_vol = self.downscale_image(
+                img_ndarray,
+                source_vox_size=self.source_vox_size,
+                target_vox_size=self.target_vox_size,
+            )
 
             downsample_vol = torch.from_numpy(
                 downsample_vol.astype(img_ndarray.dtype)
