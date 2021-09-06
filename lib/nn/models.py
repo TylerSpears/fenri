@@ -8,11 +8,14 @@ Code taken from:
 <github.com/sbb-gh/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images>
 """
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import einops
 import einops.layers
 import einops.layers.torch
+
+from .. import utils
 
 
 class ESPCNShuffle(einops.layers.torch.Rearrange):
@@ -84,6 +87,85 @@ class ThreeConv(torch.nn.Module):
                 y_hat = F.instance_norm(y_hat, eps=self.norm.eps)
             elif isinstance(self.norm, torch.nn.BatchNorm3d):
                 y_hat = F.batch_norm(y_hat, eps=self.norm.eps)
+
+        return y_hat
+
+
+class FractionThreeConv(torch.nn.Module):
+    """Three-layer 3D conv network for DIQT that handles fractional downsampling.
+
+    Assumes input shape is `B x C x H x W x D`."""
+
+    def __init__(
+        self,
+        channels: int,
+        input_spatial_shape: tuple,
+        output_spatial_shape: tuple,
+        source_vox_size: float,
+        target_vox_size: float,
+    ):
+        super().__init__()
+        self.channels = channels
+        self.out_spatial_shape = output_spatial_shape
+        # Assume isotropy in the input and output shapes.
+        assert (
+            self.out_spatial_shape[0]
+            == self.out_spatial_shape[1]
+            == self.out_spatial_shape[2]
+        )
+        self.in_spatial_shape = input_spatial_shape
+        # Assume isotropy in the input and output shapes.
+        assert (
+            self.in_spatial_shape[0]
+            == self.in_spatial_shape[1]
+            == self.in_spatial_shape[2]
+        )
+        self.source_vox_size = source_vox_size
+        self.target_vox_size = target_vox_size
+        self.downsample_factor = self.target_vox_size / self.source_vox_size
+
+        # Set up Conv layers.
+
+        # Adjust the kernel sizes of conv1 and conv3 such that the input shape to the
+        # shuffle is
+        # `channels * ceil(downsample_factor**3) x out_shape/ceil(downsample_factor) x ...`
+        # with the last dim repeated 3 times.
+        target_shuffle_channels = int(
+            self.channels * np.ceil(self.downsample_factor) ** 3,
+        )
+        shuffle_input_size = int(
+            self.out_spatial_shape[0] / np.ceil(self.downsample_factor)
+        )
+
+        # Distribute the kernel size increase between conv1 and conv3 as evenly
+        # as possible, with the smaller kernel size going to conv1.
+        size_offset = self.in_spatial_shape[0] - shuffle_input_size
+        conv1_kern_offset = int(np.floor(size_offset / 2))
+        conv3_kern_offset = int(np.ceil(size_offset / 2))
+
+        self.conv1 = torch.nn.Conv3d(
+            self.channels, 50, kernel_size=(1 + conv1_kern_offset,) * 3
+        )
+        self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
+
+        self.conv3 = torch.nn.Conv3d(
+            100, target_shuffle_channels, kernel_size=(1 + conv3_kern_offset,) * 3
+        )
+        self.output_shuffle = ESPCNShuffle(
+            self.channels, int(np.ceil(self.downsample_factor))
+        )
+
+        self.norm = None
+
+    def forward(self, x, norm_output=False):
+        y_hat = self.conv1(x)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv2(y_hat)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv3(y_hat)
+
+        # Shuffle output.
+        y_hat = self.output_shuffle(y_hat)
 
         return y_hat
 

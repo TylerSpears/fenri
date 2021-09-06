@@ -179,16 +179,24 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
             img_shape, source_vox_size, target_vox_size
         )
 
-        pad_amt = np.max(
-            np.clamp(
-                (idx.max(axis=(1, 2, 3, 4)) + 1) - np.asarray(img_shape), 0, np.inf
+        pad_amt = int(
+            np.max(
+                np.clip(
+                    (idx.max(axis=(1, 2, 3, 4)) + 1) - np.asarray(img_shape), 0, np.inf
+                )
             )
         )
         weighted = list()
-        channel_iter = iter(img) if img.ndim == 4 else list(img)
+        channel_iter = (
+            iter(img)
+            if img.ndim == 4
+            else [
+                img,
+            ]
+        )
         for channel_img in channel_iter:
 
-            padded_img = np.pad(channel_img, (0, pad_amt) * 3, **padding_kwargs)
+            padded_img = np.pad(channel_img, ((0, pad_amt),) * 3, **padding_kwargs)
             patches = padded_img[tuple(idx)]
             weighted.append((patches * weights).sum(axis=0))
 
@@ -214,10 +222,18 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
             img_ndarray = img.data.numpy()
 
             downsample_vol = self.downscale_image(
-                img_ndarray,
+                img_ndarray.astype(float),
                 source_vox_size=self.source_vox_size,
                 target_vox_size=self.target_vox_size,
             )
+
+            # Check if image is binary.
+            if (
+                len(np.unique(img_ndarray)) == 2
+                and (np.unique(img_ndarray) == [0, 1]).all()
+            ):
+                downsample_vol = np.clip(downsample_vol, 0, 1)
+                downsample_vol = skimage.img_as_bool(downsample_vol)
 
             downsample_vol = torch.from_numpy(
                 downsample_vol.astype(img_ndarray.dtype)
