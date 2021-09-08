@@ -99,70 +99,41 @@ class FractionThreeConv(torch.nn.Module):
     def __init__(
         self,
         channels: int,
-        input_spatial_shape: tuple,
-        output_spatial_shape: tuple,
         source_vox_size: float,
         target_vox_size: float,
     ):
         super().__init__()
         self.channels = channels
-        self.out_spatial_shape = output_spatial_shape
-        # Assume isotropy in the input and output shapes.
-        assert (
-            self.out_spatial_shape[0]
-            == self.out_spatial_shape[1]
-            == self.out_spatial_shape[2]
-        )
-        self.in_spatial_shape = input_spatial_shape
-        # Assume isotropy in the input and output shapes.
-        assert (
-            self.in_spatial_shape[0]
-            == self.in_spatial_shape[1]
-            == self.in_spatial_shape[2]
-        )
         self.source_vox_size = source_vox_size
         self.target_vox_size = target_vox_size
         self.downsample_factor = self.target_vox_size / self.source_vox_size
 
-        # Set up Conv layers.
+        self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(3, 3, 3))
+        self.conv2 = torch.nn.Conv3d(50, 75, kernel_size=(2, 2, 2))
+        self.conv3 = torch.nn.Conv3d(75, 100, kernel_size=(1, 1, 1))
+        self.conv4 = torch.nn.Conv3d(100, 75, kernel_size=(2, 2, 2))
+        self.conv5 = torch.nn.Conv3d(75, 60, kernel_size=(2, 2, 2))
 
-        # Adjust the kernel sizes of conv1 and conv3 such that the input shape to the
-        # shuffle is
-        # `channels * ceil(downsample_factor**3) x out_shape/ceil(downsample_factor) x ...`
-        # with the last dim repeated 3 times.
-        target_shuffle_channels = int(
-            self.channels * np.ceil(self.downsample_factor) ** 3,
-        )
-        shuffle_input_size = int(
-            self.out_spatial_shape[0] / np.ceil(self.downsample_factor)
-        )
-
-        # Distribute the kernel size increase between conv1 and conv3 as evenly
-        # as possible, with the smaller kernel size going to conv1.
-        size_offset = self.in_spatial_shape[0] - shuffle_input_size
-        conv1_kern_offset = int(np.floor(size_offset / 2))
-        conv3_kern_offset = int(np.ceil(size_offset / 2))
-
-        self.conv1 = torch.nn.Conv3d(
-            self.channels, 50, kernel_size=(1 + conv1_kern_offset,) * 3
-        )
-        self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
-
-        self.conv3 = torch.nn.Conv3d(
-            100, target_shuffle_channels, kernel_size=(1 + conv3_kern_offset,) * 3
-        )
-        self.output_shuffle = ESPCNShuffle(
-            self.channels, int(np.ceil(self.downsample_factor))
-        )
+        rounded_downsample_factor = int(np.ceil(self.downsample_factor))
+        unshuffled_n_channels = self.channels * (rounded_downsample_factor ** 3)
+        self.conv6 = torch.nn.Conv3d(60, unshuffled_n_channels, kernel_size=(3, 3, 3))
+        self.output_shuffle = ESPCNShuffle(self.channels, rounded_downsample_factor)
 
         self.norm = None
 
     def forward(self, x, norm_output=False):
+
         y_hat = self.conv1(x)
         y_hat = F.relu(y_hat)
         y_hat = self.conv2(y_hat)
         y_hat = F.relu(y_hat)
         y_hat = self.conv3(y_hat)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv4(y_hat)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv5(y_hat)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv6(y_hat)
 
         # Shuffle output.
         y_hat = self.output_shuffle(y_hat)
