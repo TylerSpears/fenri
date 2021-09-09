@@ -91,6 +91,42 @@ class ThreeConv(torch.nn.Module):
         return y_hat
 
 
+class ReduceBy5Conv(torch.nn.Module):
+    """Basic three-layer 3D conv network for DIQT.
+
+    Layers insure that patch sizes will be reduced by 5 in each dimension.
+    Assumes input shape is `B x C x H x W x D`."""
+
+    def __init__(self, channels: int, downsample_factor: int, norm_method=None):
+        super().__init__()
+        self.channels = channels
+        self.downsample_factor = downsample_factor
+        self.norm_method = norm_method
+
+        # Set up Conv layers.
+        self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(4, 4, 4))
+        self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
+        self.conv3 = torch.nn.Conv3d(
+            100, self.channels * (self.downsample_factor ** 3), kernel_size=(3, 3, 3)
+        )
+        self.output_shuffle = ESPCNShuffle(self.channels, self.downsample_factor)
+
+        self.norm = None
+
+    def forward(self, x, norm_output=False):
+
+        y_hat = self.conv1(x)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv2(y_hat)
+        y_hat = F.relu(y_hat)
+        y_hat = self.conv3(y_hat)
+
+        # Shuffle output.
+        y_hat = self.output_shuffle(y_hat)
+
+        return y_hat
+
+
 class FractionThreeConv(torch.nn.Module):
     """Three-layer 3D conv network for DIQT that handles fractional downsampling.
 
