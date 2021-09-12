@@ -40,6 +40,37 @@ def collate_subj_mask(
     return MultiresMaskSample(low_res=lr, full_res=fr, full_res_mask=fr_masks)
 
 
+def collate_dicts(samples, *keys, **renamed_keys) -> dict:
+    select_keys = dict(zip(keys, keys))
+    select_keys.update(renamed_keys)
+    collated = dict()
+
+    for k_new, k_old in select_keys.items():
+        v = [sample[k_old] for sample in samples]
+        # If all entries are nested dictionaries, recursively convert them.
+        if v and all(k_old in sample.keys() for sample in samples):
+            if all(map(lambda obj: isinstance(obj, dict), v)):
+                v = collate_dicts(v, **dict(zip(v[0].keys(), v[0].keys())))
+            else:
+                # If the values are a tensor or ndarray, try and stack them together.
+                if torch.is_tensor(v[0]):
+                    try:
+                        v = torch.stack(v).to(v[0])
+                    except (ValueError, RuntimeError):
+                        pass
+                elif isinstance(v[0], np.ndarray):
+                    try:
+                        v = np.stack(v)
+                    except (ValueError, RuntimeError):
+                        pass
+        else:
+            raise KeyError(f"ERROR: Key '{k_old}' not found in one or more entries.")
+
+        collated[k_new] = v
+
+    return collated
+
+
 def extract_patch(img, img_spatial_shape, index_ini, patch_size) -> torchio.Image:
     """Draws a patch from img, given an initial index and patch size."""
 

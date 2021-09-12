@@ -161,6 +161,59 @@ def collate_locs_and_keys(
     )
 
 
+def make_grid(tensor, nrow=8, padding=2, pad_value=0):
+    """Create grid of 2D imager for visualization.
+
+    tensor:
+        Sequence of 2-dimensional pytorch Tensors of the *same shape*.
+
+        Each element of `tensor` is assumed to have dimensions `H x W`.
+
+    Based on implementation of `torchvision.utils.make_grid`.
+    """
+    if torch.is_tensor(tensor):
+        tensor = list(tensor)
+    assert all(
+        [
+            len(t.shape)
+            in {
+                2,
+            }
+            for t in tensor
+        ]
+    )
+
+    num_imgs = len(tensor)
+    ncols = np.ceil(num_imgs / nrow).astype(int)
+
+    img_w = tensor[0].shape[-1]
+    img_h = tensor[0].shape[-2]
+    total_pix_w = ((img_w + padding) * ncols) + padding
+    total_pix_h = ((img_h + padding) * nrow) + padding
+
+    grid = torch.ones(total_pix_h, total_pix_w) * pad_value
+
+    curr_img_idx = 0
+    # Iterate over rows.
+    for i_row, start_y in enumerate(range(padding, grid.shape[0], padding + img_h)):
+        # Iterate over columns.
+        for j_col, start_x in enumerate(range(padding, grid.shape[1], padding + img_w)):
+            try:
+                grid[start_y : (start_y + img_h), start_x : (start_x + img_w)] = (
+                    tensor[curr_img_idx].cpu().to(grid)
+                )
+                curr_img_idx += 1
+            except IndexError:
+                break
+
+    vmin = grid.min()
+    vmax = grid.max()
+    # Normalize values in grid without intermediary copies.
+    grid.sub_(vmin).div_(max(vmax - vmin, 1e-5))
+
+    return grid
+
+
 class SubGridAggregator(torchio.GridAggregator):
     def __init__(
         self,
