@@ -161,7 +161,7 @@ def collate_locs_and_keys(
     )
 
 
-def make_grid(tensor, nrow=8, padding=2, pad_value=0):
+def make_grid(tensor, nrow=8, padding=2, pad_value=0, normalize=False, vmin=None, vmax=None):
     """Create grid of 2D imager for visualization.
 
     tensor:
@@ -206,10 +206,11 @@ def make_grid(tensor, nrow=8, padding=2, pad_value=0):
             except IndexError:
                 break
 
-    vmin = grid.min()
-    vmax = grid.max()
-    # Normalize values in grid without intermediary copies.
-    grid.sub_(vmin).div_(max(vmax - vmin, 1e-5))
+    if normalize:
+        vmin = grid.min() if vmin is None else vmin
+        vmax = grid.max() if vmax is None else vmax
+        # Normalize values in grid without intermediary copies.
+        grid.sub_(vmin).div_(max(vmax - vmin, 1e-5))
 
     return grid
 
