@@ -91,10 +91,16 @@ class ThreeConv(torch.nn.Module):
         return y_hat
 
 
-class ReduceBy5Conv(torch.nn.Module):
+class FractDownReduceBy5Conv(torch.nn.Module):
     """Basic three-layer 3D conv network for DIQT.
 
     Layers insure that patch sizes will be reduced by 5 in each dimension.
+    A final tri-linear interpolation is performed before output to compensate for any
+        non-interger scaling factors. In other words, break up the upsampling into two
+        steps for non-integer downsampling:
+            1. Over-upsample an integer amount using an NN
+            2. Downsample by a non-integer amount to get to the original target size.
+
     Assumes input shape is `B x C x H x W x D`."""
 
     def __init__(self, channels: int, downsample_factor: int, norm_method=None):
@@ -102,18 +108,37 @@ class ReduceBy5Conv(torch.nn.Module):
         self.channels = channels
         self.downsample_factor = downsample_factor
         self.norm_method = norm_method
+        # Break up the upsampling into two steps for non-integer downsampling:
+        # 1. Over-upsample an integer amount using an NN
+        # 2. Downsample by a non-integer amount to get to the original target size.
+        self._espcn_upsample_factor = np.ceil(self.downsample_factor).astype(int)
 
         # Set up Conv layers.
         self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(4, 4, 4))
         self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
         self.conv3 = torch.nn.Conv3d(
-            100, self.channels * (self.downsample_factor ** 3), kernel_size=(3, 3, 3)
+            100,
+            self.channels * (self._espcn_upsample_factor ** 3),
+            kernel_size=(3, 3, 3),
         )
-        self.output_shuffle = ESPCNShuffle(self.channels, self.downsample_factor)
-
+        self.output_shuffle = ESPCNShuffle(self.channels, self._espcn_upsample_factor)
+        self.shuffle_pad_amt = (
+            (self.conv1.kernel_size[0] - 1) * self._espcn_upsample_factor,
+            (self.conv3.kernel_size[0] - 1) * self._espcn_upsample_factor,
+        ) * 3
         self.norm = None
 
-    def forward(self, x, norm_output=False):
+        self._interp_downsample_factor = (
+            self.downsample_factor / self._espcn_upsample_factor
+        )
+
+    def forward(
+        self,
+        x,
+        norm_output=False,
+        pad_reduced_shape=False,
+        interp_to_spatial_shape=None,
+    ):
 
         y_hat = self.conv1(x)
         y_hat = F.relu(y_hat)
@@ -123,6 +148,22 @@ class ReduceBy5Conv(torch.nn.Module):
 
         # Shuffle output.
         y_hat = self.output_shuffle(y_hat)
+        if pad_reduced_shape:
+            # Pad the ESPCN output to maintain the correct network output shape.
+            y_hat = F.pad(y_hat, self.shuffle_pad_amt, mode="constant", value=0)
+
+        # Downsample by a non-integer amount with tri-linear interpolation.
+        if interp_to_spatial_shape:
+            interp_kwargs = {"size": interp_to_spatial_shape}
+        else:
+            interp_kwargs = {
+                "scale_factor": self._interp_downsample_factor,
+                "recompute_scale_factor": True,
+            }
+
+        y_hat = F.interpolate(
+            y_hat, mode="trilinear", align_corners=False, **interp_kwargs
+        )
 
         return y_hat
 

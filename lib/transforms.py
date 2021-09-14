@@ -3,6 +3,7 @@
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchio
 from torchio.transforms.preprocessing.label.label_transform import LabelTransform
 import skimage
@@ -167,44 +168,44 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
         self.target_vox_size = target_vox_size
         self.downsample_factor = self.target_vox_size / self.source_vox_size
 
-    @staticmethod
-    def downscale_image(
-        img: np.ndarray,
-        source_vox_size: float,
-        target_vox_size: float,
-        padding_kwargs={"mode": "constant", "constant_values": 0.0},
-    ):
-        img_shape = img.shape if img.ndim < 4 else img.shape[-3:]
-        idx, weights = coords.transform.fraction_downsample_idx_weights(
-            img_shape, source_vox_size, target_vox_size
-        )
+    # @staticmethod
+    # def downscale_image(
+    #     img: np.ndarray,
+    #     source_vox_size: float,
+    #     target_vox_size: float,
+    #     padding_kwargs={"mode": "constant", "constant_values": 0.0},
+    # ):
+    #     img_shape = img.shape if img.ndim < 4 else img.shape[-3:]
+    #     idx, weights = coords.transform.fraction_downsample_idx_weights(
+    #         img_shape, source_vox_size, target_vox_size
+    #     )
 
-        pad_amt = int(
-            np.max(
-                np.clip(
-                    (idx.max(axis=(1, 2, 3, 4)) + 1) - np.asarray(img_shape), 0, np.inf
-                )
-            )
-        )
-        weighted = list()
-        channel_iter = (
-            iter(img)
-            if img.ndim == 4
-            else [
-                img,
-            ]
-        )
-        for channel_img in channel_iter:
+    #     pad_amt = int(
+    #         np.max(
+    #             np.clip(
+    #                 (idx.max(axis=(1, 2, 3, 4)) + 1) - np.asarray(img_shape), 0, np.inf
+    #             )
+    #         )
+    #     )
+    #     weighted = list()
+    #     channel_iter = (
+    #         iter(img)
+    #         if img.ndim == 4
+    #         else [
+    #             img,
+    #         ]
+    #     )
+    #     for channel_img in channel_iter:
 
-            padded_img = np.pad(channel_img, ((0, pad_amt),) * 3, **padding_kwargs)
-            patches = padded_img[tuple(idx)]
-            weighted.append((patches * weights).sum(axis=0))
+    #         padded_img = np.pad(channel_img, ((0, pad_amt),) * 3, **padding_kwargs)
+    #         patches = padded_img[tuple(idx)]
+    #         weighted.append((patches * weights).sum(axis=0))
 
-        weighted = np.stack(weighted)
-        if img.ndim < 4:
-            weighted = weighted[0]
+    #     weighted = np.stack(weighted)
+    #     if img.ndim < 4:
+    #         weighted = weighted[0]
 
-        return weighted
+    #     return weighted
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
         print(
@@ -219,25 +220,31 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
             if self.downsample_factor == 1:
                 continue
 
-            img_ndarray = img.data.numpy()
+            scale_factor = self.downsample_factor**-1
 
-            downsample_vol = self.downscale_image(
-                img_ndarray.astype(float),
-                source_vox_size=self.source_vox_size,
-                target_vox_size=self.target_vox_size,
-            )
+            img_data = img.data
+            # Input image must be a floating point dtype to have a valid average.
+            if not img_data.dtype.is_floating_point:
+                img_data = img_data.float()
+            if img_data.ndim == 4:
+                img_data = img_data[None, ...]
 
+            downsample_vol = F.interpolate(
+                img_data,
+                scale_factor=scale_factor,
+                mode="area",
+                recompute_scale_factor=True,
+            )[0]
             # Check if image is binary.
-            if (
-                len(np.unique(img_ndarray)) == 2
-                and (np.unique(img_ndarray) == [0, 1]).all()
-            ):
-                downsample_vol = np.clip(downsample_vol, 0, 1)
-                downsample_vol = skimage.img_as_bool(downsample_vol)
+            if len(torch.unique(img.data)) == 2 and torch.unique(img.data).tolist() == [
+                0,
+                1,
+            ]:
+                nd_vol = downsample_vol.detach().cpu().numpy()
+                nd_vol = np.clip(nd_vol, 0, 1)
+                nd_vol = skimage.img_as_bool(nd_vol)
+                downsample_vol = torch.from_numpy(nd_vol).to(img.data)
 
-            downsample_vol = torch.from_numpy(
-                downsample_vol.astype(img_ndarray.dtype)
-            ).to(img.data.dtype)
             img.set_data(downsample_vol)
 
             scaled_affine = img.affine.copy()
