@@ -115,7 +115,7 @@ class FractDownReduceBy5Conv(torch.nn.Module):
 
         # Set up Conv layers.
         self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(4, 4, 4))
-        self.conv3 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
+        self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
         self.conv3 = torch.nn.Conv3d(
             100,
             self.channels * (self._espcn_upsample_factor ** 3),

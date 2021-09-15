@@ -18,6 +18,16 @@ def gaussian_kernel_3d(kernel_radius: int, sigma: float) -> torch.Tensor:
     return k
 
 
+def discrete_gaussian_kernel_3d() -> torch.Tensor:
+    k_1d = torch.as_tensor([1, 2, 4, 2, 1])
+    kx, ky, kz = torch.meshgrid(k_1d, k_1d, k_1d)
+
+    k = kx * ky * kz
+    k = 1 / k.sum() * k
+
+    return k
+
+
 class LaplacePyramid3d(torch.nn.Module):
     def __init__(self, num_high_freq=3):
         """A 3D Laplacian pyramid implemented as a pytorch Module.
@@ -36,7 +46,10 @@ class LaplacePyramid3d(torch.nn.Module):
         self._num_h_freq = num_high_freq
         self._L = self._num_h_freq + 1
         self._kernel_radius = 2
-        self._kernel = gaussian_kernel_3d(self._kernel_radius, 1.0)
+
+        # Set the gaussian kernel as a buffer so pytorch cannot change its weights, but
+        # still syncs up with the module's device (cuda/cpu).
+        self.register_buffer("kernel", gaussian_kernel_3d(self._kernel_radius, 1.0))
 
     @staticmethod
     def _ensure_5d(vol: torch.Tensor) -> torch.Tensor:
@@ -85,13 +98,20 @@ class LaplacePyramid3d(torch.nn.Module):
             Kernel to perform convolution, assumed to be a Gaussian kernel of shape ]
             `D x H x W`.
 
+        Note that with a symmetric Gaussian kernel, convolution is equivalent to cross-
+        correlation. The latter is actually the operation performed by
+        torch convolutional networks, confusingly enough. But the symmetry of the
+        Gaussian makes them equivalent.
+
         Returns
         -------
         torch.Tensor
         """
 
-        # Pad with a reflection to maintain the same shape after covolution.
-        y = F.pad(x, padding=(kernel.shape[-1] // 2,) * 6, mode="reflect")
+        # Pad to maintain the same shape after covolution. Use replication to maintain
+        # the average intensity of the gaussian weighting; reflection would be better,
+        # but it is not implemented in pytorch for 3 spatial dimension tensors.
+        y = F.pad(x, (kernel.shape[-1] // 2,) * 6, mode="replicate")
         num_channels = num_groups = x.shape[1]
         k_expand = kernel.repeat(num_channels, num_channels // num_groups, 1, 1, 1)
         # Perform convolution such that each channel is independently processed.
@@ -114,7 +134,7 @@ class LaplacePyramid3d(torch.nn.Module):
 
         # Rescale the kernel values to account for the 0-value voxels in the window of
         # each convolution step.
-        y = self._gaussian_convolution(y, 8 * kernel)
+        y = self._gaussian_convolution(y, 4 * kernel)
         return y
 
     def decompose(self, vol):
@@ -128,7 +148,7 @@ class LaplacePyramid3d(torch.nn.Module):
         # Iteratively blur and downsample for the number of desired high frequency
         # volumes.
         for k in range(1, self._L):
-            gauss_pyramid.append(self._downsample(gauss_pyramid[k - 1], self._kernel))
+            gauss_pyramid.append(self._downsample(gauss_pyramid[k - 1], self.kernel))
 
         # Set the size of the laplace pyramid so indexing by k can be used.
         laplace_pyramid = [
@@ -142,7 +162,7 @@ class LaplacePyramid3d(torch.nn.Module):
         for k in reversed(range(0, self._num_h_freq)):
             g_k = gauss_pyramid[k]
             l_kp1 = laplace_pyramid[k + 1]
-            l_kp1_upsampled = self._upsample(l_kp1, self._kernel)
+            l_kp1_upsampled = self._upsample(l_kp1, self.kernel)
 
             laplace_pyramid[k] = g_k - l_kp1_upsampled
 
@@ -162,7 +182,7 @@ class LaplacePyramid3d(torch.nn.Module):
 
         for k in reversed(range(len(high_freq))):
             laplace_k = high_freq[k]
-            gauss_k = self._upsample(gauss_kp1, self._kernel)
+            gauss_k = self._upsample(gauss_kp1, self.kernel)
             curr_reconstruction = laplace_k + gauss_k
             gauss_kp1 = curr_reconstruction
 
