@@ -51,6 +51,11 @@ class LaplacePyramid3d(torch.nn.Module):
         # still syncs up with the module's device (cuda/cpu).
         self.register_buffer("kernel", gaussian_kernel_3d(self._kernel_radius, 1.0))
 
+    @property
+    def L(self):
+        """Number of levels in the pyramid, including both high-freq and low-freq."""
+        return self._L
+
     @staticmethod
     def _ensure_5d(vol: torch.Tensor) -> torch.Tensor:
         """Reshapes tensor to be `B x C x D x H x W`.
@@ -187,3 +192,210 @@ class LaplacePyramid3d(torch.nn.Module):
             gauss_kp1 = curr_reconstruction
 
         return curr_reconstruction
+
+
+class ResidualBlock(torch.nn.Module):
+    def __init__(self, in_features):
+
+        super().__init__()
+        self.conv1 = torch.nn.Conv3d(in_features, in_features, 3, padding=1)
+        self.conv2 = torch.nn.Conv3d(in_features, in_features, 3, padding=1)
+
+    def forward(self, x):
+        y = self.conv1(x)
+        y = F.leaky_relu(y)
+        y = self.conv2(y)
+
+        return y
+
+
+class LowFreqTranslateNet(torch.nn.Module):
+    def __init__(self, num_channels=6, num_residual_blocks=5):
+        super().__init__()
+        self.conv_pre_res_1 = torch.nn.Conv3d(num_channels, 16, 3, padding=1)
+        self.conv_pre_res_2 = torch.nn.Conv3d(16, 64, 3, padding=1)
+
+        self.res_blocks = list()
+        for _ in range(num_residual_blocks):
+            self.res_blocks.append(ResidualBlock(64))
+
+        self.conv_post_res_1 = torch.nn.Conv3d(64, 16, 3, padding=1)
+        self.conv_post_res_2 = torch.nn.Conv3d(16, num_channels, 3, padding=1)
+
+    def forward(self, low_freq: torch.Tensor) -> torch.Tensor:
+
+        # Three levels of the term "residual":
+        # 1. The low-frequency image I_L is a residual of the high-frequencies of the
+        #    original image
+        # 2. This module computes a residual of I_L, I_L^R, adding it at the end of the
+        #    forward pass.
+        # 3. The residual blocks within this module compute residuals over I_L^R, namely
+        #    (I_L^R)^R!
+        # How confusing.
+
+        # Pre-residual blocks.
+        # This is also a sort of "residual" to the original low-frequency residual.
+        y_res = self.conv_pre_res_1(low_freq)
+        y_res = F.instance_norm(y_res)
+        y_res = F.leaky_relu(y_res)
+        y_res = self.conv_pre_res_2(y_res)
+        y_res = F.leaky_relu(y_res)
+
+        # Residual blocks.
+        for i_res_block in range(len(self.res_blocks)):
+            res_block = self.res_blocks[i_res_block]
+            # This is the residual to the residual to the residual!
+            y_res_block_i = res_block(y_res)
+            y_res = y_res + y_res_block_i
+
+        # Post residual blocks.
+        y_res = self.conv_post_res_1(y_res)
+        y_res = F.leaky_relu(y_res)
+
+        # Combine the res blocks and the original input.
+        y = low_freq + y_res
+        y = F.tanh(y)
+
+        return y
+
+
+class HighFreqTranslateNet(torch.nn.Module):
+    def __init__(self, num_input_channels, num_residual_blocks=3):
+        super().__init__()
+        self.conv_pre_res = torch.nn.Conv3d(num_input_channels, 16, 3, padding=1)
+
+        self.res_blocks = list()
+        for _ in range(num_residual_blocks):
+            self.res_blocks.append(ResidualBlock(16))
+
+        self.conv_post_res = torch.nn.Conv3d(16, 1, 3, padding=1)
+
+    def forward(
+        self, high_freq_level_L: torch.Tensor, processed_level_Lm1: torch.Tensor
+    ) -> torch.Tensor:
+
+        # Compute the new mask given information from the level below the current level.
+        # Pre-residual blocks.
+        m = self.conv_pre_res(processed_level_Lm1)
+        m = F.leaky_relu(m)
+
+        # Residual blocks, if there are any.
+        for i_res_block in range(len(self.res_blocks)):
+            res_block = self.res_blocks[i_res_block]
+            m_res_i = res_block(m)
+            m = m + m_res_i
+
+        m = self.conv_post_res(m)
+        # No leaky-relu afterwards.
+
+        # The full prediction is level L of a new Laplacian pyramid that will be
+        # reconstructed into the final prediction.
+        y = torch.multiply(high_freq_level_L, m)
+        # Return both the Laplacian level L prediction and the mask generated.
+        return y, m
+
+
+class LPTN(torch.nn.Module):
+    def __init__(self, num_input_channels, num_high_freq_levels=3):
+        """Laplacian Pyramid Translation Network implementation.
+
+        Parameters
+        ----------
+        num_input_channels : int
+
+        num_pyramid_levels : int, optional
+            Number of high-frequency levels in the pyramid, by default 3.
+
+            Must be >= 1. Note that this is only for the number of *high frequency*
+            levels; the total number of levels will always be num_high_freq_levels + 1,
+            for the low-frequency residual.
+        """
+
+        super().__init__()
+
+        self.num_input_channels = num_input_channels
+
+        self.laplace_pyramid = LaplacePyramid3d(num_high_freq_levels)
+        self.low_freq_net = LowFreqTranslateNet(
+            self.num_input_channels, num_residual_blocks=5
+        )
+
+        # Set up the high-frequency processing networks.
+        self.high_freq_nets = list()
+        self.high_freq_nets.append(
+            HighFreqTranslateNet(self.num_input_channels * 3, num_residual_blocks=3)
+        )
+        for _ in range(num_high_freq_levels - 1):
+            self.high_freq_nets.append(
+                HighFreqTranslateNet(self.num_input_channels, num_residual_blocks=0)
+            )
+        # Reverse to put in order of decreasing frequency, to match the laplacian
+        # pyramid.
+        self.high_freq_nets = reversed(self.high_freq_nets)
+
+    @staticmethod
+    def _ensure_5d(vol: torch.Tensor) -> torch.Tensor:
+        """Reshapes tensor to be `B x C x D x H x W`.
+
+        Parameters
+        ----------
+        vol : torch.Tensor
+
+        Returns
+        -------
+        torch.Tensor
+            Reshaped tensor, with same data as the input.
+        """
+
+        if vol.ndim < 3 or vol.ndim > 5:
+            raise RuntimeError(
+                f"ERROR: volume shape {tuple(vol.shape)} invalid, "
+                + "expected 3 or 5 dimensions."
+            )
+
+        if vol.ndim == 4:
+            raise RuntimeError(
+                "ERROR: volume with 4 dimensions is ambiguous, "
+                + "reshape to 5 dimensions."
+            )
+
+        if vol.ndim == 3:
+            vol = vol[None, None, ...]
+
+        return vol
+
+    def upsample(self, x):
+        # Convenience function, for brevity and in case we want to change the upsampling
+        # method.
+        return F.interpolate(x, scale_factor=2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+        x = self._ensure_5d(x)
+        high_freqs, low_freq = self.laplace_pyramid.decompose(x)
+
+        low_freq_reconstruct = self.low_freq_net(low_freq)
+
+        # Refine high-frequency components.
+        # Prepare first lower-level high-freq input, which is different than all the
+        # other levels.
+        upsample_low_freq = self.upsample(low_freq)
+        upsample_low_freq_reconstruct = self.upsample(low_freq_reconstruct)
+        high_freq_km1_input = torch.cat(
+            [high_freqs[-1], upsample_low_freq, upsample_low_freq_reconstruct], dim=1
+        )
+        high_freqs_reconstruct = [
+            None,
+        ] * len(high_freqs)
+
+        for k, high_freq_net_k in reversed(enumerate(self.high_freq_nets)):
+            laplacian_level_k, mask_k = high_freq_net_k(high_freq_km1_input)
+            high_freqs_reconstruct[k] = laplacian_level_k
+            if k > 0:
+                high_freq_km1_input = self.upsample(mask_k)
+
+        y = self.laplace_pyramid.reconstruct(
+            high_freqs_reconstruct, low_freq_reconstruct
+        )
+
+        return y
