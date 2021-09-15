@@ -1,15 +1,20 @@
 [submodule "sources/iqt"]
 	path = sources/iqt
-	url = git@github.com:ucl-mig/iqt.git
+    url = git@github.com:ucl-mig/iqt.git
+    ignore = dirty
 [submodule "sources/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images"]
 	path = sources/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images
 	url = git@github.com:sbb-gh/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images.git
+    ignore = dirty
 [submodule "docker/opengl"]
 	path = docker/opengl
 	url = https://gitlab.com/nvidia/container-images/opengl.git
+    ignore = dirty
 [submodule "sources/BasicSR"]
 	path = sources/BasicSR
 	url = https://github.com/xinntao/BasicSR
+    ignore = dirty
 [submodule "sources/LPTN"]
 	path = sources/LPTN
 	url = https://github.com/csjliang/LPTN
+    ignore = dirty

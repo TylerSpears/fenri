@@ -114,10 +114,9 @@ class FractDownReduceBy5Conv(torch.nn.Module):
         self._espcn_upsample_factor = np.ceil(self.downsample_factor).astype(int)
 
         # Set up Conv layers.
-        self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(3, 3, 3))
-        self.conv2 = torch.nn.Conv3d(50, 75, kernel_size=(2, 2, 2))
-        self.conv3 = torch.nn.Conv3d(75, 100, kernel_size=(1, 1, 1))
-        self.conv4 = torch.nn.Conv3d(
+        self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(4, 4, 4))
+        self.conv3 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
+        self.conv3 = torch.nn.Conv3d(
             100,
             self.channels * (self._espcn_upsample_factor ** 3),
             kernel_size=(3, 3, 3),
@@ -146,8 +145,6 @@ class FractDownReduceBy5Conv(torch.nn.Module):
         y_hat = self.conv2(y_hat)
         y_hat = F.relu(y_hat)
         y_hat = self.conv3(y_hat)
-        y_hat = F.relu(y_hat)
-        y_hat = self.conv4(y_hat)
 
         # Shuffle output.
         y_hat = self.output_shuffle(y_hat)
