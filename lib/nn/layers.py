@@ -215,7 +215,7 @@ class LowFreqTranslateNet(torch.nn.Module):
         self.conv_pre_res_1 = torch.nn.Conv3d(num_channels, 16, 3, padding=1)
         self.conv_pre_res_2 = torch.nn.Conv3d(16, 64, 3, padding=1)
 
-        self.res_blocks = list()
+        self.res_blocks = torch.nn.ModuleList()
         for _ in range(num_residual_blocks):
             self.res_blocks.append(ResidualBlock(64))
 
@@ -251,10 +251,11 @@ class LowFreqTranslateNet(torch.nn.Module):
         # Post residual blocks.
         y_res = self.conv_post_res_1(y_res)
         y_res = F.leaky_relu(y_res)
+        y_res = self.conv_post_res_2(y_res)
 
         # Combine the res blocks and the original input.
         y = low_freq + y_res
-        y = F.tanh(y)
+        y = torch.tanh(y)
 
         return y
 
@@ -264,7 +265,7 @@ class HighFreqTranslateNet(torch.nn.Module):
         super().__init__()
         self.conv_pre_res = torch.nn.Conv3d(num_input_channels, 16, 3, padding=1)
 
-        self.res_blocks = list()
+        self.res_blocks = torch.nn.ModuleList()
         for _ in range(num_residual_blocks):
             self.res_blocks.append(ResidualBlock(16))
 
@@ -321,17 +322,15 @@ class LPTN(torch.nn.Module):
         )
 
         # Set up the high-frequency processing networks.
-        self.high_freq_nets = list()
-        self.high_freq_nets.append(
+        high_freq_nets = list()
+        high_freq_nets.append(
             HighFreqTranslateNet(self.num_input_channels * 3, num_residual_blocks=3)
         )
         for _ in range(num_high_freq_levels - 1):
-            self.high_freq_nets.append(
-                HighFreqTranslateNet(self.num_input_channels, num_residual_blocks=0)
-            )
+            high_freq_nets.append(HighFreqTranslateNet(1, num_residual_blocks=0))
         # Reverse to put in order of decreasing frequency, to match the laplacian
         # pyramid.
-        self.high_freq_nets = reversed(self.high_freq_nets)
+        self.high_freq_nets = torch.nn.ModuleList(reversed(high_freq_nets))
 
     @staticmethod
     def _ensure_5d(vol: torch.Tensor) -> torch.Tensor:
@@ -367,7 +366,7 @@ class LPTN(torch.nn.Module):
     def upsample(self, x):
         # Convenience function, for brevity and in case we want to change the upsampling
         # method.
-        return F.interpolate(x, scale_factor=2)
+        return F.interpolate(x, scale_factor=2, mode="trilinear")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
@@ -388,8 +387,10 @@ class LPTN(torch.nn.Module):
             None,
         ] * len(high_freqs)
 
-        for k, high_freq_net_k in reversed(enumerate(self.high_freq_nets)):
-            laplacian_level_k, mask_k = high_freq_net_k(high_freq_km1_input)
+        for k, high_freq_net_k in reversed(list(enumerate(self.high_freq_nets))):
+            laplacian_level_k, mask_k = high_freq_net_k(
+                high_freqs[k], high_freq_km1_input
+            )
             high_freqs_reconstruct[k] = laplacian_level_k
             if k > 0:
                 high_freq_km1_input = self.upsample(mask_k)
