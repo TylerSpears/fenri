@@ -1,11 +1,23 @@
 # -*- coding: utf-8 -*-
 # torchio.Transform functions/objects.
 
+from typing import (
+    Dict,
+    Hashable,
+    Mapping,
+)
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torchio
 from torchio.transforms.preprocessing.label.label_transform import LabelTransform
+import monai
+from monai.transforms.intensity.array import ThresholdIntensity
+from monai.config import KeysCollection
+from monai.config.type_definitions import NdarrayOrTensor
+from monai.transforms.utils_pytorch_numpy_unification import percentile, clip
+
 import skimage
 import skimage.transform
 import skimage.morphology
@@ -16,8 +28,6 @@ import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
 import joblib
-
-from . import coords
 
 
 class BValSelectionTransform(torchio.SpatialTransform):
@@ -220,7 +230,7 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
             if self.downsample_factor == 1:
                 continue
 
-            scale_factor = self.downsample_factor**-1
+            scale_factor = self.downsample_factor ** -1
 
             img_data = img.data
             # Input image must be a floating point dtype to have a valid average.
@@ -412,3 +422,82 @@ class ImageToDictTransform(torchio.Transform):
 
         subject.update_attributes()
         return subject
+
+
+class ClipPercentileTransformd(monai.transforms.MapTransform):
+    """
+    Dictionary-based transformation for clipping images at their percentiles.
+
+    Based almost entirely on :py:class:`monai.transforms.ThresholdIntensityd`.
+
+    Args:
+        keys: keys of the corresponding items to be transformed.
+            See also: monai.transforms.MapTransform
+        lower: float, lower percentile that determines lower intensity of the input
+            image. Must be in range [0, 100] and lower < upper.
+        upper: float, upper percentile of input image. Must be in range [0, 100] and
+            upper > lower.
+        nonzero: bool, chooses whether or not to normalize only non-zero intensity
+            values.
+        channel_wise: bool, chooses whether or not to calculate the percentiles for
+            each channel individually, or select percentiles of the whole image.
+        allow_missing_keys: don't raise exception if key is missing.
+    """
+
+    backend = ThresholdIntensity.backend
+
+    def __init__(
+        self,
+        keys: KeysCollection,
+        lower: float,
+        upper: float,
+        nonzero: bool = False,
+        channel_wise: bool = False,
+        allow_missing_keys: bool = False,
+    ) -> None:
+        if lower < 0.0 or lower > 100.0:
+            raise ValueError("Percentiles must be in the range [0, 100]")
+        if upper < 0.0 or upper > 100.0:
+            raise ValueError("Percentiles must be in the range [0, 100]")
+        if lower > upper:
+            raise ValueError("Upper percentile must be greater than lower percentile")
+
+        super().__init__(keys, allow_missing_keys)
+        self.lower_percentile = lower
+        self.upper_percentile = upper
+        self.nonzero = nonzero
+        self.channel_wise = channel_wise
+
+    def __call__(
+        self, data: Mapping[Hashable, NdarrayOrTensor]
+    ) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        # Iterate over images in the dict.
+        for key in self.key_iterator(d):
+            # Whether or not to handle channels independently.
+            if self.channel_wise:
+                n_channels = d[key].shape[0]
+                for i in range(n_channels):
+                    # If only nonzeros are considered, calculate percentiles on only
+                    # nonzero values, and only clip nonzero values.
+                    if self.nonzero:
+                        img_slicer = d[key][i] != 0
+                    else:
+                        img_slicer = slice(None)
+
+                    lower_val = percentile(d[key][i][img_slicer], self.lower_percentile)
+                    upper_val = percentile(d[key][i][img_slicer], self.upper_percentile)
+                    # Only change the selected pixels/voxels for this channel.
+                    d[key][i][img_slicer] = clip(
+                        d[key][i][img_slicer], lower_val, upper_val
+                    )
+            else:
+                if self.nonzero:
+                    img_slicer = d[key] != 0
+                else:
+                    img_slicer = slice(None)
+
+                lower_val = percentile(d[key][img_slicer], self.lower_percentile)
+                upper_val = percentile(d[key][img_slicer], self.upper_percentile)
+                d[key][img_slicer] = clip(d[key][img_slicer], lower_val, upper_val)
+        return d
