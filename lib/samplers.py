@@ -7,7 +7,9 @@ import warnings
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchio
+import monai
 
 # Return type wrapper
 MultiresSample = collections.namedtuple("MultiresSample", ("low_res", "full_res"))
@@ -147,6 +149,82 @@ def map_fr_coord_to_lr(
     lr_coord = np.concatenate([lr_index_ini, lr_index_ini + lr_lengths], axis=-1)
 
     return lr_coord
+
+
+def random_patches_from_mask(
+    img: torch.Tensor,
+    mask: torch.Tensor,
+    patch_size: tuple,
+    num_patches: int = 1,
+    return_mask_patch: bool = False,
+    generator=None,
+):
+    """Select random patches where the center voxels lies in the foreground/mask.
+
+    Parameters
+    ----------
+    img : torch.Tensor
+        Source image, of shape [C x H x W x D]
+    mask : torch.Tensor
+        Mask that corresponds to the target locations in the img, of shape [H x W x D]
+    patch_size : tuple
+    num_patches : int, optional
+        Number of patches in the batch, by default 1
+    return_mask_patch: bool
+        Whether or not to return the mask patch at the same location as each sample
+        patch. Setting this to True will return a list of tuples of Tensors, so the
+        output sequence length can remain equal to the requested number of patches.
+    generator : torch.generator, optional
+        Pytorch Generator object, if randomization needs to be controlled., by default
+        None
+
+    Returns
+    -------
+    torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]
+        Random sample, either as a Tensor of image patches or a sequence of
+        (image_patch, mask_patch) tuples.
+    """
+
+    if return_mask_patch:
+        raise NotImplementedError("Returning mask patches is not yet implemented.")
+    patch_size = monai.utils.misc.ensure_tuple_rep(patch_size, 3)
+    if mask.ndim == 4:
+        mask = mask[0]
+    if img.ndim == 3:
+        img = img[None, ...]
+
+    patch_centers = torch.stack(torch.where(mask))
+    for i_dim, patch_dim_size in enumerate(patch_size):
+        offset_lower = int(np.floor(patch_dim_size / 2))
+        offset_upper = int(np.ceil(patch_dim_size / 2))
+        patch_centers = patch_centers[
+            :,
+            (patch_centers[i_dim] >= offset_lower)
+            & (patch_centers[i_dim] <= img.shape[i_dim + 1] - offset_upper),
+        ]
+
+    selected = torch.randperm(patch_centers.shape[1], generator=generator)[:num_patches]
+    patch_centers = patch_centers[:, tuple(selected)]
+    patch_starts = (
+        patch_centers - torch.floor(torch.as_tensor(patch_size)[:, None] / 2).int()
+    ).T
+    patches = list()
+    for start_idx in patch_starts:
+
+        patches.append(
+            img[
+                :,
+                start_idx[0] : start_idx[0] + patch_size[0],
+                start_idx[1] : start_idx[1] + patch_size[1],
+                start_idx[2] : start_idx[2] + patch_size[2],
+            ]
+        )
+
+    patches = torch.stack(patches)
+    if img.ndim == 3:
+        patches = patches[:, 0]
+    print(f"Sampled patch batch of size {num_patches}")
+    return patches
 
 
 # Custom sampler for sampling multiple volumes of different resolutions.
