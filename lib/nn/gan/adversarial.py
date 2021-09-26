@@ -70,7 +70,9 @@ class MultiDiscriminator(torch.nn.Module):
         if scale_factor == 1:
             return x
         else:
-            return F.interpolate(x, scale_factor=scale_factor, mode="area")
+            return F.interpolate(
+                x, scale_factor=scale_factor, mode="area", recompute_scale_factor=False
+            )
 
     def forward(self, x):
         y = list()

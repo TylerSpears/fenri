@@ -4,6 +4,7 @@ import typing
 from typing import Generator
 import numbers
 import warnings
+import itertools
 
 import numpy as np
 import torch
@@ -553,3 +554,65 @@ class MultiresGridSampler(torchio.GridSampler):
         patch_subj[self.low_res_key] = lr_patch_dict
 
         return patch_subj
+
+
+class ConcatDatasetBalancedRandomSampler(torch.utils.data.Sampler):
+    def __init__(self, datasets, max_samples_per_dataset, generator=None):
+        """Sampler that draws a given number of samples from each dataset.
+
+        datasets: List[torch.utils.data.Dataset]
+            List of pytorch Datasets to sample.
+
+            TIP If using a ConcatDataset object `cat_ds`, the property `cat_ds.datasets`
+            will return a list of Datasets.
+        max_samples_per_dataset: int or List[int]
+            Give a single integer to make sample amounts the same for all datasets, or
+            a list of integers with length equal to the number of datasets to specify
+            a sample number particular to each dataset. If a dataset is smaller than
+            the requested number of samples, the entire length of the dataset will be
+            used instead. Each Dataset *must* be a Map-style Dataset.
+        """
+
+        self.ds_lens = [len(ds) for ds in datasets]
+        # Expand the max samples into a list of max samples for each dataset.
+        if (
+            np.isscalar(max_samples_per_dataset)
+            and int(max_samples_per_dataset) == max_samples_per_dataset
+        ):
+            self.sample_sizes = [
+                max_samples_per_dataset,
+            ] * len(self.ds_lens)
+        else:
+            self.sample_sizes = max_samples_per_dataset
+            if len(self.sample_sizes) != len(self.ds_lens):
+                raise ValueError(
+                    "Must request sample sizes with length equal to the number of datasets"
+                )
+        # Make sure we don't assign more samples to a dataset than there are elements
+        # in that dataset.
+        self.sample_sizes = list(map(min, zip(self.ds_lens, self.sample_sizes)))
+        cum_lens = list(itertools.accumulate(self.ds_lens))
+        self.start_idx = [
+            0,
+        ] + cum_lens[:-1]
+        self._total_samples = sum(self.sample_sizes)
+        self.generator = generator
+
+    def __iter__(self):
+        samples = list()
+        # Select random indices within each dataset, based on the size of the dataset
+        # and the number of requested samples.
+        for sample_size, len_i, i_start in zip(
+            self.sample_sizes, self.ds_lens, self.start_idx
+        ):
+            idx_i = (
+                i_start + torch.randperm(len_i, generator=self.generator)[:sample_size]
+            )
+            samples.extend(idx_i.tolist())
+        # Return needs to be an iterable object, not just a sequence.
+        return (
+            samples[i] for i in torch.randperm(len(samples), generator=self.generator)
+        )
+
+    def __len__(self):
+        return self._total_samples
