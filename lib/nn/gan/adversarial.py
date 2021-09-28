@@ -47,7 +47,7 @@ class DiscriminatorSubNet(torch.nn.Module):
         y = F.pad(y, pad=padding, mode="replicate")
 
         y = self.conv_end(y)
-
+        y = torch.tanh(y)
         return y
 
 
@@ -58,27 +58,38 @@ class MultiDiscriminator(torch.nn.Module):
         super().__init__()
         self._num_input_channels = num_input_channels
         self._downsample_factors = list(discrim_downsample_factors)
-        self._scale_factors = list(map(lambda x: x ** -1, self._downsample_factors))
+        # self._scale_factors = list(map(lambda x: x ** -1, self._downsample_factors))
         discriminators = list()
-        for _ in self._downsample_factors:
+        downsamplers = list()
+        for factor in self._downsample_factors:
+            # No downsampling needs to take place, so save the computation.
+            if factor == 1:
+                downsampler = torch.nn.Identity()
+            else:
+                downsampler = torch.nn.AvgPool3d(
+                    kernel_size=3, stride=factor, padding=1, count_include_pad=False
+                )
+            downsamplers.append(downsampler)
             discriminators.append(DiscriminatorSubNet(self._num_input_channels))
 
         self.discriminators = torch.nn.ModuleList(discriminators)
+        self.downsamplers = torch.nn.ModuleList(downsamplers)
 
-    @staticmethod
-    def _downsample(x, scale_factor: int):
-        if scale_factor == 1:
-            return x
-        else:
-            return F.interpolate(
-                x, scale_factor=scale_factor, mode="area", recompute_scale_factor=False
-            )
+    # @staticmethod
+    # def _downsample(x, scale_factor: int):
+    #     if scale_factor == 1:
+    #         return x
+    #     else:
+    #         return F.interpolate(
+    #             x, scale_factor=scale_factor, mode="area", recompute_scale_factor=True
+    #         )
 
     def forward(self, x):
         y = list()
-        for i_scale, scale_factor in enumerate(self._scale_factors):
-            x_down = self._downsample(x, scale_factor)
-            y_i = self.discriminators[i_scale](x_down)
+        for i_downsample_factor in range(len(self._downsample_factors)):
+            # x_down = self._downsample(x, scale_factor)
+            x_down = self.downsamplers[i_downsample_factor](x)
+            y_i = self.discriminators[i_downsample_factor](x_down)
             # Flatten prediction into B x 1 outputs.
             y.append(y_i.reshape(-1, 1))
 

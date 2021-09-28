@@ -213,6 +213,7 @@ class LowFreqTranslateNet(torch.nn.Module):
     def __init__(self, num_channels=6, num_residual_blocks=5):
         super().__init__()
         self.conv_pre_res_1 = torch.nn.Conv3d(num_channels, 16, 3, padding=1)
+        self.inst_norm_pre_res = torch.nn.InstanceNorm3d(16, eps=1e-7)
         self.conv_pre_res_2 = torch.nn.Conv3d(16, 64, 3, padding=1)
 
         self.res_blocks = torch.nn.ModuleList()
@@ -236,7 +237,7 @@ class LowFreqTranslateNet(torch.nn.Module):
         # Pre-residual blocks.
         # This is also a sort of "residual" to the original low-frequency residual.
         y_res = self.conv_pre_res_1(low_freq)
-        y_res = F.instance_norm(y_res)
+        y_res = self.inst_norm_pre_res(y_res)
         y_res = F.leaky_relu(y_res)
         y_res = self.conv_pre_res_2(y_res)
         y_res = F.leaky_relu(y_res)
@@ -306,7 +307,9 @@ class DiscriminatorBlock(torch.nn.Module):
         )
 
         if normalize:
-            self.normalizer = torch.nn.InstanceNorm3d(num_output_channels, affine=True)
+            self.normalizer = torch.nn.InstanceNorm3d(
+                num_output_channels, eps=1e-7, affine=True
+            )
         else:
             self.normalizer = None
 
