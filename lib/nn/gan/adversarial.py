@@ -15,7 +15,7 @@ class DiscriminatorSubNet(torch.nn.Module):
         self.block2 = layers.DiscriminatorBlock(16, 32, normalize=True)
         self.block3 = layers.DiscriminatorBlock(32, 64, normalize=True)
         self.block4 = layers.DiscriminatorBlock(64, 128, normalize=True)
-        # self.block5 = layers.DiscriminatorBlock(128, 128, normalize=True)
+        self.block5 = layers.DiscriminatorBlock(128, 128, normalize=True)
         # If the input to the final conv is between (kernel_size, kernel_size + 2), then
         # just chop off the extra values with the 'valid' padding method.
         # ! This assumes the conv input size is not >= kernel_size + 2, because we
@@ -27,7 +27,7 @@ class DiscriminatorSubNet(torch.nn.Module):
         y = self.block2(y)
         y = self.block3(y)
         y = self.block4(y)
-        # y = self.block5(y)
+        y = self.block5(y)
         # If y is smaller than the final conv layer's kernel size, then pad y to equal
         # the kernel size. If y is larger than the kernel size, then padding should be 0
         # and the final conv layer should handle the truncation.
@@ -80,7 +80,6 @@ class MultiDiscriminator(torch.nn.Module):
     def forward(self, x):
         y = list()
         for i_downsample_factor in range(len(self._downsample_factors)):
-            # x_down = self._downsample(x, scale_factor)
             x_down = self.downsamplers[i_downsample_factor](x)
             y_i = self.discriminators[i_downsample_factor](x_down)
             # Flatten prediction into B x 1 outputs.
