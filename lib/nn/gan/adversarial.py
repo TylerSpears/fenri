@@ -47,7 +47,9 @@ class DiscriminatorSubNet(torch.nn.Module):
         y = F.pad(y, pad=padding, mode="replicate")
 
         y = self.conv_end(y)
-        y = torch.tanh(y)
+        # Even though classification is only with [-1, 1] labels, allow the
+        # discriminator to make invalid predictions within some bound.
+        y = torch.tanh(y) * 2
         return y
 
 
@@ -74,15 +76,6 @@ class MultiDiscriminator(torch.nn.Module):
 
         self.discriminators = torch.nn.ModuleList(discriminators)
         self.downsamplers = torch.nn.ModuleList(downsamplers)
-
-    # @staticmethod
-    # def _downsample(x, scale_factor: int):
-    #     if scale_factor == 1:
-    #         return x
-    #     else:
-    #         return F.interpolate(
-    #             x, scale_factor=scale_factor, mode="area", recompute_scale_factor=True
-    #         )
 
     def forward(self, x):
         y = list()
