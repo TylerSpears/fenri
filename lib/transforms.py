@@ -27,6 +27,7 @@ import dipy.core
 import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
+import nibabel as nib
 import joblib
 
 
@@ -156,9 +157,12 @@ class MeanDownsampleTransform(torchio.SpatialTransform):
             img.set_data(downsample_vol)
 
             scaled_affine = img.affine.copy()
-            # Scale the XYZ coordinates on the main diagonal.
-            scaled_affine[(0, 1, 2), (0, 1, 2)] = (
-                scaled_affine[(0, 1, 2), (0, 1, 2)] * self.downsample_factor
+            target_voxel_sizes = np.diag(img.affine)[:-1] * dim_factors[1:4]
+            scaled_affine = nib.affines.rescale_affine(
+                img.affine.copy(),
+                shape=img_ndarray.shape[1:4],
+                zooms=target_voxel_sizes,
+                new_shape=tuple(downsample_vol.shape[1:4]),
             )
             img.affine = scaled_affine
         print("Downsampled", flush=True)
@@ -218,11 +222,6 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
     #     return weighted
 
     def apply_transform(self, subject: torchio.Subject) -> torchio.Subject:
-        print(
-            f"Downsampling fractional amount: Subject {subject.subj_id}...",
-            flush=True,
-            end="",
-        )
 
         # Get reference to Image objects that have been included for transformation.
         for img in self.get_images(subject):
@@ -236,14 +235,17 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
             # Input image must be a floating point dtype to have a valid average.
             if not img_data.dtype.is_floating_point:
                 img_data = img_data.float()
+            # Pytorch interpolate() only accepts 5D inputs if we want to interpolate
+            # 3D data (B x C x D x H x W).
             if img_data.ndim == 4:
                 img_data = img_data[None, ...]
 
+            # Calculate interpolation, chop off the batch dimension.
             downsample_vol = F.interpolate(
                 img_data,
                 scale_factor=scale_factor,
                 mode="area",
-                recompute_scale_factor=True,
+                recompute_scale_factor=False,
             )[0]
             # Check if image is binary.
             if len(torch.unique(img.data)) == 2 and torch.unique(img.data).tolist() == [
@@ -257,10 +259,11 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
 
             img.set_data(downsample_vol)
 
-            scaled_affine = img.affine.copy()
-            # Scale the XYZ coordinates on the main diagonal.
-            scaled_affine[(0, 1, 2), (0, 1, 2)] = (
-                scaled_affine[(0, 1, 2), (0, 1, 2)] * self.downsample_factor
+            scaled_affine = nib.affines.rescale_affine(
+                img.affine.copy(),
+                shape=tuple(img_data.shape[2:5]),
+                zooms=self.target_vox_size,
+                new_shape=tuple(downsample_vol.shape[1:4]),
             )
             img.affine = scaled_affine
         print("Downsampled", flush=True)

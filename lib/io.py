@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import collections
+import typing
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -36,3 +38,18 @@ def nifti_reader(
     # underlying memory getting garbage collected when using `torch.from_numpy`.
     # <https://pytorch.org/docs/1.8.0/generated/torch.tensor.html#torch.tensor>
     return ReaderOutput(dwi=torch.tensor(dwi.view()), affine=torch.tensor(affine))
+
+
+def mgz_to_nifti(
+    mgz_in: typing.Union[str, Path, nib.MGHImage], **nib_load_kwargs
+) -> nib.Nifti2Image:
+    if isinstance(mgz_in, nib.spatialimages.SpatialImage):
+        img = mgz_in
+    elif isinstance(mgz_in, (Path, str)):
+        filename = Path(mgz_in)
+        img = nib.load(filename, **nib_load_kwargs)
+
+    nifti_img = nib.Nifti2Image.from_image(img)
+    nifti_img = nib.as_closest_canonical(nifti_img, enforce_diag=False)
+
+    return nifti_img
