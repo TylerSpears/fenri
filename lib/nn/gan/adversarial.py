@@ -49,7 +49,7 @@ class DiscriminatorSubNet(torch.nn.Module):
         y = self.conv_end(y)
         # Even though classification is only with [-1, 1] labels, allow the
         # discriminator to make invalid predictions within some bound.
-        y = torch.tanh(y) * 2
+        # y = torch.tanh(y) * 2
         return y
 
 
