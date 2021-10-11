@@ -97,6 +97,20 @@ class DTIMinMaxScaler:
         ] * num_reps
         self.clip = clip
 
+    def __str__(self):
+        data_range_str = (
+            "Not defined"
+            if all(map(lambda r: r is None, self._data_range))
+            else f"{torch.squeeze(torch.stack(self._data_range)).cpu().numpy()}"
+        )
+
+        return (
+            "MinMax scaler"
+            + f"\n    Quantile ranges: {self.quantile_ranges.cpu().numpy().tolist()}"
+            + "\n    Data range: "
+            + data_range_str
+        )
+
     def scale(self, x: torch.Tensor, stateful=True):
         """MinMax scale the input Tensor, optionally saving scale information.
 

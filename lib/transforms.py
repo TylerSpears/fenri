@@ -440,7 +440,7 @@ class ClipPercentileTransformd(monai.transforms.MapTransform):
             image. Must be in range [0, 100] and lower < upper.
         upper: float, upper percentile of input image. Must be in range [0, 100] and
             upper > lower.
-        nonzero: bool, chooses whether or not to normalize only non-zero intensity
+        only_nonzero: bool, chooses whether or not to normalize only non-zero intensity
             values.
         channel_wise: bool, chooses whether or not to calculate the percentiles for
             each channel individually, or select percentiles of the whole image.
@@ -454,7 +454,7 @@ class ClipPercentileTransformd(monai.transforms.MapTransform):
         keys: KeysCollection,
         lower: float,
         upper: float,
-        nonzero: bool = False,
+        only_nonzero: bool = False,
         channel_wise: bool = False,
         allow_missing_keys: bool = False,
     ) -> None:
@@ -468,7 +468,7 @@ class ClipPercentileTransformd(monai.transforms.MapTransform):
         super().__init__(keys, allow_missing_keys)
         self.lower_percentile = lower
         self.upper_percentile = upper
-        self.nonzero = nonzero
+        self.only_nonzero = only_nonzero
         self.channel_wise = channel_wise
 
     def __call__(
@@ -483,7 +483,7 @@ class ClipPercentileTransformd(monai.transforms.MapTransform):
                 for i in range(n_channels):
                     # If only nonzeros are considered, calculate percentiles on only
                     # nonzero values, and only clip nonzero values.
-                    if self.nonzero:
+                    if self.only_nonzero:
                         img_slicer = d[key][i] != 0
                     else:
                         img_slicer = slice(None)
@@ -495,7 +495,7 @@ class ClipPercentileTransformd(monai.transforms.MapTransform):
                         d[key][i][img_slicer], lower_val, upper_val
                     )
             else:
-                if self.nonzero:
+                if self.only_nonzero:
                     img_slicer = d[key] != 0
                 else:
                     img_slicer = slice(None)
