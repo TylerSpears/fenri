@@ -1,6 +1,10 @@
+ITK_HOME_DIR="$HOME/.local/share/x11docker/itk-snap"
+mkdir -p $ITK_HOME_DIR
 
 x11docker \
     --hostipc \
+    --runasroot='ldconfig' \
+    --hostdbus \
     --clipboard \
     --user=RETAIN \
     --hostdisplay \
@@ -9,9 +13,9 @@ x11docker \
     --runtime=nvidia \
     -- \
     --rm \
-    --gpus=all \
-    --ipc=host \
+    --net=host \
+    --volume "$ITK_HOME_DIR":"/home/itksnap/" \
     --volume /srv/data:/srv/data \
     --volume /srv/tmp:/srv/tmp \
     -- \
-    mytk
+    tylerspears/itk-snap:nvidia
