@@ -36,7 +36,7 @@ dependencies:
   - cloudpickle=1.6.0=py_0
   - colorama=0.4.4=pyhd3eb1b0_0
   - conda=4.11.0=py38h578d9bd_0
-  - conda-lock=0.13.1=pyhd8ed1ab_0
+  - conda-lock=0.13.2=pyhd8ed1ab_0
   - conda-package-handling=1.7.2=py38h03888b9_0
   - coverage=5.5=py38h27cfd23_2
   - cryptography=3.4.7=py38hd23ed53_0
