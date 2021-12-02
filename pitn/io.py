@@ -3,12 +3,15 @@ import collections
 import typing
 from pathlib import Path
 
+# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
+from pitn._lazy_loader import LazyLoader
+
 import numpy as np
 import torch
-import torchio
 
-import ants
-import nibabel as nib
+torchio = LazyLoader("torchio", globals(), "torchio")
+ants = LazyLoader("ants", globals(), "ants")
+nib = LazyLoader("nib", globals(), "nibabel")
 
 # For more clearly designating the return values of a reader function given to
 # the `torchio.Image` object.

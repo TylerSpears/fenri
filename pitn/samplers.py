@@ -6,11 +6,15 @@ import numbers
 import warnings
 import itertools
 
+# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
+from pitn._lazy_loader import LazyLoader
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchio
-import monai
+
+torchio = LazyLoader("torchio", globals(), "torchio")
+monai = LazyLoader("monai", globals(), "monai")
 
 # Return type wrapper
 MultiresSample = collections.namedtuple("MultiresSample", ("low_res", "full_res"))

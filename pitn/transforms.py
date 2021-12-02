@@ -7,6 +7,9 @@ from typing import (
     Mapping,
 )
 
+# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
+from pitn._lazy_loader import LazyLoader
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -21,14 +24,14 @@ from monai.transforms.utils_pytorch_numpy_unification import percentile, clip
 import skimage
 import skimage.transform
 import skimage.morphology
-import scipy
+scipy = LazyLoader('scipy', globals(), 'scipy')
 import dipy
 import dipy.core
 import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
-import nibabel as nib
-import joblib
+nib = LazyLoader('nib', globals(), 'nibabel')
+joblib = LazyLoader('joblib', globals(), 'joblib')
 
 
 class BValSelectionTransform(torchio.SpatialTransform):
