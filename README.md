@@ -2,6 +2,12 @@
 
 # Setup
 
+To install as a python package, install directly from this repository (no pypi wheels yet!):
+
+```bash
+pip install git+ssh://git@github.com/TylerSpears/pitn.git
+```
+
 ## Environment
 
 ### Required Packages
