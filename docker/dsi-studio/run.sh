@@ -22,17 +22,20 @@ esac
 
 x11docker \
     --hostipc \
+    --network \
     --clipboard \
-    --user=RETAIN \
-    --gpu \
     --runtime=$DSI_RUNTIME \
     --hostdisplay \
+    --gpu \
+    --iglx \
     --group-add video --group-add render \
     --runasroot "ldconfig" \
     --user $UID:$GROUPS \
+    --hostdbus \
+    --workdir=/home/guest \
+    --env HOME="/home/guest" \
     -- \
     --rm \
-    --ipc=host \
     --volume "$DSI_CONFIG_DIR":/home/guest/.config \
     --volume "$DSI_CACHE_DIR":/home/guest/.cache \
     --volume "$LOCAL_DIR":/home/guest/.local/share/dsi-studio \
