@@ -7,7 +7,7 @@ import torch
 import monai
 import nibabel as nib
 
-import pitn.utils
+import pitn
 
 
 class VolDataset(monai.data.Dataset):

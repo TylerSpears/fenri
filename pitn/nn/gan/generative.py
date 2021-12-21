@@ -2,7 +2,8 @@
 import torch
 import torch.nn.functional as F
 
-from .. import layers
+import pitn
+from pitn.nn import layers
 
 
 class LPTN(torch.nn.Module):

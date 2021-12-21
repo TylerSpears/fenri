@@ -96,7 +96,7 @@ class DTIDataset(torch.utils.data.Dataset):
         except KeyError:
             subj_data = dict()
             subj_data["subj_id"] = subj_id
-            dti_file = pitn.utils.get_file_glob_unique(self._data_dir, self._dti_glob)
+            dti_file = pitn.utils.system.get_file_glob_unique(self._data_dir, self._dti_glob)
             dti = nib.load(str(dti_file))
             subj_data["dti"] = torch.from_numpy(dti.get_fdata())
             subj_data["affine"] = torch.from_numpy(dti.affine)
@@ -104,7 +104,7 @@ class DTIDataset(torch.utils.data.Dataset):
 
             if self._mask_glob is not None:
 
-                mask_file = pitn.utils.get_file_glob_unique(
+                mask_file = pitn.utils.system.get_file_glob_unique(
                     self._data_dir, self._mask_glob
                 )
                 subj_data["mask"] = torch.from_numpy(

@@ -15,8 +15,6 @@ import einops
 import einops.layers
 import einops.layers.torch
 
-from .. import utils
-
 
 class ESPCNShuffle(einops.layers.torch.Rearrange):
 

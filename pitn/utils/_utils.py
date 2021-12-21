@@ -139,10 +139,10 @@ def patch_center(
 def swatched_patch_coords_iter(
     spatial_shape, patch_shape, stride, max_swatch_size: int
 ):
-    """Yields chunks of patch coordinates for indexing into large tensors.
+    """Yields swatches (chunks) of patch coordinates for indexing into large tensors.
 
-    "Swatches" are just batches of patches contained within the same tensor. Because
-    swatches are cloth-related. Like patches.
+    "Swatches" are just batches of patches that come from the same tensor (image, volume,
+    etc.). Because swatches are cloth-related. Like patches.
 
     Parameters
     ----------
@@ -164,8 +164,12 @@ def swatched_patch_coords_iter(
 
     patch_shape = monai.utils.misc.ensure_tuple_rep(patch_shape, ndim)
     stride = monai.utils.misc.ensure_tuple_rep(stride, ndim)
+    # Cut off all patches that would go beyond the spatial size.
     lower_bounds = np.asarray(spatial_shape)
     lower_bounds = lower_bounds - (np.asarray(patch_shape) - 1)
+
+    # Create a multi-dimensional index array that contains the first (top-most,
+    # left-most, etc.) element of every patch in the swatch.
     idx_grid = np.meshgrid(
         *[np.arange(0, lb, st) for (lb, st) in zip(lower_bounds, stride)], copy=False
     )
@@ -173,11 +177,16 @@ def swatched_patch_coords_iter(
     idx_grid = np.stack(idx_grid, -1).reshape(-1, ndim).astype(np.uint16)
     n_patches = idx_grid.shape[0]
 
+    # Expand the patch starting idx to encompass all elements in the patch. This works
+    # by emulating an n-dim 'arange()' via broadcasting addition of index values.
     patch_range_broadcast = np.indices(patch_shape).reshape(ndim, -1)
+    # Iterate over swatches at most of size 'max_swatch_size'.
     for swatch_start_idx in range(0, n_patches, max_swatch_size):
         swatch_size = min(max_swatch_size, n_patches - swatch_start_idx)
         swatch_end_idx = swatch_start_idx + swatch_size
+        # Select only patches in this swatch.
         patch_start_idx = idx_grid[swatch_start_idx:swatch_end_idx]
+
         # Expand the start_idx to the full extent of the patch.
         full_swatch_idx = torch.from_numpy(
             (patch_start_idx[..., None] + patch_range_broadcast)
@@ -208,6 +217,7 @@ def batched_patches_iter(im, patch_shape, stride, max_swatch_size: int):
     batch_size = im.shape[0]
     channel_size = im.shape[1]
 
+    # Create the swatch generator.
     idx_gen = swatched_patch_coords_iter(
         spatial_shape=spatial_shape,
         patch_shape=patch_shape,
@@ -215,9 +225,15 @@ def batched_patches_iter(im, patch_shape, stride, max_swatch_size: int):
         max_swatch_size=max_swatch_size,
     )
 
+    # Iterate over all valid patches as swatches.
     for swatched_idx in idx_gen:
+        # We must index into the B x C x [...] tensor B * C times for every swatch to
+        # keep the swatch generation code manageable. So, keep a list of retrieved
+        # patches for every (B x C) and stack them at the end of each swatch iteration.
         batch_channel_swatch = list()
+        # Iterate over all batches.
         for b in range(batch_size):
+            # Iterate over all channels.
             for c in range(channel_size):
                 batch_channel_swatch.append(im[b, c][swatched_idx])
         batch_channel_swatch = torch.stack(batch_channel_swatch, dim=0)
@@ -225,6 +241,10 @@ def batched_patches_iter(im, patch_shape, stride, max_swatch_size: int):
             batch_size, channel_size, *batch_channel_swatch.shape[1:]
         )
 
+        # Output is of shape [B x C x Swatch x (patch_shape_1, patch_shape_2, ...)]
+        # Swatched idx is a tuple with length N_spatial_dim, with each element indexing
+        # into the corresponding spatial dimension with a shape of
+        # [Swatch x (patch_shape_1, patch_shape_2, ...)].
         yield batch_channel_swatch, swatched_idx
 
 
