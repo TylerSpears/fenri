@@ -21,25 +21,33 @@ esac
 
 
 x11docker \
-    --hostipc \
-    --network \
-    --clipboard \
-    --runtime=$DSI_RUNTIME \
-    --hostdisplay \
+    --showenv \
+    --interactive \
     --gpu \
     --iglx \
-    --group-add video --group-add render \
+    --hostdbus \
+    --network \
+    --hostipc \
+    --clipboard \
+    --shell=/bin/bash \
+    --no-entrypoint \
+    --runtime=$DSI_RUNTIME \
+    --hostdisplay \
     --runasroot "ldconfig" \
     --user $UID:$GROUPS \
-    --hostdbus \
+    --newprivileges=yes \
+    --sudouser=nopasswd \
+    --group-add video --group-add render --group-add sudo \
     --workdir=/home/guest \
     --env HOME="/home/guest" \
     -- \
     --rm \
+    -it \
     --volume "$DSI_CONFIG_DIR":/home/guest/.config \
     --volume "$DSI_CACHE_DIR":/home/guest/.cache \
     --volume "$LOCAL_DIR":/home/guest/.local/share/dsi-studio \
     --volume "$TMP_DATA_DIR":/srv/tmp \
     --volume "$DATA_DIR":/srv/data \
     -- \
-    tylerspears/dsi-studio:$IMG_TAG "$@"
+    tylerspears/dsi-studio:$IMG_TAG bash
+

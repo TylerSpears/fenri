@@ -17,6 +17,8 @@ RUN apt update && apt full-upgrade -y && \
   libboost-all-dev \
   zlib1g-dev \
   ca-certificates \
+  mesa-utils \
+  libglvnd0 \
   qt5-qmake \
   qt5-default \
   libqt5charts5-dev \
