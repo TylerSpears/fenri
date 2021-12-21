@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
+from pathlib import Path
+
 import numpy as np
 import torch
 import monai
+import nibabel as nib
+
+import pitn.utils
 
 
 class MaskFilteredPatchDataset3d(torch.utils.data.Dataset):
@@ -59,3 +64,56 @@ class MaskFilteredPatchDataset3d(torch.utils.data.Dataset):
             patch_start[2] : patch_start[2] + self.patch_size[2],
         ]
         return patch
+
+
+class DTIDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        data_dir: Path,
+        subj_ids: list,
+        dti_file_glob: str,
+        mask_file_glob: str = None,
+    ):
+        super().__init__()
+        self._data_dir = Path(data_dir)
+        self._subj_ids = tuple(subj_ids)
+        self._dti_glob = str(dti_file_glob)
+        self._mask_glob = str(mask_file_glob)
+        self._subjs = dict()
+
+    @property
+    def subj_ids(self):
+        return self._subj_ids
+
+    def __len__(self):
+        return len(self.subj_ids)
+
+    def __getitem__(self, idx):
+        subj_id = self.subj_ids[idx]
+
+        try:
+            subj_data = self._subjs[subj_id]
+        except KeyError:
+            subj_data = dict()
+            subj_data["subj_id"] = subj_id
+            dti_file = pitn.utils.get_file_glob_unique(self._data_dir, self._dti_glob)
+            dti = nib.load(str(dti_file))
+            subj_data["dti"] = torch.from_numpy(dti.get_fdata())
+            subj_data["affine"] = torch.from_numpy(dti.affine)
+            subj_data["header"] = dict(dti.header)
+
+            if self._mask_glob is not None:
+
+                mask_file = pitn.utils.get_file_glob_unique(
+                    self._data_dir, self._mask_glob
+                )
+                subj_data["mask"] = torch.from_numpy(
+                    nib.load(mask_file).get_fdata()
+                ).to(torch.uint8)
+            else:
+                subj_data["mask"] = None
+
+            self._subjs[subj_id] = subj_data
+            subj_data = self._subjs[subj_id]
+
+        return subj_data

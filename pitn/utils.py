@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 import math
+from pathlib import Path
 
 from pitn._lazy_loader import LazyLoader
 
 import numpy as np
 import torch
 
+monai = LazyLoader("monai", globals(), "monai")
 GPUtil = LazyLoader("GPUtil", globals(), "GPUtil")
 tabulate = LazyLoader("tabulate", globals(), "tabulate")
 
@@ -134,6 +136,98 @@ def patch_center(
     return center_patches
 
 
+def swatched_patch_coords_iter(
+    spatial_shape, patch_shape, stride, max_swatch_size: int
+):
+    """Yields chunks of patch coordinates for indexing into large tensors.
+
+    "Swatches" are just batches of patches contained within the same tensor. Because
+    swatches are cloth-related. Like patches.
+
+    Parameters
+    ----------
+    spatial_shape : tuple
+
+    patch_shape : tuple
+
+    stride : tuple
+
+    max_swatch_size : int
+
+    Yields
+    -------
+    [type]
+        [description]
+    """
+    spatial_shape = tuple(spatial_shape)
+    ndim = len(spatial_shape)
+
+    patch_shape = monai.utils.misc.ensure_tuple_rep(patch_shape, ndim)
+    stride = monai.utils.misc.ensure_tuple_rep(stride, ndim)
+    lower_bounds = np.asarray(spatial_shape)
+    lower_bounds = lower_bounds - (np.asarray(patch_shape) - 1)
+    idx_grid = np.meshgrid(
+        *[np.arange(0, lb, st) for (lb, st) in zip(lower_bounds, stride)], copy=False
+    )
+    # Combine and reshape to be (n_patches, ndim).
+    idx_grid = np.stack(idx_grid, -1).reshape(-1, ndim).astype(np.uint16)
+    n_patches = idx_grid.shape[0]
+
+    patch_range_broadcast = np.indices(patch_shape).reshape(ndim, -1)
+    for swatch_start_idx in range(0, n_patches, max_swatch_size):
+        swatch_size = min(max_swatch_size, n_patches - swatch_start_idx)
+        swatch_end_idx = swatch_start_idx + swatch_size
+        patch_start_idx = idx_grid[swatch_start_idx:swatch_end_idx]
+        # Expand the start_idx to the full extent of the patch.
+        full_swatch_idx = torch.from_numpy(
+            (patch_start_idx[..., None] + patch_range_broadcast)
+            .swapaxes(0, 1)
+            .reshape(ndim, swatch_size, *patch_shape)
+        )
+        yield tuple(full_swatch_idx)
+
+
+def batched_patches_iter(im, patch_shape, stride, max_swatch_size: int):
+    """Yields batched patches and patch indices.
+
+    Parameters
+    ----------
+    im : torch.Tensor
+        N-dimensional tensor to index into, channel-first.
+
+        Must be of shape [B, C, dim_1, dim_2, ...], where B is the batch dimension and C
+        is the channel dimension, both of which are *not* reduced by indexing.
+    patch_shape : tuple
+
+    stride : tuple
+
+    max_batch_size : int
+
+    """
+    spatial_shape = tuple(im.shape[2:])
+    batch_size = im.shape[0]
+    channel_size = im.shape[1]
+
+    idx_gen = swatched_patch_coords_iter(
+        spatial_shape=spatial_shape,
+        patch_shape=patch_shape,
+        stride=stride,
+        max_swatch_size=max_swatch_size,
+    )
+
+    for swatched_idx in idx_gen:
+        batch_channel_swatch = list()
+        for b in range(batch_size):
+            for c in range(channel_size):
+                batch_channel_swatch.append(im[b, c][swatched_idx])
+        batch_channel_swatch = torch.stack(batch_channel_swatch, dim=0)
+        batch_channel_swatch = batch_channel_swatch.view(
+            batch_size, channel_size, *batch_channel_swatch.shape[1:]
+        )
+
+        yield batch_channel_swatch, swatched_idx
+
+
 def conv3d_out_shape(
     out_channels,
     input_shape,
@@ -151,3 +245,25 @@ def conv3d_out_shape(
     spatial = np.floor(((in_shape + 2 * pad - dilate * (kernel - 1) - 1) / stride) + 1)
 
     return (out_channels,) + tuple(spatial)
+
+
+def get_file_glob_unique(root_path: Path, glob_pattern: str) -> Path:
+    root_path = Path(root_path)
+    glob_pattern = str(glob_pattern)
+    files = list(root_path.glob(glob_pattern))
+
+    invalid_num_files = False
+    if len(files) == 0:
+        files = list(root_path.rglob(glob_pattern))
+        if len(files) != 1:
+            invalid_num_files = True
+    elif len(files) > 1:
+        invalid_num_files = True
+
+    if invalid_num_files:
+        raise RuntimeError(
+            "ERROR: More than one file matches glob pattern "
+            + f"{glob_pattern} under directory {str(root_path)}."
+        )
+
+    return files[0]
