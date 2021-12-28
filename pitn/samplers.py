@@ -47,7 +47,7 @@ def collate_subj_mask(
     return MultiresMaskSample(low_res=lr, full_res=fr, full_res_mask=fr_masks)
 
 
-def collate_dicts(samples, *keys, **renamed_keys) -> dict:
+def collate_dicts(samples, *keys, avoid_stack_keys=list(), **renamed_keys) -> dict:
     select_keys = dict(zip(keys, keys))
     select_keys.update(renamed_keys)
     collated = dict()
@@ -59,17 +59,22 @@ def collate_dicts(samples, *keys, **renamed_keys) -> dict:
             if all(map(lambda obj: isinstance(obj, dict), v)):
                 v = collate_dicts(v, **dict(zip(v[0].keys(), v[0].keys())))
             else:
-                # If the values are a tensor or ndarray, try and stack them together.
-                if torch.is_tensor(v[0]):
-                    try:
-                        v = torch.stack(v).to(v[0])
-                    except (ValueError, RuntimeError):
-                        pass
-                elif isinstance(v[0], np.ndarray):
-                    try:
-                        v = np.stack(v)
-                    except (ValueError, RuntimeError):
-                        pass
+                if k_old not in avoid_stack_keys:
+                    # If the values are a tensor or ndarray, try and stack them together.
+                    if torch.is_tensor(v[0]):
+                        try:
+                            v = torch.stack(v).to(v[0])
+                        except (ValueError, RuntimeError):
+                            pass
+                    elif isinstance(v[0], np.ndarray):
+                        try:
+                            v = np.stack(v)
+                        except (ValueError, RuntimeError):
+                            pass
+                    else:
+                        v = tuple(v)
+                else:
+                    v = tuple(v)
         else:
             raise KeyError(f"ERROR: Key '{k_old}' not found in one or more entries.")
 
