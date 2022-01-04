@@ -7,6 +7,7 @@ from pitn._lazy_loader import LazyLoader
 
 import numpy as np
 import torch
+import einops
 
 monai = LazyLoader("monai", globals(), "monai")
 
@@ -151,16 +152,25 @@ def extend_start_patch_idx(
     )
     # Reorder to be n_swatch x ndim, so the ndim-sized dimension can be matched for
     # broadcasting with the `patch_range_broadcast`.
-    start_idx = start_idx.view(ndim, n_swatch).T
-
+    start_idx = einops.rearrange(start_idx, "ndim patch_elems -> patch_elems ndim 1")
     # Perform the expansion of indices by broadcasting over an extra dimension in the
     # start_idx.
-    full_swatch_idx = start_idx[..., None] + patch_range_broadcast
+    full_swatch_idx = start_idx + patch_range_broadcast
 
     # Reorder to ndim x ..., and reshape to be
     # ndim x n_swatch x (spanned dim_1 x spanned_dim 2 x ... x spatial dim_1 x spatial dim_2 x ...)
-    full_swatch_idx.swapaxes_(0, 1)
-    full_swatch_idx = full_swatch_idx.view(ndim, n_swatch, *full_patch_shape)
+    # Group the n-dimensional patch dims into a dynamically-sized group of names & their
+    # respective lengths.
+    full_patch_names_map = {
+        f"patch_dim_{i}": size for (i, size) in enumerate(full_patch_shape)
+    }
+    # String of patch dim names as "patch_dim_0 patch_dim_1 patch_dim_2 ..."
+    patch_dim_group_names = " ".join(full_patch_names_map.keys())
+    full_swatch_idx = einops.rearrange(
+        full_swatch_idx,
+        f"s ndim ({patch_dim_group_names}) -> ndim s {patch_dim_group_names}",
+        **full_patch_names_map,
+    )
 
     return tuple(full_swatch_idx.long())
 
@@ -203,7 +213,7 @@ def swatched_patch_coords_iter(
         *[np.arange(0, lb, st) for (lb, st) in zip(lower_bounds, stride)], copy=False
     )
     # Combine and reshape to be (n_patches, ndim).
-    idx_grid = np.stack(idx_grid, -1).reshape(-1, ndim).astype(np.int16)
+    idx_grid = einops.rearrange(idx_grid, "ndim ... -> (...) ndim").astype(np.int16)
     n_patches = idx_grid.shape[0]
 
     # Iterate over swatches at most of size 'max_swatch_size'.
@@ -275,11 +285,12 @@ def batched_patches_iter(
                 # Iterate over all channels.
                 for c in range(channel_size):
                     batch_channel_swatch.append(im[b, c][full_swatch_idx])
-            batch_channel_swatch = torch.stack(batch_channel_swatch, dim=0)
-            batch_channel_swatch = batch_channel_swatch.view(
-                batch_size, channel_size, *batch_channel_swatch.shape[1:]
+            batch_channel_swatch = einops.rearrange(
+                batch_channel_swatch,
+                "(b c) ... -> b c ...",
+                b=batch_size,
+                c=channel_size,
             )
-
             yield_ims.append(batch_channel_swatch)
 
         yield_ims = tuple(yield_ims)

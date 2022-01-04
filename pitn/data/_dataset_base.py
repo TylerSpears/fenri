@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 import monai
+import einops
 import nibabel as nib
 
 import pitn
@@ -165,7 +166,7 @@ class _VolPatchDataset(torch.utils.data.Dataset):
         for swatch_i, full_idx, start_idx in sample_gen:
             # Store start indices as a "S x N_dim x ..." Tensor, for more compact
             # storage.
-            start_idx = torch.stack(start_idx, 0).swapdims(0, 1)
+            start_idx = einops.rearrange(list(start_idx), "ndim s ... -> s ndim ...")
             if patch_select_fn is not None:
                 # Select the patches that have been indexed into, moving the Swatch dim
                 # to the front, and removing the batch dim.
@@ -216,7 +217,7 @@ class _VolPatchDataset(torch.utils.data.Dataset):
         return_idx=False,
     ):
         """Assumes im is shape C x spatial_dim_1 x spatial_dim_2 x ...
-        start_idx a Tensor of shape patch_size_1 x patch_size_2 x ...
+        start_idx a Tensor of shape n_spatial_dim
 
         *Note* there is *no* batch dimension used here, a batch size of 1 is assumed.
 
@@ -248,6 +249,9 @@ class _VolPatchDataset(torch.utils.data.Dataset):
             channel_size = (num_channels,)
         else:
             channel_size = tuple()
+        # Add a swatch size of 1 for operating with the patch extender.
+        start_idx = einops.rearrange(list(start_idx), 'ndim -> ndim 1')
+        start_idx = tuple(start_idx)
         full_idx = pitn.utils.patch.extend_start_patch_idx(
             start_idx, patch_shape=patch_shape, span_extra_dims_sizes=channel_size
         )
