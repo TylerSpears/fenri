@@ -194,7 +194,7 @@ class LaplacePyramid3d(torch.nn.Module):
         return curr_reconstruction
 
 
-class ResidualBlock(torch.nn.Module):
+class _ResidualBlock(torch.nn.Module):
     def __init__(self, in_features):
 
         super().__init__()
@@ -218,7 +218,7 @@ class LowFreqTranslateNet(torch.nn.Module):
 
         self.res_blocks = torch.nn.ModuleList()
         for _ in range(num_residual_blocks):
-            self.res_blocks.append(ResidualBlock(64))
+            self.res_blocks.append(_ResidualBlock(64))
 
         self.conv_post_res_1 = torch.nn.Conv3d(64, 16, 3, padding=1)
         self.conv_post_res_2 = torch.nn.Conv3d(16, num_channels, 3, padding=1)
@@ -268,7 +268,7 @@ class HighFreqTranslateNet(torch.nn.Module):
 
         self.res_blocks = torch.nn.ModuleList()
         for _ in range(num_residual_blocks):
-            self.res_blocks.append(ResidualBlock(16))
+            self.res_blocks.append(_ResidualBlock(16))
 
         self.conv_post_res = torch.nn.Conv3d(16, 1, 3, padding=1)
 

@@ -15,21 +15,7 @@ import einops
 import einops.layers
 import einops.layers.torch
 
-
-class ESPCNShuffle(einops.layers.torch.Rearrange):
-
-    _pattern = "b (c r1 r2 r3) h w d -> b c (h r1) (w r2) (d r3)"
-
-    def __init__(self, num_channels, downsample_factor):
-        self._num_channels = num_channels
-        self._downsample_factor = downsample_factor
-        self._rearrange_kwargs = {
-            "c": self._num_channels,
-            "r1": self._downsample_factor,
-            "r2": self._downsample_factor,
-            "r3": self._downsample_factor,
-        }
-        super().__init__(self._pattern, **self._rearrange_kwargs)
+import pitn
 
 
 # Basic conv net definition.
@@ -50,7 +36,7 @@ class ThreeConv(torch.nn.Module):
         self.conv3 = torch.nn.Conv3d(
             100, self.channels * (self.downsample_factor ** 3), kernel_size=(3, 3, 3)
         )
-        self.output_shuffle = ESPCNShuffle(self.channels, self.downsample_factor)
+        self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle(self.channels, self.downsample_factor)
 
         if self.norm_method is not None:
             if "instance" in self.norm_method.casefold():
@@ -119,7 +105,7 @@ class FractDownReduceBy5Conv(torch.nn.Module):
             self.channels * (self._espcn_upsample_factor ** 3),
             kernel_size=(3, 3, 3),
         )
-        self.output_shuffle = ESPCNShuffle(self.channels, self._espcn_upsample_factor)
+        self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle(self.channels, self._espcn_upsample_factor)
         self.shuffle_pad_amt = (
             3,
             2,
@@ -192,7 +178,7 @@ class FractionThreeConv(torch.nn.Module):
         rounded_downsample_factor = int(np.ceil(self.downsample_factor))
         unshuffled_n_channels = self.channels * (rounded_downsample_factor ** 3)
         self.conv6 = torch.nn.Conv3d(60, unshuffled_n_channels, kernel_size=(3, 3, 3))
-        self.output_shuffle = ESPCNShuffle(self.channels, rounded_downsample_factor)
+        self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle(self.channels, rounded_downsample_factor)
 
         self.norm = None
 
