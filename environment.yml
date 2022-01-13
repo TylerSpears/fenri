@@ -1,4 +1,4 @@
-name: null
+name: pitn
 channels:
   - pytorch
   - defaults
