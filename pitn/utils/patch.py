@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import math
 import collections
+import itertools
+import functools
 from typing import Union, Sequence, Optional, List, Tuple
 
 from pitn._lazy_loader import LazyLoader
@@ -13,7 +15,7 @@ monai = LazyLoader("monai", globals(), "monai")
 
 SwatchIdxSample = collections.namedtuple("SwatchIdxSample", ("full_idx", "start_idx"))
 SwatchSample = collections.namedtuple(
-    "SwatchSample", ("swatch", "full_idx", "start_idx")
+    "SwatchSample", ("swatch", "start_idx")
 )
 
 
@@ -303,3 +305,99 @@ def batched_patches_iter(
         yield SwatchSample(
             swatch=yield_ims, full_idx=full_swatch_idx, start_idx=start_idx
         )
+
+
+def _patch_range_gen(patch_sizes, dim_sizes, strides):
+    def slice_mapper(prev_s, incr, max_size):
+        return slice(prev_s.start + incr, min(max_size + 1, prev_s.stop + incr), 1)
+
+    dim_gens = list()
+    for p_size, d_size, stride in zip(patch_sizes, dim_sizes, strides):
+        dim_mapper = functools.partial(
+            slice_mapper,
+            max_size=d_size,
+        )
+
+        dim_gen = itertools.accumulate(
+            itertools.repeat(stride, len(range(0, d_size - p_size, stride))),
+            dim_mapper,
+            initial=slice(0, p_size, 1),
+        )
+
+        dim_gens.append(dim_gen)
+
+    return itertools.product(*dim_gens)
+
+
+@torch.no_grad()
+def batched_patches_iter2(
+    ims: Union[torch.Tensor, List[torch.Tensor], Tuple[torch.Tensor]],
+    patch_shape,
+    stride,
+):
+    """Yields batched patches and patch indices.
+
+    Parameters
+    ----------
+    ims : Union[torch.Tensor, List[torch.Tensor], Tuple[torch.Tensor]]
+        N-dimensional tensor or sequence of N-dimensional tensors to index into.
+
+        Must be of shape [B, C, dim_1, dim_2, ...], where B is the batch dimension and C
+        is the channel dimension, both of which are *not* reduced by indexing. If a
+        (non-Tensor) sequence of tensors is given, then each element is assumed to be
+        a Tensor with the *same indexing dimension size*; i.e., B and C may be different,
+        but dim_1, dim_2, ..., must be the same.
+    patch_shape : tuple
+
+    stride : tuple
+
+    """
+    if torch.is_tensor(ims):
+        ims = (ims,)
+        yield_tensor = True
+    else:
+        yield_tensor = False
+    spatial_shape = tuple(ims[0].shape[2:])
+    # Only unfold the outer-most spatial dimension, otherwise the tensor will need to
+    # be reshaped and copied into a contiguous memory layout.
+    unfold_dim = 2
+    unfolded_ims = list()
+    # Make no-copy views of each im.
+    for i_im in range(len(ims)):
+        unfold_im = ims[i_im].unfold(
+            unfold_dim, patch_shape[0], stride[0]
+        )
+        unfolded_ims.append(unfold_im.movedim(-1, 3))
+
+    unfold_remain_patch_shape = patch_shape[1:]
+    unfold_remain_stride = stride[1:]
+    unfold_remain_im_shape = spatial_shape[1:]
+    # Iterate over all valid patches as swatches.
+    slice_gen = _patch_range_gen(
+        unfold_remain_patch_shape,
+        dim_sizes=unfold_remain_im_shape,
+        strides=unfold_remain_stride,
+    )
+
+    unfold_start_idx = torch.arange(0, spatial_shape[0] - patch_shape[0] + 1, stride[0])
+    for slice_tuple in slice_gen:
+        # breakpoint()
+        start_idx = torch.meshgrid(
+            unfold_start_idx,
+            *(torch.atleast_1d(torch.as_tensor(s.start)) for s in slice_tuple),
+            indexing="ij",
+        )
+        full_slice = (slice(None), slice(None), slice(None), slice(None)) + slice_tuple
+        yield_ims = list()
+        for im in unfolded_ims:
+            im_patch = im[full_slice]
+            yield_ims.append(im_patch)
+
+        yield_ims = tuple(yield_ims)
+        if yield_tensor:
+            yield_ims = yield_ims[0]
+        # Output is of shape [B x C x Swatch x (patch_shape_1, patch_shape_2, ...)]
+        # start_idx is a tuple with length N_spatial_dim, with each element as the
+        # first index into the corresponding spatial dimension with a shape of
+        # [Swatch x (patch_shape_1, patch_shape_2, ...)].
+        yield SwatchSample(swatch=yield_ims, start_idx=start_idx)

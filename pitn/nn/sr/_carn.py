@@ -17,12 +17,12 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         n_dense_units: int,
         activate_fn,
         upsample_activate_fn,
+        center_crop_output_side_amt=None,
     ):
         super().__init__()
 
         self.channels = channels
         self.upscale_factor = upscale_factor
-
 
         # Pad to maintain the same input shape.
         self.pre_conv = torch.nn.Conv3d(
@@ -75,6 +75,15 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             self.channels, self.channels, kernel_size=3, padding=1
         )
 
+        # "Padding" by a negative amount will perform cropping!
+        # <https://github.com/pytorch/pytorch/issues/1331>
+        if center_crop_output_side_amt is not None:
+            crop = tuple(-np.asarray(self._center_crop_amt))
+            self.output_cropper = torch.nn.ConstantPad3d(crop, 0)
+            self._crop = True
+        else:
+            self._crop = False
+
     def forward(self, x: torch.Tensor, x_mode_refine: torch.Tensor):
         y = self.pre_conv(x)
         y = self.activate_fn(y)
@@ -95,5 +104,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
 
         y = self.activate_fn(y)
         y = self.post_conv(y)
+        if self._crop:
+            y = self.output_cropper(y)
 
         return y

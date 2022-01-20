@@ -1,3 +1,5 @@
 # -*- coding: utf-8 -*-
-from . import norm, summary, _datasets, _dataset_base
-from ._datasets import MaskFilteredPatchDataset3d
+from . import norm, summary
+from . import _dataset_base, _datasets
+from ._dataset_base import VolDataset, patch_select_any_in_mask
+from ._datasets import MaskFilteredPatchDataset3d, SubjSesDataset

@@ -7,12 +7,16 @@ from addict import Addict
 import numpy as np
 import torch
 import torchio
+import pandas as pd
 
 import dipy
 import dipy.core
 import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
+
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Create FA map from DTI's
 def fa_map(dti, channels_first=True) -> np.ndarray:
@@ -161,7 +165,9 @@ def collate_locs_and_keys(
     )
 
 
-def make_grid(tensor, nrow=8, padding=2, pad_value=0, normalize=False, vmin=None, vmax=None):
+def make_grid(
+    tensor, nrow=8, padding=2, pad_value=0, normalize=False, vmin=None, vmax=None
+):
     """Create grid of 2D imager for visualization.
 
     tensor:
@@ -248,3 +254,98 @@ class SubGridAggregator(torchio.GridAggregator):
         adjusted_locs[:, 3:] = adjusted_locs[:, 3:] - self.location_offset
 
         return super().add_batch(batch_tensor, adjusted_locs)
+
+
+def plot_dti_box_row(
+    fig,
+    grid,
+    row_idx: int,
+    subj_id: int,
+    shared_axs_rows: list,
+    shared_axs_cols: list,
+    fr_vol: np.ndarray,
+    lr_vol: np.ndarray,
+    colors: list = list(sns.color_palette("Set2", n_colors=2)),
+):
+
+    dti_channel_names = [
+        "$D_{xx}$",
+        "$D_{xy}$",
+        "$D_{yy}$",
+        "$D_{xz}$",
+        "$D_{yz}$",
+        "$D_{zz}$",
+    ]
+
+    for i_channel, channel_name in enumerate(dti_channel_names):
+        cell = grid[row_idx, i_channel]
+
+        ax = fig.add_subplot(
+            cell,
+            sharex=shared_axs_cols[channel_name],
+            sharey=shared_axs_rows[subj_id],
+        )
+        if shared_axs_cols[channel_name] is None:
+            shared_axs_cols[channel_name] = ax
+        if shared_axs_rows[subj_id] is None:
+            shared_axs_rows[subj_id] = ax
+
+        #         quantile_outlier_cutoff = (0.1, 0.9)
+        fr_channel = fr_vol[i_channel]
+        #         fr_nn = fr_nn[
+        #             (np.quantile(fr_nn, quantile_outlier_cutoff[0]) <= fr_nn)
+        #             & (fr_nn <= np.quantile(fr_nn, quantile_outlier_cutoff[1]))
+        #         ]
+        lr_channel = lr_vol[i_channel]
+        #         lr_nn = lr_nn[
+        #             (np.quantile(lr_nn, quantile_outlier_cutoff[0]) <= lr_nn)
+        #             & (lr_nn <= np.quantile(lr_nn, quantile_outlier_cutoff[1]))
+        #         ]
+        #         fr_norm = normed_fr_vol[i_channel].detach().cpu().numpy()
+        #         lr_norm = normed_lr_vol[i_channel].detach().cpu().numpy()
+
+        num_fr_vox = len(fr_channel)
+        num_lr_vox = len(lr_channel)
+
+        resolution_labels = (["FR",] * num_fr_vox) + (
+            [
+                "LR",
+            ]
+            * num_lr_vox
+        )
+
+        df = pd.DataFrame(
+            {
+                "data": np.concatenate([fr_channel, lr_channel]),
+                "resolution": resolution_labels,
+            }
+        )
+
+        sns.boxenplot(
+            data=df,
+            y="resolution",
+            x="data",
+            orient="h",
+            ax=ax,
+            palette=colors,
+            k_depth="proportion",
+            outlier_prop=0.11,
+            showfliers=False,
+        )
+
+        if not cell.is_last_row():
+            plt.setp(ax.get_xticklabels(), visible=False)
+        else:
+            plt.setp(ax.get_xticklabels(), fontsize="x-small", rotation=25)
+
+        if not cell.is_first_col():
+            plt.setp(ax.get_yticklabels(), visible=False)
+            ax.set_ylabel("")
+        else:
+            ax.set_ylabel(subj_id)
+
+        ax.set_xlabel("")
+        if cell.is_first_row():
+            ax.set_title(channel_name)
+
+    return fig, shared_axs_rows, shared_axs_cols

@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 import functools
+from typing import Tuple
 
 import numpy as np
+import torch
+import einops
+
+import pitn
 
 
 @functools.lru_cache(maxsize=8)
@@ -122,3 +127,81 @@ def fraction_downsample_idx_weights(
     full_weights = full_weights.transpose(3, 0, 1, 2)
 
     return full_indices, full_weights
+
+
+def int_downscale_patch_idx(
+    idx: Tuple[torch.Tensor], downscale_factor: int, downscale_patch_shape: Tuple
+):
+    if not torch.is_tensor(idx):
+        ndim_idx = torch.stack(idx, dim=0)
+    else:
+        ndim_idx = idx
+    n_spatial_dims = len(downscale_patch_shape)
+    span_dims = ndim_idx.shape[2:-n_spatial_dims]
+    space_names = [f"space_{i}" for i in range(n_spatial_dims)]
+    span_names = [f"span_{i}" for i in range(len(span_dims))]
+    start_idx = einops.reduce(
+        ndim_idx, f'ndim swatch ... {" ".join(space_names)} -> ndim swatch (...)', "min"
+    )
+    # Remove spanned dims
+    start_idx = start_idx[len(span_names) :, :, 0]
+
+    start_idx = torch.round(start_idx / downscale_factor).long()
+    full_idx = pitn.utils.patch.extend_start_patch_idx(
+        start_idx,
+        patch_shape=downscale_patch_shape,
+        span_extra_dims_sizes=tuple(span_dims),
+    )
+
+    return full_idx
+
+
+def _map_fr_init_idx_to_lr(
+    fr_idx, downsample_factor, low_res_sample_extension, fr_patch_size
+) -> np.ndarray:
+    """Maps starting indices of patches in FR space to LR space."""
+
+    # Batch-ify the input, if not done already.
+    if len(fr_idx.shape) == 1:
+        batch_fr_idx = fr_idx.reshape(1, -1)
+    else:
+        batch_fr_idx = fr_idx
+
+    # Find offset between the original FR patch index and the "oversampled" FR patch
+    # index.
+    idx_delta = np.round(
+        (
+            np.round(np.asarray(fr_patch_size) * low_res_sample_extension)
+            - np.asarray(fr_patch_size)
+        )
+        / 2
+    )
+    expanded_fr_idx = batch_fr_idx - idx_delta
+
+    # Now perform simple downscaling.
+    lr_idx = np.floor(expanded_fr_idx / downsample_factor)
+
+    # Undo batch-ification, if necessary.
+    if len(fr_idx.shape) == 1:
+        lr_idx = lr_idx.squeeze()
+
+    return lr_idx.astype(int)
+
+
+def _map_fr_coord_to_lr(
+    fr_coords, downsample_factor, low_res_sample_extension, fr_patch_size
+):
+    fr_index_ini = fr_coords[:, :3]
+    lr_index_ini = _map_fr_init_idx_to_lr(
+        fr_index_ini,
+        downsample_factor=downsample_factor,
+        low_res_sample_extension=low_res_sample_extension,
+        fr_patch_size=fr_patch_size,
+    )
+    lr_lengths = np.floor(
+        np.round(np.asarray(fr_patch_size) * low_res_sample_extension)
+        / downsample_factor
+    )
+    lr_coord = np.concatenate([lr_index_ini, lr_index_ini + lr_lengths], axis=-1)
+
+    return lr_coord
