@@ -78,11 +78,15 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # "Padding" by a negative amount will perform cropping!
         # <https://github.com/pytorch/pytorch/issues/1331>
         if center_crop_output_side_amt is not None:
-            crop = tuple(-np.asarray(self._center_crop_amt))
+            crop = -center_crop_output_side_amt
             self.output_cropper = torch.nn.ConstantPad3d(crop, 0)
             self._crop = True
         else:
             self._crop = False
+            self.output_cropper = torch.nn.Identity()
+
+    def crop_full_output(self, x):
+        return self.output_cropper(x)
 
     def forward(self, x: torch.Tensor, x_mode_refine: torch.Tensor):
         y = self.pre_conv(x)
@@ -93,6 +97,18 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # Integrate the extra HR multi-modal refinement input (i.e. a T2 or T1 patch).
         # Repeat dimensions as necessary to have the same size as the previous layer's
         # output.
+        # Size of the modal refinement input may be one voxel different in shape due to
+        # an uneven division `hr_size / downscale_factor`. So, crop the mode refinement
+        # input to match the shape of the upsample layer output.
+        if x_mode_refine.shape[2:] != y.shape[2:]:
+            raise RuntimeError(
+                f"ERROR: Mode refine input shape {x_mode_refine.shape[2:]} "
+                + f"incompatible with upsample output shape {y.shape[2:]}. "
+                + "This may be due to roundoff error in downsampling of FR data. "
+                + f"Does {x.shape[2:]} x {self.upscale_factor} "
+                + f"=|{x_mode_refine.shape[2:]}| ?"
+            )
+
         x_mode_refine = x_mode_refine.expand_as(y)
         # Interleave the channels for group convolution, where each channel from the
         # network is convolved with a copy of the extra-modal HR input.
@@ -105,6 +121,6 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         y = self.activate_fn(y)
         y = self.post_conv(y)
         if self._crop:
-            y = self.output_cropper(y)
+            y = self.crop_full_output(y)
 
         return y

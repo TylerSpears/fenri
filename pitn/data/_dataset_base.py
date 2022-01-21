@@ -266,7 +266,8 @@ class _VolPatchDataset(torch.utils.data.Dataset):
         full_idx = pitn.utils.patch.extend_start_patch_idx(
             start_idx, patch_shape=patch_shape, span_extra_dims_sizes=channel_size
         )
-
+        # Remove swatch dim.
+        full_idx = tuple(i[0] for i in full_idx)
         return (im[full_idx], full_idx) if return_idx else im[full_idx]
 
     def __getitem__(self, idx: Union[int, slice, Sequence[int]]) -> dict:

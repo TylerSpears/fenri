@@ -137,7 +137,9 @@ class ICNRUpsample3d(torch.nn.Module):
         pre_shuffle_c = out_channels * (upscale_factor ** 3)
 
         self.pre_conv = torch.nn.Conv3d(
-            in_channels=in_channels, out_channels=pre_shuffle_c, kernel_size=1
+            in_channels=in_channels,
+            out_channels=pre_shuffle_c,
+            kernel_size=1,
         )
 
         # Apply ICNR weight initialization.

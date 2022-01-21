@@ -274,11 +274,20 @@ class _SubjSesPatchesDataset(pitn.data._dataset_base._VolPatchDataset):
         else:
             sample = super().__getitem__(idx)
             idx = sample["idx"]
+            # Add a batch/swatch dim into the idx, as expected by the coord_fn funcs.
+            b_idx = tuple(
+                i[
+                    None,
+                ]
+                for i in idx
+            )
             # Process the volumes that need coordinate conversion.
             for name in self._special_seconds.keys():
                 coord_fn = self._special_coord_fns[name]
                 im = self._special_seconds[name]
-                new_idx = coord_fn(idx)
+                new_idx = coord_fn(b_idx)
+                # Remove the batch/swatch dim from the converted idx.
+                new_idx = tuple(i[0] for i in new_idx)
                 sample[name] = im[new_idx]
                 sample["idx_" + name] = new_idx
             # Make sure to transform() everything at once.

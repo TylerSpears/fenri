@@ -3,6 +3,7 @@ import collections
 
 import addict
 from addict import Addict
+from box import Box
 
 import numpy as np
 import torch
