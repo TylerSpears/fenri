@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
+from ast import Param
 import collections
+import itertools
+import math
+from typing import Optional, List, Union
 
-import addict
 from addict import Addict
 from box import Box
 
@@ -16,8 +19,206 @@ import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
 
+import matplotlib as mpl
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+
+def plot_im_grid(
+    *ims,
+    nrows: int = 3,
+    title: Optional[str] = None,
+    row_headers: Optional[List[str]] = None,
+    col_headers: Optional[List[str]] = None,
+    colorbars: Optional[str] = None,
+    fig=None,
+    **imshow_kwargs,
+):
+    if fig is None:
+        fig = plt.gcf()
+
+    # Canonical form of ims.
+    if len(ims) == 1 and isinstance(ims[0], (list, tuple)):
+        ims = list(ims[0])
+    elif len(ims) == 1 and (isinstance(ims[0], np.ndarray) or torch.is_tensor(ims[0])):
+        # If the tensor/ndarray is batched.
+        if len(ims.shape) == 4:
+            ims = list(ims)
+        else:
+            ims = [
+                ims,
+            ]
+    for i, im in enumerate(ims):
+        if torch.is_tensor(im):
+            ims[i] = im.detach().cpu().numpy()
+
+    ncols = math.ceil(len(ims) / nrows)
+    # Canonical representation of image labels.
+    row_headers = (
+        row_headers if row_headers is not None else list(itertools.repeat(None, nrows))
+    )
+    col_headers = (
+        col_headers if col_headers is not None else list(itertools.repeat(None, ncols))
+    )
+
+    # Canonical colorbar setting values.
+    cbars = colorbars.casefold() if colorbars is not None else colorbars
+    cbars = "col" if cbars in {"column", "columns", "cols", "col"} else cbars
+    cbars = "row" if cbars in {"row", "rows"} else cbars
+    if cbars not in {"global", "each", "row", "col", None}:
+        raise ValueError(f"ERROR: Colorbars value {colorbars} not valid.")
+
+    # Pad im list with None objects.
+    pad_ims = list(
+        itertools.islice(itertools.chain(ims, itertools.repeat(None)), nrows * ncols)
+    )
+    ims_grid = list()
+    for i in range(0, nrows * ncols, ncols):
+        ims_grid.append(pad_ims[i : i + ncols])
+
+    # Calculate grid shape in number of pixels/array elements in both directions.
+    col_widths = [
+        sum(map(lambda im: im.shape[1] if im is not None else 1, l)) for l in ims_grid
+    ]
+    # Bring row elements close together.
+    rows = [l[i] for i in range(ncols) for l in itertools.chain(ims_grid)]
+    # Group row elements into their own lists.
+    rows = [rows[s : s + ncols] for s in range(0, nrows * ncols, ncols)]
+    row_heights = [
+        sum(map(lambda im: im.shape[0] if im is not None else 1, r)) for r in rows
+    ]
+
+    # Correct fig size according to the size of the actual arrays.
+    grid_pix_dim = (max(row_heights), max(col_widths))
+    fig_hw_ratio = grid_pix_dim[0] / grid_pix_dim[1]
+    fig.set_figheight(fig.get_figwidth() * fig_hw_ratio)
+
+    # Create gridspec.
+    grid = mpl.gridspec.GridSpec(
+        nrows=nrows,
+        ncols=ncols,
+        figure=fig,
+        # width_ratios=np.asarray(col_widths) / sum(col_widths),
+        # height_ratios=np.asarray(row_heights) / sum(row_heights),
+        left=0.05,
+        right=0.95,
+        top=0.95,
+        bottom=0.05,
+        wspace=0.1,
+        hspace=0.1,
+    )
+
+    # Keep track of each image's min and max values.
+    min_max_vals = np.zeros((nrows, ncols, 2))
+    # Keep track of each created axis in the grid.
+    axs = list()
+    # Keep track of the highest subplot position in order to avoid overlap with the
+    # suptitle.
+    max_subplot_height = 0
+    # Step through the grid.
+    for i_row, (ims_row_i, row_i_header) in enumerate(zip(ims_grid, row_headers)):
+        row_axs = list()
+        for j_col, (im, col_j_header) in enumerate(zip(ims_row_i, col_headers)):
+            # If no im was given here, skip everything in this loop.
+            if im is None:
+                continue
+
+            # Create Axes object at the grid location.
+            ax = fig.add_subplot(grid[i_row, j_col])
+            ax.imshow(im, **imshow_kwargs)
+            # Set headers.
+            if row_i_header is not None and ax.get_subplotspec().is_first_col():
+                ax.set_ylabel(row_i_header)
+            if col_j_header is not None and ax.get_subplotspec().is_first_row():
+                ax.set_xlabel(col_j_header)
+                ax.xaxis.set_label_position("top")
+            # Remove pixel coordinate axis ticks.
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            # Update highest subplot to put the `suptitle` later on.
+            max_subplot_height = max(
+                max_subplot_height, ax.get_position(original=False).get_points()[1, 1]
+            )
+            # Update min and max im values.
+            min_max_vals[i_row, j_col] = (im.min(), im.max())
+            row_axs.append(ax)
+        axs.append(row_axs)
+
+    # Handle colorbar creation.
+    # If there should only be one colorbar for the entire grid.
+    if cbars == "global":
+        min_v = min_max_vals[:, :, 0].min()
+        max_v = min_max_vals[:, :, 1].max()
+        color_norm = mpl.colors.Normalize(vmin=min_v, vmax=max_v)
+        cmap = None
+        for ax_row in axs:
+            for ax in ax_row:
+                disp_im = ax.get_images()[0]
+                disp_im.set(norm=color_norm)
+                cmap = disp_im.cmap if cmap is None else cmap
+
+        fig.colorbar(
+            mpl.cm.ScalarMappable(norm=color_norm, cmap=cmap),
+            ax=list(itertools.chain.from_iterable(axs)),
+            location="right",
+            fraction=0.1,
+            pad=0.03,
+        )
+    # If colorbar setting is row, col, or each.
+    elif cbars is not None:
+        # Step through all subplots in the grid.
+        for i_row, ax_row in enumerate(axs):
+            for j_col, ax in enumerate(ax_row):
+                # Determine value range depending on the cbars setting.
+                if cbars == "row":
+                    min_v = min_max_vals[i_row, :, 0].min()
+                    max_v = min_max_vals[i_row, :, 1].max()
+                elif cbars == "col":
+                    min_v = min_max_vals[:, j_col, 0].min()
+                    max_v = min_max_vals[:, j_col, 1].max()
+                elif cbars == "each":
+                    min_v = min_max_vals[i_row, j_col, 0]
+                    max_v = min_max_vals[i_row, j_col, 1]
+                else:
+                    raise RuntimeError(f"ERROR: Invalid option {cbars}")
+
+                # Get AxesImage object (the actual image plotted) from the subplot.
+                disp_im = ax.get_images()[0]
+                # Set up color/cmap scaling.
+                color_norm = mpl.colors.Normalize(vmin=min_v, vmax=max_v)
+                disp_im.set(norm=color_norm)
+                color_mappable = mpl.cm.ScalarMappable(
+                    norm=color_norm, cmap=disp_im.cmap
+                )
+
+                # Use the (somewhat new) AxesDivider utility to divide the subplot
+                # and add a colorbar with the corresponding min/max values.
+                # See
+                # <https://matplotlib.org/stable/gallery/axes_grid1/demo_colorbar_with_axes_divider.html>
+                if cbars == "row":
+                    if ax.get_subplotspec().is_last_col():
+                        ax_div = make_axes_locatable(ax)
+                        cax = ax_div.append_axes("right", size="7%", pad="4%")
+                        fig.colorbar(color_mappable, cax=cax, orientation="vertical")
+                elif cbars == "col":
+                    if ax.get_subplotspec().is_last_row():
+                        ax_div = make_axes_locatable(ax)
+                        cax = ax_div.append_axes("bottom", size="7%", pad="4%")
+                        fig.colorbar(color_mappable, cax=cax, orientation="horizontal")
+                        cax.xaxis.set_ticks_position("bottom")
+                elif cbars == "each":
+                    ax_div = make_axes_locatable(ax)
+                    cax = ax_div.append_axes("right", size="7%", pad="4%")
+                    fig.colorbar(color_mappable, cax=cax, orientation="vertical")
+
+    if title is not None:
+        fig.suptitle(title, y=max_subplot_height + 0.05, verticalalignment="bottom")
+
+    return fig
+
 
 # Create FA map from DTI's
 def fa_map(dti, channels_first=True) -> np.ndarray:
