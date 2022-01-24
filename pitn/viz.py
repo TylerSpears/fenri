@@ -35,6 +35,47 @@ def plot_im_grid(
     fig=None,
     **imshow_kwargs,
 ):
+    """Plot sequence of 2d arrays as a grid of images with optional titles & colorbars.
+
+    Parameters
+    ----------
+    ims: sequence
+        Sequence of numpy ndarrays or pytorch Tensors to plot into a grid.
+    nrows : int, optional
+        Number of rows in the grid, by default 3
+    title : Optional[str], optional
+        The `suptitle` of the image grid, by default None
+    row_headers : Optional[List[str]], optional
+        Titles for each row, by default None
+    col_headers : Optional[List[str]], optional
+        Titles for each column., by default None
+    colorbars : Optional[str], optional
+        Set the type of colorbar and intensity normalization to use, by default None
+
+        Valid options are:
+            None - no colorbar or intensity normalization.
+            "global" - one colorbar is created for the entire grid, and all images are
+                normalized to have color intensity ranges match.
+            "each" - every image has its own colorbar with no intensity normalization.
+            "col", "cols", "column", "columns" - Every column is normalized and
+                given a colorbar.
+            "row", "rows" - Every row is normalized and given a colorbar.
+
+    fig : Figure, optional
+        Figure to plot into, by default None
+    imshow_kwargs : dict
+        Kwargs to pass to the `.imshow()` function call of each image.
+
+    Returns
+    -------
+    Figure
+
+    Raises
+    ------
+    ValueError
+        Invalid option value for `colorbars`
+    """
+
     if fig is None:
         fig = plt.gcf()
 
@@ -218,6 +259,87 @@ def plot_im_grid(
         fig.suptitle(title, y=max_subplot_height + 0.05, verticalalignment="bottom")
 
     return fig
+
+
+def plot_vol_slices(
+    vol: Union[torch.Tensor, np.ndarray],
+    slice_idx=(0.5, 0.5, 0.5),
+    title: Optional[str] = None,
+    vol_labels: Optional[List[str]] = None,
+    slice_labels: Optional[List[str]] = None,
+    channel_labels: Optional[List[str]] = None,
+    colorbars: Optional[str] = None,
+    fig=None,
+    **imshow_kwargs,
+):
+
+    # Canonical format of vols
+    if len(vol.shape) == 3:
+        vol = [
+            [
+                vol,
+            ],
+        ]
+        nvol = 1
+    elif len(vol.shape) == 4:
+        vol = [
+            vol,
+        ]
+        nvol = 1
+    else:
+        nvol = vol.shape[0]
+
+    row_slice_by_vol_labels = list()
+    flat_slices = list()
+    for i_b, chan_v in enumerate(vol):
+        for k_s, s in enumerate(slice_idx):
+            # Create a new row label for every (vol x slice) pairing.
+            row_label = None
+            # Need channel index to be the inner-most loop for plotting.
+            for v in chan_v:
+                if isinstance(s, float):
+                    idx = math.floor(s * v.shape[k_s])
+                else:
+                    idx = s
+                slice_after = tuple(
+                    itertools.repeat(slice(None), len(slice_idx) - (k_s + 1))
+                )
+                slicer = (
+                    ...,
+                    idx,
+                ) + slice_after
+                vol_slice = v[slicer]
+
+                if torch.is_tensor(vol_slice):
+                    vol_slice = vol_slice.detach().cpu().numpy()
+                flat_slices.append(vol_slice)
+
+                # Handle labelling of the rows, only one label per row.
+                if row_label is None:
+                    row_label = ""
+                    if vol_labels is not None:
+                        row_label = row_label + vol_labels[i_b] + " "
+                    if slice_labels is not None:
+                        row_label = row_label + slice_labels[k_s]
+
+                    row_slice_by_vol_labels.append(row_label.strip())
+
+    row_slice_by_vol_labels = (
+        None
+        if all(map(lambda s: s == "", row_slice_by_vol_labels))
+        else row_slice_by_vol_labels
+    )
+
+    return plot_im_grid(
+        *flat_slices,
+        nrows=nvol * len(slice_idx),
+        title=title,
+        row_headers=row_slice_by_vol_labels,
+        col_headers=channel_labels,
+        colorbars=colorbars,
+        fig=fig,
+        **imshow_kwargs,
+    )
 
 
 # Create FA map from DTI's
