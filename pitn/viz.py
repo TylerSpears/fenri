@@ -3,7 +3,7 @@ from ast import Param
 import collections
 import itertools
 import math
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Sequence
 
 from addict import Addict
 from box import Box
@@ -11,6 +11,7 @@ from box import Box
 import numpy as np
 import torch
 import torchio
+import einops
 import pandas as pd
 
 import dipy
@@ -146,8 +147,8 @@ def plot_im_grid(
         right=0.95,
         top=0.95,
         bottom=0.05,
-        wspace=0.1,
-        hspace=0.1,
+        wspace=0.01,
+        hspace=0.01,
     )
 
     # Keep track of each image's min and max values.
@@ -262,7 +263,7 @@ def plot_im_grid(
 
 
 def plot_vol_slices(
-    vol: Union[torch.Tensor, np.ndarray],
+    *vols: Sequence[Union[torch.Tensor, np.ndarray]],
     slice_idx=(0.5, 0.5, 0.5),
     title: Optional[str] = None,
     vol_labels: Optional[List[str]] = None,
@@ -273,34 +274,38 @@ def plot_vol_slices(
     **imshow_kwargs,
 ):
 
-    # Canonical format of vols
-    if len(vol.shape) == 3:
-        vol = [
-            [
-                vol,
-            ],
-        ]
-        nvol = 1
-    elif len(vol.shape) == 4:
-        vol = [
-            vol,
-        ]
-        nvol = 1
-    else:
-        nvol = vol.shape[0]
+    # Canonical format of vols.
+    # Enforce a B x C x D x H x W shape.
+    bcdwh_vols = list()
+    for vol in vols:
+        if len(vol.shape) == 3:
+            vol = vol.reshape(1, *vol.shape)
+        if len(vol.shape) == 4:
+            vol = vol.reshape(1, *vol.shape)
+        bcdwh_vols.append(vol)
+    # Flatten into a list of C x ... arrays.
+    bcdwh_vols = list(itertools.chain.from_iterable(bcdwh_vols))
 
     row_slice_by_vol_labels = list()
     flat_slices = list()
-    for i_b, chan_v in enumerate(vol):
+    for i_b, chan_v in enumerate(bcdwh_vols):
         for k_s, s in enumerate(slice_idx):
-            # Create a new row label for every (vol x slice) pairing.
+            # Use None as a sentinal to only create a new row label for every
+            # (vol x slice) pairing, disregarding the channel index.
             row_label = None
             # Need channel index to be the inner-most loop for plotting.
             for v in chan_v:
-                if isinstance(s, float):
+                # If slice idx was None, skip this slice.
+                if s is None:
+                    continue
+                # If slice idx was a fraction, interpret that as a percent of the total
+                # dim size.
+                if isinstance(s, float) and s >= 0.0 and s <= 1.0:
                     idx = math.floor(s * v.shape[k_s])
                 else:
-                    idx = s
+                    idx = math.floor(s)
+
+                # Generate the slice(None) objects that follow the integer index.
                 slice_after = tuple(
                     itertools.repeat(slice(None), len(slice_idx) - (k_s + 1))
                 )
@@ -324,7 +329,7 @@ def plot_vol_slices(
 
                     row_slice_by_vol_labels.append(row_label.strip())
 
-    row_slice_by_vol_labels = (
+    maybe_empty_row_vol_labels = (
         None
         if all(map(lambda s: s == "", row_slice_by_vol_labels))
         else row_slice_by_vol_labels
@@ -332,9 +337,9 @@ def plot_vol_slices(
 
     return plot_im_grid(
         *flat_slices,
-        nrows=nvol * len(slice_idx),
+        nrows=len(row_slice_by_vol_labels),
         title=title,
-        row_headers=row_slice_by_vol_labels,
+        row_headers=maybe_empty_row_vol_labels,
         col_headers=channel_labels,
         colorbars=colorbars,
         fig=fig,
@@ -350,7 +355,7 @@ def fa_map(dti, channels_first=True) -> np.ndarray:
         t = np.asarray(dti)
     # Reshape to work with dipy.
     if channels_first:
-        t = t.transpose(1, 2, 3, 0)
+        t = einops.rearrange(t, "c ... -> ... c")
 
     # Re-create the symmetric DTI's (3x3) from the lower-triangular portion (6).
     t = dipy.reconst.dti.from_lower_triangular(t)
@@ -370,7 +375,7 @@ def direction_map(dti, channels_first=True) -> np.ndarray:
         t = np.asarray(dti)
     # Reshape to work with dipy.
     if channels_first:
-        t = t.transpose(1, 2, 3, 0)
+        t = einops.rearrange(t, "c ... -> ... c")
 
     # Re-create the symmetric DTI's (3x3) from the lower-triangular portion (6).
     t = dipy.reconst.dti.from_lower_triangular(t)
@@ -380,7 +385,7 @@ def direction_map(dti, channels_first=True) -> np.ndarray:
     direction_map = dipy.reconst.dti.color_fa(fa, eigvecs)
 
     if channels_first:
-        return direction_map.transpose(3, 0, 1, 2)
+        direction_map = einops.rearrange(direction_map, "... c -> c ...")
 
     return direction_map
 

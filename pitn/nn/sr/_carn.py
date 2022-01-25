@@ -24,12 +24,15 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         self.channels = channels
         self.upscale_factor = upscale_factor
 
+        # self.pre_norm = torch.nn.BatchNorm3d(self.channels)
+        # Disable bias, we only want to enable scaling.
         # Pad to maintain the same input shape.
         self.pre_conv = torch.nn.Conv3d(
             self.channels,
             self.channels,
             kernel_size=3,
             padding=1,
+            # bias=False
         )
 
         self.activate_fn = activate_fn
@@ -89,6 +92,8 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         return self.output_cropper(x)
 
     def forward(self, x: torch.Tensor, x_mode_refine: torch.Tensor):
+        # y = self.pre_norm(x)
+        # y = self.pre_conv(y)
         y = self.pre_conv(x)
         y = self.activate_fn(y)
         y = self.cascade(y)
@@ -98,8 +103,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # Repeat dimensions as necessary to have the same size as the previous layer's
         # output.
         # Size of the modal refinement input may be one voxel different in shape due to
-        # an uneven division `hr_size / downscale_factor`. So, crop the mode refinement
-        # input to match the shape of the upsample layer output.
+        # an uneven division `hr_size / downscale_factor`.
         if x_mode_refine.shape[2:] != y.shape[2:]:
             raise RuntimeError(
                 f"ERROR: Mode refine input shape {x_mode_refine.shape[2:]} "

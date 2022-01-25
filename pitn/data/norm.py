@@ -111,6 +111,7 @@ class DTIMinMaxScaler:
             + data_range_str
         )
 
+    @torch.no_grad()
     def scale(self, x: torch.Tensor, stateful=True):
         """MinMax scale the input Tensor, optionally saving scale information.
 
@@ -162,6 +163,7 @@ class DTIMinMaxScaler:
 
         return y_scaled
 
+    @torch.no_grad()
     def descale(self, x_scaled: torch.Tensor):
         x_standard = x_scaled
         if not x_scaled.is_floating_point():
@@ -169,18 +171,17 @@ class DTIMinMaxScaler:
         # Add channel dim if not expecting channel dimension, remove later.
         if not self._channel_wise:
             x_standard = x_standard.view(1, *x_standard.shape)
-
         y_descaled = torch.empty_like(x_standard)
-
         for i_channel in range(self._channel_size):
-            x_min_max = self._data_range[i_channel]
+            x_min_max = self._data_range[i_channel].to(x_standard)
             # Formula taken from
             # <https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.minmax_scale.html>
             scale = (self.max[i_channel] - self.min[i_channel]) / (
                 x_min_max[1] - x_min_max[0]
             )
             descaled = (
-                x_standard[i_channel] - (self.min[i_channel] - x_min_max[0] * scale)
+                x_standard[i_channel]
+                - (self.min[i_channel] - x_min_max[0] * scale)
             ) / scale
 
             y_descaled[i_channel] = descaled
