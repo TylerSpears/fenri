@@ -96,6 +96,7 @@ class DTIMinMaxScaler:
             None,
         ] * num_reps
         self.clip = clip
+        self._orig = None
 
     def __str__(self):
         data_range_str = (
@@ -112,7 +113,7 @@ class DTIMinMaxScaler:
         )
 
     @torch.no_grad()
-    def scale(self, x: torch.Tensor, stateful=True):
+    def scale(self, x: torch.Tensor, stateful=True, keep_orig=False):
         """MinMax scale the input Tensor, optionally saving scale information.
 
         Assumes x is channel-first, if any channels exist.
@@ -122,8 +123,12 @@ class DTIMinMaxScaler:
         x : torch.Tensor
         stateful : bool, optional
             By default True
+        keep_orig: bool, optional
+            By default False
         """
 
+        if keep_orig:
+            self._orig = torch.clone(x.detach()).cpu()
         x_standard = x
         if not x.is_floating_point():
             x_standard = x_standard.float()
@@ -163,6 +168,10 @@ class DTIMinMaxScaler:
 
         return y_scaled
 
+    @property
+    def orig(self):
+        return self._orig
+
     @torch.no_grad()
     def descale(self, x_scaled: torch.Tensor):
         x_standard = x_scaled
@@ -180,8 +189,7 @@ class DTIMinMaxScaler:
                 x_min_max[1] - x_min_max[0]
             )
             descaled = (
-                x_standard[i_channel]
-                - (self.min[i_channel] - x_min_max[0] * scale)
+                x_standard[i_channel] - (self.min[i_channel] - x_min_max[0] * scale)
             ) / scale
 
             y_descaled[i_channel] = descaled

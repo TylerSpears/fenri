@@ -77,6 +77,11 @@ def plot_im_grid(
         Invalid option value for `colorbars`
     """
 
+    AX_TITLE_SIZE_PERC = 0.05
+    SUPTITLE_SIZE_PERC = 0.1
+    AX_CBAR_SIZE_PERC = 0.1
+    EACH_CBAR_SUBPLOT_SIZE_PERC = "7%"
+
     if fig is None:
         fig = plt.gcf()
 
@@ -104,6 +109,14 @@ def plot_im_grid(
         col_headers if col_headers is not None else list(itertools.repeat(None, ncols))
     )
 
+    if len(row_headers) != nrows:
+        raise RuntimeError(
+            f"ERROR: Number of row headers {len(row_headers)} != number of rows {nrows}"
+        )
+    if len(col_headers) != ncols:
+        raise RuntimeError(
+            f"ERROR: Number of row headers {len(col_headers)} != number of rows {ncols}"
+        )
     # Canonical colorbar setting values.
     cbars = colorbars.casefold() if colorbars is not None else colorbars
     cbars = "col" if cbars in {"column", "columns", "cols", "col"} else cbars
@@ -180,6 +193,7 @@ def plot_im_grid(
             ax.set_yticks([])
             ax.set_xticklabels([])
             ax.set_yticklabels([])
+            ax.set_aspect("equal")
             # Update highest subplot to put the `suptitle` later on.
             max_subplot_height = max(
                 max_subplot_height, ax.get_position(original=False).get_points()[1, 1]

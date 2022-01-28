@@ -12,6 +12,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
     def __init__(
         self,
         channels: int,
+        interior_channels: int,
         upscale_factor: int,
         n_res_units: int,
         n_dense_units: int,
@@ -22,6 +23,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         super().__init__()
 
         self.channels = channels
+        self.interior_channels = interior_channels
         self.upscale_factor = upscale_factor
 
         # self.pre_norm = torch.nn.BatchNorm3d(self.channels)
@@ -29,7 +31,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # Pad to maintain the same input shape.
         self.pre_conv = torch.nn.Conv3d(
             self.channels,
-            self.channels,
+            self.interior_channels,
             kernel_size=3,
             padding=1,
             # bias=False
@@ -46,22 +48,22 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             for _ in range(n_res_units):
                 res_layers.append(
                     layers.ResBlock3dNoBN(
-                        self.channels,
+                        self.interior_channels,
                         kernel_size=3,
                         activate_fn=activate_fn,
                         padding=1,
                     )
                 )
             top_level_units.append(
-                layers.DenseCascadeBlock3d(self.channels, *res_layers)
+                layers.DenseCascadeBlock3d(self.interior_channels, *res_layers)
             )
 
         # Wrap everything into a densely-connected cascade.
-        self.cascade = layers.DenseCascadeBlock3d(self.channels, *top_level_units)
+        self.cascade = layers.DenseCascadeBlock3d(self.interior_channels, *top_level_units)
 
         self.upsample = layers.upsample.ICNRUpsample3d(
-            self.channels,
-            self.channels,
+            self.interior_channels,
+            self.interior_channels,
             self.upscale_factor,
             activate_fn=upsample_activate_fn,
             blur=True,
@@ -71,11 +73,11 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # Perform group convolution to refine each channel of the input independently of
         # every other channel.
         self.hr_modality_refinement = torch.nn.LazyConv3d(
-            self.channels, kernel_size=5, padding=2, groups=self.channels
+            self.interior_channels, kernel_size=5, padding=2, groups=self.channels
         )
 
         self.post_conv = torch.nn.Conv3d(
-            self.channels, self.channels, kernel_size=3, padding=1
+            self.interior_channels, self.channels, kernel_size=3, padding=1
         )
 
         # "Padding" by a negative amount will perform cropping!
