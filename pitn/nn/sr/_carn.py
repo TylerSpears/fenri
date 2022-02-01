@@ -59,7 +59,9 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             )
 
         # Wrap everything into a densely-connected cascade.
-        self.cascade = layers.DenseCascadeBlock3d(self.interior_channels, *top_level_units)
+        self.cascade = layers.DenseCascadeBlock3d(
+            self.interior_channels, *top_level_units
+        )
 
         self.upsample = layers.upsample.ICNRUpsample3d(
             self.interior_channels,

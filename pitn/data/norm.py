@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import torch
 import monai
+import skimage
 
 
 def normalize_batch(batch, mean, var, eps=1.0e-10):
@@ -197,3 +198,50 @@ class DTIMinMaxScaler:
         y_descaled = y_descaled.reshape_as(x_scaled)
 
         return y_descaled
+
+
+def mask_constrain_clamp_max(
+    vol: torch.Tensor,
+    mask: torch.Tensor,
+    max_quantile: float,
+    selection_st_elem=None,
+):
+    """Clamp a brain volume on the outer edges channel-wise.
+
+    Parameters
+    ----------
+    vol : torch.Tensor
+    mask : torch.Tensor
+    max_quantile : float
+    selection_st_elem : Union[np.ndarray, torch.Tensor], optional
+
+    Returns
+    -------
+    torch.Tensor
+        Same type and shape as vol, but with some voxels clamped to the given quantile.
+    """
+
+    n_channel = vol.shape[0]
+    st_elem = (
+        skimage.morphology.ball(4) if selection_st_elem is None else selection_st_elem
+    )
+    if torch.is_tensor(st_elem):
+        st_elem = st_elem.detach().cpu().numpy()
+    st_elem = st_elem.astype(bool)
+    if mask.ndim == 4:
+        mask = mask[0]
+    mask = mask.bool()
+    np_mask = mask.detach().cpu().numpy()
+    eroded = torch.from_numpy(skimage.morphology.binary_erosion(np_mask, st_elem)).to(
+        mask
+    )
+    # Select the outer edge of the mask that was eroded and operate only on that.
+    outer_mask = mask ^ eroded
+    selected = torch.masked_select(vol, outer_mask).view(n_channel, -1)
+    q = torch.quantile(selected, max_quantile, dim=1, keepdim=True)
+    selected = selected.clamp_max(q)
+
+    # Only apply clamping to the outer edge of the volume.
+    v = torch.masked_scatter(vol, outer_mask, selected)
+
+    return v
