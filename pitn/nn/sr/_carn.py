@@ -65,7 +65,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
 
         self.upsample = layers.upsample.ICNRUpsample3d(
             self.interior_channels,
-            self.interior_channels,
+            self.channels,
             self.upscale_factor,
             activate_fn=upsample_activate_fn,
             blur=True,
@@ -84,7 +84,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
 
         # "Padding" by a negative amount will perform cropping!
         # <https://github.com/pytorch/pytorch/issues/1331>
-        if center_crop_output_side_amt is not None:
+        if center_crop_output_side_amt is not None and center_crop_output_side_amt > 0:
             crop = -center_crop_output_side_amt
             self.output_cropper = torch.nn.ConstantPad3d(crop, 0)
             self._crop = True
