@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import skimage
 import einops
+import monai
 
 from pitn._lazy_loader import LazyLoader
 
@@ -152,6 +153,36 @@ def range_scaled_ms_ssim(
         x, y = y, x
     x_scaled, y_scaled = _minmax_scale_by_y(x, y, feature_range)
     data_range = abs(feature_range[1] - feature_range[0])
+
+    window_size = ms_ssim_kwargs.get("win_size", 11)
+
+    min_side_len = (window_size - 1) * 2 ** 4
+    if min(y.shape[2:]) <= min_side_len:
+        # Monai transformer only takes C x [...] tensors, with no batch size.
+        batch_size = x_scaled.shape[0]
+        n_channels = x_scaled.shape[1]
+        x_scaled = einops.rearrange(x_scaled, "b c ... -> (b c) ...")
+        y_scaled = einops.rearrange(y_scaled, "b c ... -> (b c) ...")
+        new_shape = torch.maximum(
+            torch.as_tensor(
+                [
+                    min_side_len + 1,
+                ]
+            ),
+            torch.as_tensor(y.shape[2:]),
+        )
+        padder = monai.transforms.SpatialPad(
+            new_shape, method="symmetric", mode="reflect"
+        )
+        x_scaled = padder(x_scaled)
+        y_scaled = padder(y_scaled)
+
+        x_scaled = einops.rearrange(
+            x_scaled, "(b c) ... -> b c ...", b=batch_size, c=n_channels
+        )
+        y_scaled = einops.rearrange(
+            y_scaled, "(b c) ... -> b c ...", b=batch_size, c=n_channels
+        )
 
     scores = pytorch_msssim.ms_ssim(
         x_scaled, y_scaled, data_range=data_range, size_average=False, **ms_ssim_kwargs

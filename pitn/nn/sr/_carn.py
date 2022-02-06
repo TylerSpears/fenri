@@ -75,7 +75,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # Perform group convolution to refine each channel of the input independently of
         # every other channel.
         self.hr_modality_refinement = torch.nn.LazyConv3d(
-            self.interior_channels, kernel_size=5, padding=2, groups=self.channels
+            self.interior_channels, kernel_size=1, groups=self.channels
         )
 
         self.post_conv = torch.nn.Conv3d(
