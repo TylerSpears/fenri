@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import collections
+from typing import Callable, Tuple
+
 import numpy as np
 import torch
 import einops
@@ -106,10 +108,14 @@ def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1):
     m = torch.zeros(full_mat_shape).to(x)
     m = m.view(mat_size, mat_size, -1)
 
-    # Handle upper triangle with the tril elements of the input.
-    m[tuple(torch.tril_indices(mat_size, mat_size))] = v.view(tril_size, -1)
-    # Handle the lower triangle (sans the diagonal) one element at a time.
-    for r, c in zip(*torch.triu_indices(mat_size, mat_size, offset=1).tolist()):
+    # Handle lower triangle with the tril elements of the input.
+    m[tuple(torch.tril_indices(mat_size, mat_size, device=x.device))] = v.view(
+        tril_size, -1
+    )
+    # Handle the upper triangle (sans the diagonal) one element at a time.
+    for r, c in zip(
+        *torch.triu_indices(mat_size, mat_size, offset=1, device=x.device).tolist()
+    ):
         m[r, c] = m[c, r]
     m = m.view(*full_mat_shape)
     # Many algorithms require the matrix dims to be the last two dims, so rearrange
@@ -117,3 +123,30 @@ def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1):
     m = einops.rearrange(m, "r c ... -> ... r c", r=mat_size, c=mat_size)
 
     return m
+
+
+def eigh_decompose_apply_recompose(
+    A: torch.Tensor,
+    eigvals_eigvecs_fn: Callable[
+        [torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]
+    ],
+    **eigh_kwargs,
+) -> torch.Tensor:
+
+    # Decompose the matrices into their eigenvalues and eigenvectors.
+    eigvals, eigvecs = eigh_workaround(A, **eigh_kwargs)
+
+    # Apply the function to the eigenvalues and eigenvectors.
+    eigvals, eigvecs = eigvals_eigvecs_fn(eigvals, eigvecs)
+
+    # Reconstruct the tensor from the eigenvalues and eigenvectors.
+    # The eigh() function expects the matrix dims to be the final two dimensions of
+    # A, so we can assume that the transpose can be performed on the last two dims
+    # of the eigenvectors.
+    # conj_physical() computes the element-wise conjugate only if the eigenvectors
+    # are complex.
+    A_transform = (
+        eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-2, -1).conj_physical()
+    )
+
+    return A_transform
