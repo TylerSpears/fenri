@@ -9,9 +9,36 @@ import einops
 import monai
 
 from pitn._lazy_loader import LazyLoader
+import pitn
 
 # Make pytorch_msssim an optional import.
 pytorch_msssim = LazyLoader("pytorch_msssim", globals(), "pytorch_msssim")
+
+
+@torch.no_grad()
+def psnr_batch_channel_regularized(
+    x, y, range_min: torch.Tensor, range_max: torch.Tensor
+):
+
+    # Calculate the per-batch-per-channel range.
+    range_min = range_min.to(y)
+    range_max = range_max.to(y)
+    y_range = range_max - range_min
+
+    # Use a small epsilon to avoid 0s in the MSE.
+    epsilon = 1e-10
+    # Calculate squared error then regularize by the per-batch-per-channel range.
+    regular_mse = (y_range ** 2) / torch.clamp_min(
+        F.mse_loss(x, y, reduction="none"), epsilon
+    )
+    # Calculate the mean over channels and spatial dims.
+    regular_mse = einops.reduce(regular_mse, "b ... -> b", "mean")
+    # Find PSNR for each batch.
+    psnr = 10 * torch.log10(regular_mse)
+    # Mean of PSNR values for the whole batch.
+    psnr = psnr.mean()
+
+    return psnr
 
 
 def _bc_y_range(y):
@@ -33,7 +60,7 @@ def psnr_y_range(x, y):
     # Calculate squared error then regularize by the per-batch-per-channel range.
     regular_mse = (y_range ** 2) / F.mse_loss(x, y, reduction="none")
     # Calculate the mean over channels and spatial dims.
-    regular_mse = einops.reduce(regular_mse, "b .... -> b (...)", "mean")
+    regular_mse = einops.reduce(regular_mse, "b .... -> b", "mean")
     # Find PSNR for each batch.
     psnr = 10 * torch.log10(regular_mse)
     # Mean of PSNR values for the whole batch.
@@ -358,6 +385,41 @@ def range_scaled_ms_ssim(
         raise ValueError(f"ERROR: Invalid reduction {reduction}")
 
     return scores
+
+
+@torch.no_grad()
+def fast_fa(dti_lower_triangle, foreground_mask=None):
+    batch_size = dti_lower_triangle.shape[0]
+    spatial_dims = tuple(dti_lower_triangle.shape[2:])
+
+    tri_dti = pitn.eig.tril_vec2sym_mat(dti_lower_triangle, tril_dim=1)
+    eigvals = pitn.eig.eigvalsh_workaround(tri_dti, "L")
+    # Give background voxels a value of 1 to avoid numerical errors.
+    if foreground_mask is None:
+        background_mask = (dti_lower_triangle == 0).all(1)
+    else:
+        background_mask = ~(foreground_mask.bool().to(eigvals.device))
+        # Remove channel dimension from the mask.
+        background_mask = background_mask.view(batch_size, *spatial_dims)
+
+    eigvals[background_mask] = 0
+    eigvals = torch.clamp_min_(eigvals, min=0)
+
+    # Move eigenvalues dimension to the front of the tensor.
+    eigvals = einops.rearrange(eigvals, "... e -> e ...", e=3)
+    # Even if a voxel isn't in the background, it may still have a value close to
+    # 0, so add those to avoid numerical errors.
+    zeros_mask = background_mask | (
+        torch.isclose(eigvals, eigvals.new_tensor(0), atol=1e-9)
+    ).all(0)
+
+    ev1, ev2, ev3 = eigvals
+    fa_num = (ev1 - ev2) ** 2 + (ev2 - ev3) ** 2 + (ev3 - ev1) ** 2
+    fa_denom = (eigvals * eigvals).sum(0) + zeros_mask
+    fa = torch.sqrt(0.5 * fa_num / fa_denom)
+
+    fa = fa.view(batch_size, 1, *spatial_dims)
+    return fa
 
 
 # self.ssim_metric = functools.partial(

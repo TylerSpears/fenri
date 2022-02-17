@@ -23,7 +23,7 @@ class ResBlock3dNoBN(torch.nn.Module):
         self.conv1 = torch.nn.Conv3d(**self._conv_kwargs)
         self.conv2 = torch.nn.Conv3d(**self._conv_kwargs)
 
-        self.active_fn = activate_fn
+        self.active_fn = activate_fn()
 
     def forward(self, x):
         y_res = self.conv1(x)

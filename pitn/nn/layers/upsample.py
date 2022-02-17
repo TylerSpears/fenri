@@ -155,7 +155,7 @@ class ICNRUpsample3d(torch.nn.Module):
         if activate_fn is None:
             self.activate_fn = torch.nn.Identity()
         else:
-            self.activate_fn = activate_fn
+            self.activate_fn = activate_fn()
 
         self.shuffle = ESPCNShuffle3d(
             num_channels=out_channels, upscale_factor=upscale_factor

@@ -384,29 +384,6 @@ def fa_map(dti, channels_first=True) -> np.ndarray:
 
     return fa
 
-
-@torch.no_grad()
-def fast_fa(dti_upper_triangle):
-    batch_size = dti_upper_triangle.shape[0]
-    spatial_dims = tuple(dti_upper_triangle.shape[2:])
-
-    tri_dti = pitn.eig.tril_vec2sym_mat(dti_upper_triangle, tril_dim=1)
-    eigvals = pitn.eig.eigvalsh_workaround(tri_dti, "L")
-    # Give background voxels a value of 1 to avoid numerical errors.
-    background_mask = (dti_upper_triangle == 0).all(1)
-    eigvals[background_mask] = 0
-    eigvals = torch.clamp_min_(eigvals, min=0)
-    # Move eigenvalues dimension to the front of the tensor.
-    eigvals = einops.rearrange(eigvals, "... e -> e ...", e=3)
-    ev1, ev2, ev3 = eigvals
-    fa_num = (ev1 - ev2) ** 2 + (ev2 - ev3) ** 2 + (ev3 - ev1) ** 2
-    fa_denom = (eigvals * eigvals).sum(0) + background_mask
-    # fa_denom = (eigvals ** 2).sum(0) + background_mask
-    fa = torch.sqrt(0.5 * fa_num / fa_denom)
-    fa = fa.view(batch_size, 1, *spatial_dims)
-    return fa
-
-
 # Generate FA-weighted diffusion direction map.
 def direction_map(dti, channels_first=True) -> np.ndarray:
 

@@ -19,12 +19,34 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         activate_fn,
         upsample_activate_fn,
         center_crop_output_side_amt=None,
+        input_scaler=None,
+        multi_modal_input_scaler=None,
+        output_descaler=None,
     ):
         super().__init__()
 
         self.channels = channels
         self.interior_channels = interior_channels
         self.upscale_factor = upscale_factor
+
+        if isinstance(activate_fn, str):
+            activate_fn = pitn.utils.torch_lookups.activate_fn[activate_fn]
+        if isinstance(upsample_activate_fn, str):
+            upsample_activate_fn = pitn.utils.torch_lookups.activate_fn[
+                upsample_activate_fn
+            ]
+
+        self.input_scaler = (
+            input_scaler if input_scaler is not None else torch.nn.Identity()
+        )
+        self.multi_modal_input_scaler = (
+            multi_modal_input_scaler
+            if multi_modal_input_scaler is not None
+            else torch.nn.Identity()
+        )
+        self.output_descaler = (
+            output_descaler if output_descaler is not None else torch.nn.Identity()
+        )
 
         # self.pre_norm = torch.nn.BatchNorm3d(self.channels)
         # Disable bias, we only want to enable scaling.
@@ -36,8 +58,6 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             padding=1,
             # bias=False
         )
-
-        self.activate_fn = activate_fn
 
         # Construct the densely-connected cascading layers.
         # Create n_dense_units number of dense units.
@@ -57,6 +77,8 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             top_level_units.append(
                 layers.DenseCascadeBlock3d(self.interior_channels, *res_layers)
             )
+
+        self.activate_fn = activate_fn()
 
         # Wrap everything into a densely-connected cascade.
         self.cascade = layers.DenseCascadeBlock3d(
@@ -95,9 +117,25 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
     def crop_full_output(self, x):
         return self.output_cropper(x)
 
-    def forward(self, x: torch.Tensor, x_mode_refine: torch.Tensor):
+    def transform_ground_truth_for_training(self, y, crop=True):
+        if crop:
+            y = self.crop_full_output(y)
+        y = self.input_scaler(y)
+
+        return y
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mode_refine: torch.Tensor,
+        transform_x: bool = True,
+        transform_x_mode_refine: bool = True,
+        transform_y: bool = True,
+    ):
         # y = self.pre_norm(x)
         # y = self.pre_conv(y)
+        if transform_x:
+            x = self.input_scaler(x)
         y = self.pre_conv(x)
         y = self.activate_fn(y)
         y = self.cascade(y)
@@ -117,6 +155,8 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
                 + f"=|{x_mode_refine.shape[2:]}| ?"
             )
 
+        if transform_x_mode_refine:
+            x_mode_refine = self.multi_modal_input_scaler(x_mode_refine)
         x_mode_refine = x_mode_refine.expand_as(y)
         # Interleave the channels for group convolution, where each channel from the
         # network is convolved with a copy of the extra-modal HR input.
@@ -130,5 +170,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         y = self.post_conv(y)
         if self._crop:
             y = self.crop_full_output(y)
+        if transform_y:
+            y = self.output_descaler(y)
 
         return y

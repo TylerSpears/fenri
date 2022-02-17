@@ -8,7 +8,7 @@ import pitn
 # "notebooks/data/dti_thresholding.ipynb".
 # Basically, any eigenvalue of a DTI greater than this constant can be considered
 # as an outlier and should be clipped.
-EIGVAL_CUTOFF = 0.0033201
+EIGVAL_CUTOFF = 0.00332008
 
 
 def clip_dti_eigvals(

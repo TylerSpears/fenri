@@ -48,8 +48,9 @@ def eigh_workaround(A: torch.Tensor, *args, chunk_size=100000, **kwargs):
 
     return result
 
-
-def eigvalsh_workaround(A: torch.Tensor, *args, chunk_size=100000, **kwargs):
+def eigvalsh_workaround(
+    A: torch.Tensor, *args, chunk_size=100000, **kwargs
+) -> torch.Tensor:
     """Wrapper function of torch.linalg.eigvalsh that avoids CUDA errors.
 
     When decomposing too many matrices at once (>2,500,000, for example), the CUDA
@@ -74,13 +75,13 @@ def eigvalsh_workaround(A: torch.Tensor, *args, chunk_size=100000, **kwargs):
         M = A.view(-1, n, n)
         n_mats = M.shape[0]
 
-        # Initialize eigval and eigvec tensors, and write into them with each chunk.
+        # Initialize eigval tensor and write into it one chunk at a time.
         eigvals = torch.empty(n_mats, n).to(M)
         # Operate on chunk_size matrices at each step.
         start_idx = range(0, n_mats, chunk_size)
         end_idx = range(chunk_size, n_mats + chunk_size, chunk_size)
         for start, stop in zip(start_idx, end_idx):
-            evals, evecs = torch.linalg.eigh(M[start:stop], *args, **kwargs)
+            evals = torch.linalg.eigvalsh(M[start:stop], *args, **kwargs)
             eigvals[start:stop] = evals
         eigvals = eigvals.view(*A.shape[:-2], n)
         # Match pytorch named tuple output.
@@ -89,7 +90,7 @@ def eigvalsh_workaround(A: torch.Tensor, *args, chunk_size=100000, **kwargs):
     return result
 
 
-def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1):
+def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1) -> torch.Tensor:
     tril_size = x.shape[tril_dim]
     # Solve quadratic equation of sum of consecutive numbers to find size of matrix.
     mat_size = (-1 + np.sqrt(1 + (4 * 2 * tril_size))) / 2
@@ -144,7 +145,7 @@ def eigh_decompose_apply_recompose(
     # A, so we can assume that the transpose can be performed on the last two dims
     # of the eigenvectors.
     # conj_physical() computes the element-wise conjugate only if the eigenvectors
-    # are complex.
+    # are complex. Otherwise, it is an identity function.
     A_transform = (
         eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-2, -1).conj_physical()
     )

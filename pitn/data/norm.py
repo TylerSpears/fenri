@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 import itertools
+import dataclasses
+from dataclasses import dataclass
+from typing import Optional
+
 import numpy as np
 import torch
 import monai
@@ -306,3 +310,76 @@ def correct_edge_noise_with_median(
     corrected = torch.from_numpy(corrected).to(vol)
 
     return corrected
+
+
+@dataclass
+class GlobalScaleParams:
+    feature_min: Optional[torch.Tensor] = dataclasses.field(default=None)
+    feature_max: Optional[torch.Tensor] = dataclasses.field(default=None)
+    data_min: Optional[torch.Tensor] = dataclasses.field(default=None)
+    data_max: Optional[torch.Tensor] = dataclasses.field(default=None)
+
+
+class MinMaxScaler:
+    def __init__(
+        self, feature_min=None, feature_max=None, data_min=None, data_max=None
+    ):
+        self._feat_min = feature_min
+        self._feat_max = feature_max
+        self._data_min = data_min
+        self._data_max = data_max
+
+    def _select_scaler(self, passed_val, internal_val, var_name: str):
+        result = None
+        if passed_val is not None:
+            result = passed_val
+        elif internal_val is not None:
+            result = internal_val
+        else:
+            raise ValueError(
+                f"ERROR: Expected {var_name} to be not None, but was "
+                + f"given value {passed_val} and init with value {internal_val}."
+            )
+        return result
+
+    def scale_to(
+        self,
+        x: torch.Tensor,
+        feature_min: torch.Tensor = None,
+        feature_max: torch.Tensor = None,
+        data_min: torch.Tensor = None,
+        data_max: torch.Tensor = None,
+    ):
+        feat_min = self._select_scaler(feature_min, self._feat_min, "feature_min").to(x)
+        feat_max = self._select_scaler(feature_max, self._feat_max, "feature_max").to(x)
+        dat_min = self._select_scaler(data_min, self._data_min, "data_min").to(x)
+        dat_max = self._select_scaler(data_max, self._data_max, "data_max").to(x)
+
+        # Formula taken from
+        # <https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.minmax_scale.html>
+        scale = (feat_max - feat_min) / (dat_max - dat_min)
+        x_scaled = scale * x + feat_min - dat_min * scale
+
+        return x_scaled
+
+    def unscale_from(
+        self,
+        x: torch.Tensor,
+        feature_min: torch.Tensor = None,
+        feature_max: torch.Tensor = None,
+        data_min: torch.Tensor = None,
+        data_max: torch.Tensor = None,
+    ):
+        feat_min = self._select_scaler(feature_min, self._feat_min, "feature_min").to(x)
+        feat_max = self._select_scaler(feature_max, self._feat_max, "feature_max").to(x)
+        dat_min = self._select_scaler(data_min, self._data_min, "data_min").to(x)
+        dat_max = self._select_scaler(data_max, self._data_max, "data_max").to(x)
+
+        # Formula taken from
+        # <https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.minmax_scale.html>
+        scale = (feat_max - feat_min) / (dat_max - dat_min)
+
+        x_scaled = x
+        x_unscaled = (x_scaled - feat_min + dat_min * scale) / scale
+
+        return x_unscaled
