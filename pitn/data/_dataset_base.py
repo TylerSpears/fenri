@@ -268,7 +268,18 @@ class _VolPatchDataset(torch.utils.data.Dataset):
         )
         # Remove swatch dim.
         full_idx = tuple(i[0] for i in full_idx)
-        return (im[full_idx], full_idx) if return_idx else im[full_idx]
+        # Instead of indexing with the actual full index, just index with a more
+        # efficient tuple of slices...
+        channel_slices = [slice(None) for _ in channel_size]
+        spatial_slices = [
+            slice(start.item(), start.item() + size)
+            for start, size in zip(start_idx, patch_shape)
+        ]
+        # This should be exactly equivalent to indexing with the full_idx (assuming no
+        # dilation nonsense is going on).
+        full_idx_slices = channel_slices + spatial_slices
+
+        return (im[full_idx_slices], full_idx) if return_idx else im[full_idx_slices]
 
     def __getitem__(self, idx: Union[int, slice, Sequence[int]]) -> dict:
         """

@@ -48,6 +48,7 @@ def eigh_workaround(A: torch.Tensor, *args, chunk_size=100000, **kwargs):
 
     return result
 
+
 def eigvalsh_workaround(
     A: torch.Tensor, *args, chunk_size=100000, **kwargs
 ) -> torch.Tensor:
