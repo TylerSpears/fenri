@@ -108,12 +108,12 @@ def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1) -> torch.Tensor:
     full_mat_shape = (mat_size, mat_size) + batch_shape
 
     m = torch.zeros(full_mat_shape).to(x)
-    m = m.view(mat_size, mat_size, -1)
+    m = m.reshape(mat_size, mat_size, -1)
 
     # Handle lower triangle with the tril elements of the input.
-    m[tuple(torch.tril_indices(mat_size, mat_size, device=x.device))] = v.view(
-        tril_size, -1
-    )
+    m[
+        tuple(torch.tril_indices(mat_size, mat_size, device=x.device))
+    ] = v.contiguous().view(tril_size, -1)
     # Handle the upper triangle (sans the diagonal) one element at a time.
     for r, c in zip(
         *torch.triu_indices(mat_size, mat_size, offset=1, device=x.device).tolist()
@@ -127,6 +127,39 @@ def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1) -> torch.Tensor:
     return m
 
 
+def sym_mat2tril_vec(
+    x: torch.Tensor, dim1=-2, dim2=-1, tril_dim=1
+) -> torch.Tensor:
+
+    dims = [[f"d{i}", x.shape[i]] for i in range(len(x.shape))]
+    dims[dim1][0] = "md1"
+    dims[dim2][0] = "md2"
+    in_shape_str = " ".join(d[0] for d in dims)
+    batch_shape = list(filter(lambda sd: "md" not in sd[0], dims))
+    if tril_dim < 0:
+        tril_dim = len(batch_shape) + tril_dim
+    bat_shape_str = " ".join(d[0] for d in batch_shape)
+
+    bat_mat = einops.rearrange(
+        x,
+        f"{in_shape_str} -> ({bat_shape_str}) md1 md2",
+        **dict(d for d in dims),
+    )
+    mat_shape = (x.shape[-1], x.shape[-2])
+    tril_idx = torch.tril_indices(*mat_shape, device=x.device)
+    tril_idx = (slice(None),) + tuple(tril_idx)
+    bat_vec = bat_mat[tril_idx]
+    vec_shape = bat_vec.shape[-1]
+    out_shape = batch_shape.copy()
+    out_shape.insert(tril_dim, ("v", vec_shape))
+    out_shape_str = " ".join(sd[0] for sd in out_shape)
+    y = einops.rearrange(
+        bat_vec, f"({bat_shape_str}) v -> {out_shape_str}", **dict(d for d in out_shape)
+    )
+
+    return y
+
+
 def eigh_decompose_apply_recompose(
     A: torch.Tensor,
     eigvals_eigvecs_fn: Callable[
@@ -136,7 +169,8 @@ def eigh_decompose_apply_recompose(
 ) -> torch.Tensor:
 
     # Decompose the matrices into their eigenvalues and eigenvectors.
-    eigvals, eigvecs = eigh_workaround(A, **eigh_kwargs)
+    # Input needs to be a float, there's no getting around it.
+    eigvals, eigvecs = eigh_workaround(A.float(), **eigh_kwargs)
 
     # Apply the function to the eigenvalues and eigenvectors.
     eigvals, eigvecs = eigvals_eigvecs_fn(eigvals, eigvecs)

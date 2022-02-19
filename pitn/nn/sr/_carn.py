@@ -6,6 +6,7 @@ import einops
 
 import pitn
 import pitn.nn.layers as layers
+import pitn.riemann.log_euclid as log_euclid
 
 
 class CascadeUpsampleModeRefine(torch.nn.Module):
@@ -30,9 +31,9 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         self.upscale_factor = upscale_factor
 
         if isinstance(activate_fn, str):
-            activate_fn = pitn.utils.torch_lookups.activate_fn[activate_fn]
+            activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
         if isinstance(upsample_activate_fn, str):
-            upsample_activate_fn = pitn.utils.torch_lookups.activate_fn[
+            upsample_activate_fn = pitn.utils.torch_lookups.activation[
                 upsample_activate_fn
             ]
 
@@ -48,15 +49,13 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             output_descaler if output_descaler is not None else torch.nn.Identity()
         )
 
-        # self.pre_norm = torch.nn.BatchNorm3d(self.channels)
-        # Disable bias, we only want to enable scaling.
         # Pad to maintain the same input shape.
         self.pre_conv = torch.nn.Conv3d(
             self.channels,
             self.interior_channels,
             kernel_size=3,
-            padding=1,
-            # bias=False
+            padding="same",
+            padding_mode="reflect",
         )
 
         # Construct the densely-connected cascading layers.
@@ -71,7 +70,8 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
                         self.interior_channels,
                         kernel_size=3,
                         activate_fn=activate_fn,
-                        padding=1,
+                        padding="same",
+                        padding_mode="reflect",
                     )
                 )
             top_level_units.append(
@@ -97,11 +97,19 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # Perform group convolution to refine each channel of the input independently of
         # every other channel.
         self.hr_modality_refinement = torch.nn.LazyConv3d(
-            self.interior_channels, kernel_size=1, groups=self.channels
+            self.interior_channels,
+            kernel_size=1,
+            groups=self.channels,
+            padding="same",
+            padding_mode="reflect",
         )
 
         self.post_conv = torch.nn.Conv3d(
-            self.interior_channels, self.channels, kernel_size=3, padding=1
+            self.interior_channels,
+            self.channels,
+            kernel_size=3,
+            padding="same",
+            padding_mode="reflect",
         )
 
         # "Padding" by a negative amount will perform cropping!
@@ -115,14 +123,21 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             self.output_cropper = torch.nn.Identity()
 
     def crop_full_output(self, x):
-        return self.output_cropper(x)
+        if self._crop:
+            x = self.output_cropper(x)
+        return x
 
-    def transform_ground_truth_for_training(self, y, crop=True):
-        if crop:
-            y = self.crop_full_output(y)
-        y = self.input_scaler(y)
+    def transform_input(self, x):
+        return self.input_scaler(x)
 
-        return y
+    def transform_input_mode_refine(self, x_mode_refine):
+        return self.multi_modal_input_scaler(x_mode_refine)
+
+    def transform_output(self, y_pred):
+        return self.output_descaler(y_pred)
+
+    def transform_ground_truth_for_training(self, y):
+        return self.input_scaler(y)
 
     def forward(
         self,
@@ -135,7 +150,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         # y = self.pre_norm(x)
         # y = self.pre_conv(y)
         if transform_x:
-            x = self.input_scaler(x)
+            x = self.transform_input(x)
         y = self.pre_conv(x)
         y = self.activate_fn(y)
         y = self.cascade(y)
@@ -156,7 +171,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             )
 
         if transform_x_mode_refine:
-            x_mode_refine = self.multi_modal_input_scaler(x_mode_refine)
+            x_mode_refine = self.transform_input_mode_refine(x_mode_refine)
         x_mode_refine = x_mode_refine.expand_as(y)
         # Interleave the channels for group convolution, where each channel from the
         # network is convolved with a copy of the extra-modal HR input.
@@ -171,6 +186,62 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         if self._crop:
             y = self.crop_full_output(y)
         if transform_y:
-            y = self.output_descaler(y)
+            y = self.transform_output(y)
+
+        return y
+
+
+class CascadeLogEuclid(CascadeUpsampleModeRefine):
+    def transform_input(self, x):
+        x = pitn.eig.tril_vec2sym_mat(x, tril_dim=1)
+        x = log_euclid.log_map(x.float())
+        x = pitn.eig.sym_mat2tril_vec(x, dim1=-2, dim2=-1, tril_dim=1)
+        return self.input_scaler(x)
+
+    def transform_input_mode_refine(self, x_mode_refine):
+        return self.multi_modal_input_scaler(x_mode_refine)
+
+    def transform_output(self, y_pred):
+        # Need to convert to a the lower triangular vector to perform scaling as a
+        # log-euclidean metric.
+        if y_pred.ndim > 5:
+            y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        y_pred = self.output_descaler(y_pred)
+        y_pred = pitn.eig.tril_vec2sym_mat(y_pred, tril_dim=1)
+        y_pred = log_euclid.exp_map(y_pred.float())
+        y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        return y_pred
+
+    def transform_ground_truth_for_training(self, y):
+        if y.ndim == 5:
+            y = pitn.eig.tril_vec2sym_mat(y, tril_dim=1)
+        y = log_euclid.log_map(y.float())
+        # The output space of the network will be considered the *matrix*, not the lower
+        # triangle vector of the matrix.
+        y = self.input_scaler(y)
+        return y
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mode_refine: torch.Tensor,
+        transform_x: bool = True,
+        transform_x_mode_refine: bool = True,
+        transform_y: bool = True,
+    ):
+        y = super().forward(
+            x,
+            x_mode_refine,
+            transform_x=transform_x,
+            transform_x_mode_refine=transform_x_mode_refine,
+            transform_y=False,
+        )
+
+        # The output space is in the *matrix* form, because the loss will be calculated
+        # on the matrix.
+        y = pitn.eig.tril_vec2sym_mat(y, tril_dim=1)
+
+        if transform_y:
+            y = self.transform_output(y)
 
         return y
