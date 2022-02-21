@@ -242,7 +242,7 @@ class _SubjSesPatchesDataset(pitn.data._dataset_base._VolPatchDataset):
         # Add patch-specific kwargs.
         super_kwargs.update(**vol_patches_kwargs)
 
-        # Finally, intialize.
+        # Finally, initialize.
         super().__init__(**super_kwargs)
 
     def _transform(self, data: dict):
@@ -288,6 +288,12 @@ class _SubjSesPatchesDataset(pitn.data._dataset_base._VolPatchDataset):
                 new_idx = coord_fn(b_idx)
                 # Remove the batch/swatch dim from the converted idx.
                 new_idx = tuple(i[0] for i in new_idx)
+                # # TODO Replace this patch with something more robust.
+                # sliced_new_idx = tuple(
+                #     slice(int(dim.min()), int(dim.min() + (dim.max() - dim.min() + 1)))
+                #     for dim in new_idx
+                # )
+                # sample[name] = im[sliced_new_idx]
                 sample[name] = im[new_idx]
                 sample["idx_" + name] = new_idx
             # Make sure to transform() everything at once.

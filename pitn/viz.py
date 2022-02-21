@@ -90,6 +90,7 @@ def plot_im_grid(
     if fig is None:
         fig = plt.gcf()
 
+    ims = list(ims)
     # Canonical form of ims.
     if len(ims) == 1 and isinstance(ims[0], (list, tuple)):
         ims = list(ims[0])
@@ -104,7 +105,7 @@ def plot_im_grid(
     for i, im in enumerate(ims):
         if torch.is_tensor(im):
             ims[i] = im.detach().cpu().numpy()
-
+        ims[i] = ims[i].astype(float)
     ncols = math.ceil(len(ims) / nrows)
     # Canonical representation of image labels.
     row_headers = (

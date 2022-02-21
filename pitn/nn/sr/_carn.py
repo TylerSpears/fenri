@@ -8,6 +8,8 @@ import pitn
 import pitn.nn.layers as layers
 import pitn.riemann.log_euclid as log_euclid
 
+DEBUG_RAND_PROB = 0.01
+
 
 class CascadeUpsampleModeRefine(torch.nn.Module):
     def __init__(
@@ -94,18 +96,28 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             zero_bias=True,
         )
 
-        # Perform group convolution to refine each channel of the input independently of
-        # every other channel.
-        self.hr_modality_refinement = torch.nn.LazyConv3d(
-            self.interior_channels,
-            kernel_size=1,
-            groups=self.channels,
-            padding="same",
-            padding_mode="reflect",
+        self.residual_mode_refine = torch.nn.Sequential(
+            torch.nn.LazyConv3d(out_channels=self.channels, kernel_size=1),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.channels,
+                self.channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.channels,
+                self.channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
         )
 
         self.post_conv = torch.nn.Conv3d(
-            self.interior_channels,
+            self.channels,
             self.channels,
             kernel_size=3,
             padding="same",
@@ -146,9 +158,11 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         transform_x: bool = True,
         transform_x_mode_refine: bool = True,
         transform_y: bool = True,
+        debug=False,
     ):
-        # y = self.pre_norm(x)
-        # y = self.pre_conv(y)
+        # debug = (torch.rand(1).item() <= DEBUG_RAND_PROB) or debug
+        # if debug:
+        #     breakpoint()
         if transform_x:
             x = self.transform_input(x)
         y = self.pre_conv(x)
@@ -157,8 +171,6 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         y = self.upsample(y)
 
         # Integrate the extra HR multi-modal refinement input (i.e. a T2 or T1 patch).
-        # Repeat dimensions as necessary to have the same size as the previous layer's
-        # output.
         # Size of the modal refinement input may be one voxel different in shape due to
         # an uneven division `hr_size / downscale_factor`.
         if x_mode_refine.shape[2:] != y.shape[2:]:
@@ -169,17 +181,14 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
                 + f"Does {x.shape[2:]} x {self.upscale_factor} "
                 + f"=|{x_mode_refine.shape[2:]}| ?"
             )
-
         if transform_x_mode_refine:
             x_mode_refine = self.transform_input_mode_refine(x_mode_refine)
-        x_mode_refine = x_mode_refine.expand_as(y)
-        # Interleave the channels for group convolution, where each channel from the
-        # network is convolved with a copy of the extra-modal HR input.
-        mode_fused = einops.rearrange(
-            [y, x_mode_refine], "mixed_mode b c ... -> b (c mixed_mode) ..."
-        )
 
-        y = self.hr_modality_refinement(mode_fused)
+        # Concatinate the multi-mode refinement input and the upsampled x to create
+        # an additive residual to refine the upsample output.
+        input_residual_mode_refine = torch.cat([x_mode_refine, y], dim=1)
+        multi_mode_residual = self.residual_mode_refine(input_residual_mode_refine)
+        y = y + multi_mode_residual
 
         y = self.activate_fn(y)
         y = self.post_conv(y)
@@ -187,15 +196,23 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             y = self.crop_full_output(y)
         if transform_y:
             y = self.transform_output(y)
-
         return y
 
 
 class CascadeLogEuclid(CascadeUpsampleModeRefine):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        mat_norm_coeffs = torch.ones(6)
+        mat_norm_coeffs[torch.as_tensor([1, 3, 4])] = np.sqrt(2)
+        mat_norm_coeffs = mat_norm_coeffs.reshape(1, -1, 1, 1, 1)
+        self.register_buffer("mat_norm_coeffs", mat_norm_coeffs, persistent=True)
+
     def transform_input(self, x):
         x = pitn.eig.tril_vec2sym_mat(x, tril_dim=1)
         x = log_euclid.log_map(x.float())
         x = pitn.eig.sym_mat2tril_vec(x, dim1=-2, dim2=-1, tril_dim=1)
+        # Scale off-diagonals to use regular L2 norm.
+        x = x * self.mat_norm_coeffs
         return self.input_scaler(x)
 
     def transform_input_mode_refine(self, x_mode_refine):
@@ -206,6 +223,8 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
         # log-euclidean metric.
         if y_pred.ndim > 5:
             y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        # Descale off-diagonals for the regular L2 distance.
+        y_pred = y_pred / self.mat_norm_coeffs
         y_pred = self.output_descaler(y_pred)
         y_pred = pitn.eig.tril_vec2sym_mat(y_pred, tril_dim=1)
         y_pred = log_euclid.exp_map(y_pred.float())
@@ -216,11 +235,14 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
         if y.ndim == 5:
             y = pitn.eig.tril_vec2sym_mat(y, tril_dim=1)
         y = log_euclid.log_map(y.float())
-        # The output space of the network will be considered the *matrix*, not the lower
-        # triangle vector of the matrix.
+        y = pitn.eig.sym_mat2tril_vec(y, dim1=-2, dim2=-1, tril_dim=1)
+        # Scale off-diagonals to use regular L2 norm.
+        y = y * self.mat_norm_coeffs
         y = self.input_scaler(y)
         return y
 
+
+class CascadeLogEuclidMultiOutput(CascadeLogEuclid):
     def forward(
         self,
         x: torch.Tensor,
@@ -228,20 +250,44 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
         transform_x: bool = True,
         transform_x_mode_refine: bool = True,
         transform_y: bool = True,
+        debug=False,
     ):
-        y = super().forward(
-            x,
-            x_mode_refine,
-            transform_x=transform_x,
-            transform_x_mode_refine=transform_x_mode_refine,
-            transform_y=False,
-        )
+        # debug = (torch.rand(1).item() <= DEBUG_RAND_PROB) or debug
+        # if debug:
+        #     breakpoint()
+        if transform_x:
+            x = self.transform_input(x)
+        y = self.pre_conv(x)
+        y = self.activate_fn(y)
+        y = self.cascade(y)
+        y_upsampled = self.upsample(y)
 
-        # The output space is in the *matrix* form, because the loss will be calculated
-        # on the matrix.
-        y = pitn.eig.tril_vec2sym_mat(y, tril_dim=1)
+        # Integrate the extra HR multi-modal refinement input (i.e. a T2 or T1 patch).
+        # Size of the modal refinement input may be one voxel different in shape due to
+        # an uneven division `hr_size / downscale_factor`.
+        if x_mode_refine.shape[2:] != y.shape[2:]:
+            raise RuntimeError(
+                f"ERROR: Mode refine input shape {x_mode_refine.shape[2:]} "
+                + f"incompatible with upsample output shape {y.shape[2:]}. "
+                + "This may be due to roundoff error in downsampling of FR data. "
+                + f"Does {x.shape[2:]} x {self.upscale_factor} "
+                + f"=|{x_mode_refine.shape[2:]}| ?"
+            )
+        if transform_x_mode_refine:
+            x_mode_refine = self.transform_input_mode_refine(x_mode_refine)
 
+        # Concatinate the multi-mode refinement input and the upsampled x to create
+        # an additive residual to refine the upsample output.
+        input_residual_mode_refine = torch.cat([x_mode_refine, y_upsampled], dim=1)
+        multi_mode_residual = self.residual_mode_refine(input_residual_mode_refine)
+        y = y_upsampled + multi_mode_residual
+
+        y = self.activate_fn(y)
+        y = self.post_conv(y)
+        if self._crop:
+            y = self.crop_full_output(y)
+            y_upsampled = self.crop_full_output(y_upsampled)
         if transform_y:
             y = self.transform_output(y)
-
-        return y
+            y_upsampled = self.transform_output(y_upsampled)
+        return y, y_upsampled

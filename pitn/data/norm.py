@@ -350,6 +350,7 @@ class MinMaxScaler:
         data_min: torch.Tensor = None,
         data_max: torch.Tensor = None,
     ):
+        x = x.float()
         feat_min = self._select_scaler(feature_min, self._feat_min, "feature_min").to(x)
         feat_max = self._select_scaler(feature_max, self._feat_max, "feature_max").to(x)
         dat_min = self._select_scaler(data_min, self._data_min, "data_min").to(x)
@@ -370,6 +371,8 @@ class MinMaxScaler:
         data_min: torch.Tensor = None,
         data_max: torch.Tensor = None,
     ):
+        # These will need to be floating point numbers.
+        x = x.float()
         feat_min = self._select_scaler(feature_min, self._feat_min, "feature_min").to(x)
         feat_max = self._select_scaler(feature_max, self._feat_max, "feature_max").to(x)
         dat_min = self._select_scaler(data_min, self._data_min, "data_min").to(x)
