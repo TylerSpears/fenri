@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import collections
+from multiprocessing.sharedctypes import Value
 from typing import Sequence, Optional, Callable, Tuple, Union
 from pathlib import Path
 
@@ -174,24 +175,58 @@ class SubjSesDataset(monai.data.Dataset):
 
         self._prime2second_coords = special_secondary2primary_coords_fns
         self._special_second_names = set(self._prime2second_coords.keys())
-        self._prime_patch_kw = primary_patch_kwargs
+        # Set defaults for the prime patch kwargs.
+        self._prime_patch_kw = {
+            **dict(
+                primary_name=self._prime_name,
+                secondary_names=self._second_names,
+                special_second_coord_fns=self._prime2second_coords,
+            ),
+            **primary_patch_kwargs,
+        }
+        self._patches_init_kwargs = self._prime_patch_kw.copy()
+        # self._prime_patch_kw = primary_patch_kwargs
         self._meta_vals = meta_vals
 
     def set_patch_params(self, **primary_patch_kwargs):
         self._prime_patch_kw.update(**primary_patch_kwargs)
 
+    def set_patch_sample_keys(self, primary_key: str, *keys):
+        old_kwargs = self._prime_patch_kw
+        new_kwargs = self._prime_patch_kw.copy()
+        # Empty out the kwargs that relate to sample names and fill them in with the
+        # given keys.
+        new_kwargs["primary_name"] = primary_key
+        new_kwargs["secondary_names"] = list()
+        new_kwargs["special_second_coord_fns"] = dict()
+        new_kwargs["meta_keys_to_patch_index"] = list([primary_key])
+
+        for k in keys:
+            if k in list(old_kwargs["secondary_names"]):
+                new_kwargs["secondary_names"].append(k)
+                if k in list(old_kwargs["special_second_coord_fns"].keys()):
+                    new_kwargs["special_second_coord_fns"][k] = old_kwargs[
+                        "special_second_coord_fns"
+                    ][k]
+                else:
+                    new_kwargs["meta_keys_to_patch_index"].append(k)
+            else:
+                raise ValueError(
+                    f"ERROR: Patch sample key {k} not valid, expected one of "
+                    + f"{list(old_kwargs['secondary_names'])}"
+                )
+        # Update the patch sample names via the patch kwargs.
+        self._prime_patch_kw = new_kwargs
+
     @property
     def patches(self):
-        if self._patches is None:
-
+        if self._patches is None or self._patches_init_kwargs != self._prime_patch_kw:
             self._patches = _MaskAnyPatchDataset(
                 data=self[0],
-                primary_name=self._prime_name,
-                secondary_names=self._second_names,
-                special_second_coord_fns=self._prime2second_coords,
                 parent_ds=self,
                 **self._prime_patch_kw,
             )
+            self._patches_init_kwargs = self._prime_patch_kw.copy()
         return self._patches
 
     def __getitem__(self, idx):
@@ -288,13 +323,13 @@ class _SubjSesPatchesDataset(pitn.data._dataset_base._VolPatchDataset):
                 new_idx = coord_fn(b_idx)
                 # Remove the batch/swatch dim from the converted idx.
                 new_idx = tuple(i[0] for i in new_idx)
-                # # TODO Replace this patch with something more robust.
-                # sliced_new_idx = tuple(
-                #     slice(int(dim.min()), int(dim.min() + (dim.max() - dim.min() + 1)))
-                #     for dim in new_idx
-                # )
-                # sample[name] = im[sliced_new_idx]
-                sample[name] = im[new_idx]
+                # TODO Replace this patch with something more robust.
+                sliced_new_idx = tuple(
+                    slice(int(dim.min()), int(dim.min() + (dim.max() - dim.min() + 1)))
+                    for dim in new_idx
+                )
+                sample[name] = im[sliced_new_idx]
+                # sample[name] = im[new_idx]
                 sample["idx_" + name] = new_idx
             # Make sure to transform() everything at once.
             result = self._transform(sample)

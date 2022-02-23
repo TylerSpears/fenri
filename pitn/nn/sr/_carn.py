@@ -58,6 +58,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             kernel_size=3,
             padding="same",
             padding_mode="reflect",
+            groups=self.channels,
         )
 
         # Construct the densely-connected cascading layers.
@@ -122,6 +123,7 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
             kernel_size=3,
             padding="same",
             padding_mode="reflect",
+            groups=self.channels,
         )
 
         # "Padding" by a negative amount will perform cropping!
@@ -208,37 +210,40 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
         self.register_buffer("mat_norm_coeffs", mat_norm_coeffs, persistent=True)
 
     def transform_input(self, x):
+        x = x.float()
         x = pitn.eig.tril_vec2sym_mat(x, tril_dim=1)
         x = log_euclid.log_map(x.float())
         x = pitn.eig.sym_mat2tril_vec(x, dim1=-2, dim2=-1, tril_dim=1)
         # Scale off-diagonals to use regular L2 norm.
         x = x * self.mat_norm_coeffs
-        return self.input_scaler(x)
+        return self.input_scaler(x.float()).float()
 
     def transform_input_mode_refine(self, x_mode_refine):
-        return self.multi_modal_input_scaler(x_mode_refine)
+        return self.multi_modal_input_scaler(x_mode_refine.float()).float()
 
     def transform_output(self, y_pred):
         # Need to convert to a the lower triangular vector to perform scaling as a
         # log-euclidean metric.
+        y_pred = y_pred.float()
         if y_pred.ndim > 5:
             y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
-        # Descale off-diagonals for the regular L2 distance.
-        y_pred = y_pred / self.mat_norm_coeffs
+        # Descale off-diagonals used to make log-euclidean domain L2 distance.
+        y_pred = (y_pred / self.mat_norm_coeffs).float()
         y_pred = self.output_descaler(y_pred)
         y_pred = pitn.eig.tril_vec2sym_mat(y_pred, tril_dim=1)
         y_pred = log_euclid.exp_map(y_pred.float())
         y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
-        return y_pred
+        return y_pred.float()
 
     def transform_ground_truth_for_training(self, y):
+        y = y.float()
         if y.ndim == 5:
             y = pitn.eig.tril_vec2sym_mat(y, tril_dim=1)
         y = log_euclid.log_map(y.float())
         y = pitn.eig.sym_mat2tril_vec(y, dim1=-2, dim2=-1, tril_dim=1)
         # Scale off-diagonals to use regular L2 norm.
-        y = y * self.mat_norm_coeffs
-        y = self.input_scaler(y)
+        y = (y * self.mat_norm_coeffs).float()
+        y = self.input_scaler(y).float()
         return y
 
 
@@ -247,6 +252,7 @@ class CascadeLogEuclidMultiOutput(CascadeLogEuclid):
         self,
         x: torch.Tensor,
         x_mode_refine: torch.Tensor,
+        return_y_upsample=False,
         transform_x: bool = True,
         transform_x_mode_refine: bool = True,
         transform_y: bool = True,
@@ -265,10 +271,10 @@ class CascadeLogEuclidMultiOutput(CascadeLogEuclid):
         # Integrate the extra HR multi-modal refinement input (i.e. a T2 or T1 patch).
         # Size of the modal refinement input may be one voxel different in shape due to
         # an uneven division `hr_size / downscale_factor`.
-        if x_mode_refine.shape[2:] != y.shape[2:]:
+        if x_mode_refine.shape[2:] != y_upsampled.shape[2:]:
             raise RuntimeError(
                 f"ERROR: Mode refine input shape {x_mode_refine.shape[2:]} "
-                + f"incompatible with upsample output shape {y.shape[2:]}. "
+                + f"incompatible with upsample output shape {y_upsampled.shape[2:]}. "
                 + "This may be due to roundoff error in downsampling of FR data. "
                 + f"Does {x.shape[2:]} x {self.upscale_factor} "
                 + f"=|{x_mode_refine.shape[2:]}| ?"
@@ -286,8 +292,14 @@ class CascadeLogEuclidMultiOutput(CascadeLogEuclid):
         y = self.post_conv(y)
         if self._crop:
             y = self.crop_full_output(y)
-            y_upsampled = self.crop_full_output(y_upsampled)
+            if return_y_upsample:
+                y_upsampled = self.crop_full_output(y_upsampled)
         if transform_y:
             y = self.transform_output(y)
-            y_upsampled = self.transform_output(y_upsampled)
-        return y, y_upsampled
+            if return_y_upsample:
+                y_upsampled = self.transform_output(y_upsampled)
+
+        if return_y_upsample:
+            return y, y_upsampled
+        else:
+            return y

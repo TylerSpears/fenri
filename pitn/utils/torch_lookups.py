@@ -84,5 +84,8 @@ lr_scheduler = _CaseInsensitiveDict.create(
         "step": lr.StepLR,
         "multistep": lr.MultiStepLR,
         "reduce_on_plateau": lr.ReduceLROnPlateau,
+        "cosine_annealing_warm_restarts": lr.CosineAnnealingWarmRestarts,
+        "chained_scheduler": lr.ChainedScheduler,
+        "sequential": lr.SequentialLR,
     },
 )

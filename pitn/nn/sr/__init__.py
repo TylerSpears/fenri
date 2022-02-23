@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-from ._carn import CascadeUpsampleModeRefine, CascadeLogEuclid
+from ._carn import CascadeUpsampleModeRefine, CascadeLogEuclid, CascadeLogEuclidMultiOutput
