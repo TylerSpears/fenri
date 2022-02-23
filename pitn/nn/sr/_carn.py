@@ -11,6 +11,147 @@ import pitn.riemann.log_euclid as log_euclid
 DEBUG_RAND_PROB = 0.01
 
 
+class CascadeUpsample(torch.nn.Module):
+    def __init__(
+        self,
+        channels: int,
+        interior_channels: int,
+        upscale_factor: int,
+        n_res_units: int,
+        n_dense_units: int,
+        activate_fn,
+        upsample_activate_fn,
+        center_crop_output_side_amt=None,
+        input_scaler=None,
+        output_descaler=None,
+    ):
+        super().__init__()
+
+        self.channels = channels
+        self.interior_channels = interior_channels
+        self.upscale_factor = upscale_factor
+
+        if isinstance(activate_fn, str):
+            activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
+        if isinstance(upsample_activate_fn, str):
+            upsample_activate_fn = pitn.utils.torch_lookups.activation[
+                upsample_activate_fn
+            ]
+
+        self.input_scaler = (
+            input_scaler if input_scaler is not None else torch.nn.Identity()
+        )
+        self.output_descaler = (
+            output_descaler if output_descaler is not None else torch.nn.Identity()
+        )
+
+        # Pad to maintain the same input shape.
+        self.pre_conv = torch.nn.Conv3d(
+            self.channels,
+            self.interior_channels,
+            kernel_size=3,
+            padding="same",
+            padding_mode="reflect",
+            groups=self.channels,
+        )
+
+        # Construct the densely-connected cascading layers.
+        # Create n_dense_units number of dense units.
+        top_level_units = list()
+        for _ in range(n_dense_units):
+            # Create n_res_units number of residual units for every dense unit.
+            res_layers = list()
+            for _ in range(n_res_units):
+                res_layers.append(
+                    layers.ResBlock3dNoBN(
+                        self.interior_channels,
+                        kernel_size=3,
+                        activate_fn=activate_fn,
+                        padding="same",
+                        padding_mode="reflect",
+                    )
+                )
+            top_level_units.append(
+                layers.DenseCascadeBlock3d(self.interior_channels, *res_layers)
+            )
+
+        self.activate_fn = activate_fn()
+
+        # Wrap everything into a densely-connected cascade.
+        self.cascade = layers.DenseCascadeBlock3d(
+            self.interior_channels, *top_level_units
+        )
+
+        self.upsample = layers.upsample.ICNRUpsample3d(
+            self.interior_channels,
+            self.channels,
+            self.upscale_factor,
+            activate_fn=upsample_activate_fn,
+            blur=True,
+            zero_bias=True,
+        )
+
+        self.post_conv = torch.nn.Conv3d(
+            self.channels,
+            self.channels,
+            kernel_size=3,
+            padding="same",
+            padding_mode="reflect",
+            groups=self.channels,
+        )
+
+        # "Padding" by a negative amount will perform cropping!
+        # <https://github.com/pytorch/pytorch/issues/1331>
+        if center_crop_output_side_amt is not None and center_crop_output_side_amt > 0:
+            crop = -center_crop_output_side_amt
+            self.output_cropper = torch.nn.ConstantPad3d(crop, 0)
+            self._crop = True
+        else:
+            self._crop = False
+            self.output_cropper = torch.nn.Identity()
+
+    def crop_full_output(self, x):
+        if self._crop:
+            x = self.output_cropper(x)
+        return x
+
+    def transform_input(self, x):
+        return self.input_scaler(x)
+
+    def transform_output(self, y_pred):
+        return self.output_descaler(y_pred)
+
+    def transform_ground_truth_for_training(self, y):
+        return self.input_scaler(y)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        transform_x: bool = True,
+        transform_y: bool = True,
+        debug=False,
+    ):
+        # debug = (torch.rand(1).item() <= DEBUG_RAND_PROB) or debug
+        # if debug:
+        #     breakpoint()
+        if transform_x:
+            x = self.transform_input(x)
+        y = self.pre_conv(x)
+        y = self.activate_fn(y)
+        y = self.cascade(y)
+        y = self.upsample(y)
+
+        y = self.activate_fn(y)
+        y = self.post_conv(y)
+
+        if self._crop:
+            y = self.crop_full_output(y)
+        if transform_y:
+            y = self.transform_output(y)
+
+        return y
+
+
 class CascadeUpsampleModeRefine(torch.nn.Module):
     def __init__(
         self,
