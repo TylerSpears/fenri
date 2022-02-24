@@ -329,6 +329,89 @@ class MinMaxScaler:
         self._data_min = data_min
         self._data_max = data_max
 
+    def __str__(self):
+        s = f"""MinMaxScaler
+        From data range [{self._data_min}, {self._data_max}]
+        to feature range [{self._feat_min}, {self._feat_max}]
+        and vice-versa
+        """
+
+        return s
+
+    def _select_scaler(self, passed_val, internal_val, var_name: str):
+        result = None
+        if passed_val is not None:
+            result = passed_val
+        elif internal_val is not None:
+            result = internal_val
+        else:
+            raise ValueError(
+                f"ERROR: Expected {var_name} to be not None, but was "
+                + f"given value {passed_val} and init with value {internal_val}."
+            )
+        return result
+
+    def scale_to(
+        self,
+        x: torch.Tensor,
+        feature_min: torch.Tensor = None,
+        feature_max: torch.Tensor = None,
+        data_min: torch.Tensor = None,
+        data_max: torch.Tensor = None,
+    ):
+        x = x.float()
+        feat_min = self._select_scaler(feature_min, self._feat_min, "feature_min").to(x)
+        feat_max = self._select_scaler(feature_max, self._feat_max, "feature_max").to(x)
+        dat_min = self._select_scaler(data_min, self._data_min, "data_min").to(x)
+        dat_max = self._select_scaler(data_max, self._data_max, "data_max").to(x)
+
+        # Formula taken from
+        # <https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.minmax_scale.html>
+        scale = (feat_max - feat_min) / (dat_max - dat_min)
+        x_scaled = scale * x + feat_min - dat_min * scale
+
+        return x_scaled
+
+    def unscale_from(
+        self,
+        x: torch.Tensor,
+        feature_min: torch.Tensor = None,
+        feature_max: torch.Tensor = None,
+        data_min: torch.Tensor = None,
+        data_max: torch.Tensor = None,
+    ):
+        # These will need to be floating point numbers.
+        x = x.float()
+        feat_min = self._select_scaler(feature_min, self._feat_min, "feature_min").to(x)
+        feat_max = self._select_scaler(feature_max, self._feat_max, "feature_max").to(x)
+        dat_min = self._select_scaler(data_min, self._data_min, "data_min").to(x)
+        dat_max = self._select_scaler(data_max, self._data_max, "data_max").to(x)
+
+        # Formula taken from
+        # <https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.minmax_scale.html>
+        scale = (feat_max - feat_min) / (dat_max - dat_min)
+
+        x_scaled = x
+        x_unscaled = ((x_scaled - feat_min) / scale) + dat_min
+
+        return x_unscaled
+
+class StandardScaler:
+    def __init__(
+        self, data_mean=None, data_std=None
+    ):
+        self._data_mean = data_mean
+        self._data_std = data_std
+
+    def __str__(self):
+        s = f"""StandardScaler
+        From data range [{self._data_min}, {self._data_max}]
+        to feature range [{self._feat_min}, {self._feat_max}]
+        and vice-versa
+        """
+
+        return s
+
     def _select_scaler(self, passed_val, internal_val, var_name: str):
         result = None
         if passed_val is not None:

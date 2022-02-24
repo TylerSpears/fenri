@@ -4,7 +4,7 @@ import torch
 
 import pitn.eig
 
-EPSILON_LOG = 1e-6
+EPSILON_LOG = 1e-9
 
 
 def log_map(x: torch.Tensor, **eigh_kwargs) -> torch.Tensor:
@@ -21,7 +21,11 @@ def log_map(x: torch.Tensor, **eigh_kwargs) -> torch.Tensor:
 
 def exp_map(x: torch.Tensor, **eigh_kwargs) -> torch.Tensor:
     def eigval_eigvec_exp_map(eigvals: torch.Tensor, eigvecs: torch.Tensor):
-        return torch.exp(eigvals), eigvecs
+        exp_eigvals = torch.exp(eigvals)
+        exp_eigvals[
+            torch.isclose(exp_eigvals, torch.as_tensor(EPSILON_LOG).to(exp_eigvals))
+        ] = 0.0
+        return exp_eigvals, eigvecs
 
     exp_mapped = pitn.eig.eigh_decompose_apply_recompose(
         x, eigval_eigvec_exp_map, **eigh_kwargs

@@ -4,4 +4,5 @@ from ._carn import (
     CascadeLogEuclid,
     CascadeLogEuclidMultiOutput,
     CascadeUpsample,
+    CascadeUpsampleLogEuclid,
 )

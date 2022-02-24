@@ -20,27 +20,6 @@ class _CaseInsensitiveDict(pyrsistent.CheckedPMap):
         return v
 
 
-# class _CaseInsensitiveBox(Box):
-#     """Almost exactly like ConfigBox!"""
-
-#     _protected_keys = dir(Box)
-
-#     def __getitem__(self, item, *args, **kwargs):
-#         if isinstance(item, str):
-#             item = item.casefold()
-#         return super().__getitem__(item, *args, **kwargs)
-
-#     def __setitem__(self, key, value):
-#         if isinstance(key, str):
-#             key = key.casefold()
-#         return super().__setitem__(key, value)
-
-#     def __delitem__(self, key):
-#         if isinstance(key, str):
-#             key = key.casefold()
-#         return super().__delitem__(key)
-
-
 loss_fn = _CaseInsensitiveDict.create(
     {
         "mse": partial(nn.MSELoss, reduction="mean"),

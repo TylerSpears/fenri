@@ -116,13 +116,19 @@ class CascadeUpsample(torch.nn.Module):
         return x
 
     def transform_input(self, x):
-        return self.input_scaler(x)
+        return self.input_scaler(x.float()).float()
 
-    def transform_output(self, y_pred):
-        return self.output_descaler(y_pred)
+    def transform_output(self, y_pred, crop=True):
+        y_pred = self.output_descaler(y_pred.float())
+        if crop:
+            y_pred = self.crop_full_output(y_pred)
+        return y_pred.float()
 
-    def transform_ground_truth_for_training(self, y):
-        return self.input_scaler(y)
+    def transform_ground_truth_for_training(self, y, crop=True):
+        y = self.input_scaler(y.float())
+        if crop:
+            y = self.crop_full_output(y)
+        return y.float()
 
     def forward(
         self,
@@ -144,12 +150,59 @@ class CascadeUpsample(torch.nn.Module):
         y = self.activate_fn(y)
         y = self.post_conv(y)
 
-        if self._crop:
-            y = self.crop_full_output(y)
         if transform_y:
-            y = self.transform_output(y)
+            y = self.transform_output(y, crop=self._crop)
 
         return y
+
+
+class CascadeUpsampleLogEuclid(CascadeUpsample):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Coefficients that scale the off-diagonal tensor componenents such that
+        # the matrix log space vectors can be computed with regular Euclidean distance.
+        mat_norm_coeffs = torch.ones(6, dtype=torch.float)
+        mat_norm_coeffs[torch.as_tensor([1, 3, 4])] = np.sqrt(2)
+        mat_norm_coeffs = mat_norm_coeffs.reshape(1, -1, 1, 1, 1)
+        self.register_buffer("mat_norm_coeffs", mat_norm_coeffs, persistent=True)
+
+    def transform_input(self, x):
+        x = x.float()
+        if x.ndim == 5:
+            x = pitn.eig.tril_vec2sym_mat(x, tril_dim=1)
+        x = log_euclid.log_map(x.float())
+        x = pitn.eig.sym_mat2tril_vec(x, dim1=-2, dim2=-1, tril_dim=1)
+        # Scale off-diagonals to use regular L2 norm.
+        x = x * self.mat_norm_coeffs
+        x = self.input_scaler(x.float()).float()
+        return x
+
+    def transform_output(self, y_pred, crop=True):
+        # Need to convert to a the lower triangular vector to perform scaling as a
+        # log-euclidean metric.
+        y_pred = y_pred.float()
+        if y_pred.ndim > 5:
+            y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        # Descale off-diagonals used to make log-euclidean domain L2 distance.
+        y_pred = self.output_descaler(y_pred).float()
+        y_pred = (y_pred / self.mat_norm_coeffs).float()
+        y_pred = pitn.eig.tril_vec2sym_mat(y_pred, tril_dim=1)
+        y_pred = log_euclid.exp_map(y_pred.float()).float()
+        y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        if crop:
+            y_pred = self.crop_full_output(y_pred)
+        return y_pred.float()
+
+    def transform_ground_truth_for_training(self, y, crop=True):
+        # Assume that the ground truth is already the matrix log, scaled for the
+        # euclidean norm.
+        y = y.float()
+        if y.ndim > 5:
+            y = pitn.eig.sym_mat2tril_vec(y, tril_dim=1).float()
+        y = self.input_scaler(y).float()
+        if crop:
+            y = self.crop_full_output(y)
+        return y.float()
 
 
 class CascadeUpsampleModeRefine(torch.nn.Module):
