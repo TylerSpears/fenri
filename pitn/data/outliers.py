@@ -9,12 +9,14 @@ import pitn
 # Basically, any eigenvalue of a DTI greater than this constant can be considered
 # as an outlier and should be clipped.
 EIGVAL_CUTOFF = 0.00332008
-
+# This is also a sane minimum eigenvalue; anything less than this is either noise, an
+# error, or background.
+EIGVAL_MIN = 1e-5
 
 def clip_dti_eigvals(
     dti: torch.Tensor,
     tensor_components_dim: int = 1,
-    eigval_min: float = 0.0,
+    eigval_min: float = EIGVAL_MIN,
     eigval_max: float = EIGVAL_CUTOFF,
     **eigh_kwargs,
 ) -> torch.Tensor:

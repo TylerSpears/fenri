@@ -52,7 +52,6 @@ class CascadeUpsample(torch.nn.Module):
             kernel_size=3,
             padding="same",
             padding_mode="reflect",
-            groups=self.channels,
         )
 
         # Construct the densely-connected cascading layers.
@@ -97,7 +96,6 @@ class CascadeUpsample(torch.nn.Module):
             kernel_size=3,
             padding="same",
             padding_mode="reflect",
-            groups=self.channels,
         )
 
         # "Padding" by a negative amount will perform cropping!
