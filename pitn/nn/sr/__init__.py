@@ -6,3 +6,5 @@ from ._carn import (
     CascadeUpsample,
     CascadeUpsampleLogEuclid,
 )
+
+from . import espcn

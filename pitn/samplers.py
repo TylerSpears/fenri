@@ -566,7 +566,13 @@ class MultiresGridSampler(torchio.GridSampler):
 
 
 class ConcatDatasetBalancedRandomSampler(torch.utils.data.Sampler):
-    def __init__(self, datasets, max_samples_per_dataset, generator=None):
+    def __init__(
+        self,
+        datasets,
+        max_samples_per_dataset,
+        resample_after_empty=True,
+        generator=None,
+    ):
         """Sampler that draws a given number of samples from each dataset.
 
         datasets: List[torch.utils.data.Dataset]
@@ -607,17 +613,36 @@ class ConcatDatasetBalancedRandomSampler(torch.utils.data.Sampler):
         self._total_samples = sum(self.sample_sizes)
         self.generator = generator
 
+        self._resample_after_empty = resample_after_empty
+        # If resampling happens every epoch, then don't store the samples.
+        if self._resample_after_empty:
+            self._samples = None
+        else:
+            self._samples = list()
+
     def __iter__(self):
-        samples = list()
-        # Select random indices within each dataset, based on the size of the dataset
-        # and the number of requested samples.
-        for sample_size, len_i, i_start in zip(
-            self.sample_sizes, self.ds_lens, self.start_idx
-        ):
-            idx_i = (
-                i_start + torch.randperm(len_i, generator=self.generator)[:sample_size]
-            )
-            samples.extend(idx_i.tolist())
+        # If every epoch triggers a re-sampling, or if a sample hasn't been drawn yet,
+        # then create a sample of indices.
+        if self._resample_after_empty or not bool(self._samples):
+            samples = list()
+            # Select random indices within each dataset, based on the size of the dataset
+            # and the number of requested samples.
+            for sample_size, len_i, i_start in zip(
+                self.sample_sizes, self.ds_lens, self.start_idx
+            ):
+                idx_i = (
+                    i_start
+                    + torch.randperm(len_i, generator=self.generator)[:sample_size]
+                )
+                samples.extend(idx_i.tolist())
+            # If we don't resample after every epoch and just want to return the same
+            # indices every time, then store this first sampling.
+            if not self._resample_after_empty:
+                self._samples = samples
+        # We don't want to resample after every epoch, and we have already stored a
+        # sample.
+        else:
+            samples = self._samples
         # Return needs to be an iterable object, not just a sequence.
         return (
             samples[i] for i in torch.randperm(len(samples), generator=self.generator)
