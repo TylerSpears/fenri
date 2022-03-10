@@ -63,7 +63,6 @@ def proc_runner(
     # If successful, push the filename onto the output queue. Otherwise, push a failure
     # signal.
 
-
     return
 
 
@@ -90,23 +89,27 @@ def main():
     # Use python-dotenv to load the environment variables by using the output of
     # 'direnv exec ...' as a 'dummy' .env file.
     dotenv.load_dotenv(stream=io.StringIO(proc_out), override=True)
-
+    # Store global env vars common across all runs.
     env_vars = os.environ.copy()
     for dk in {"DATA_DIR", "WRITE_DATA_DIR", "RESULTS_DIR", "TMP_RESULTS_DIR"}:
         rd = Path(os.environ[dk]).resolve()
         assert rd.exists()
         env_vars[dk] = str(rd)
 
+    # Locate and select source notebook to run.
     source_nb = Path(os.getcwd()).resolve() / "diqt.ipynb"
     assert source_nb.exists()
     run_work_dir = source_nb.parent
 
+    # Find number of gpus and put them into a "pool" to be used by child procs.
     n_gpus = torch.cuda.device_count()
     gpu_idx_pool = mp.Queue(maxsize=n_gpus)
     for i in range(n_gpus):
         gpu_idx_pool.put(i)
-    # pm.execute_notebook()
 
+    # To allow editing of the notebook while experiments are running, copy the source
+    # notebook into a temp dir and run with that, while staying in the original
+    # notebook's directory.
     with tempfile.TemporaryDirectory(prefix="pitn_diqt_run_") as tmp_dir_name:
         tmp_dir = Path(tmp_dir_name).resolve()
         tmp_nb = tmp_dir / source_nb.name
@@ -114,13 +117,21 @@ def main():
         assert tmp_nb.exists()
 
         # Create fixed params for all runs.
-        fix_params = Box(default_box=True, box_dots=True)
-        fix_params.use_half_precision_float = False
-        fix_params.progress_bar = False
-        fix_params.num_workers = os.cpu_count() // n_gpus
+        fixed_params = Box(default_box=True, box_dots=True)
+        fixed_params.override_experiment_name = True
+        fixed_params.n_channels = 6
+        fixed_params.use_half_precision_float = False
+        fixed_params.progress_bar = False
+        fixed_params.num_workers = os.cpu_count() // n_gpus
+        fixed_params.hr_center_crop_per_side = 0
+        fixed_params.net.kwargs.center_crop_output_side_amt = (
+            fixed_params.hr_center_crop_per_side
+        )
+        fixed_params.train.grad_2norm_clip_val = 0.25
+        fixed_params.train.lr_scheduler = None
 
         # Create iterable of all desired parameter combinations.
-        
+
         # Create proc pool, one proc for each GPU.
 
         # Put run params into params queue, block while all child procs are busy.
@@ -129,14 +140,16 @@ def main():
 # Just a list of params, only for human readability. Defaults are set within the
 # notebook.
 PARAMS_REF = """
+params = Box(default_box=True)
+
 # General experiment-wide params
 ###############################################
-params.experiment_name = "debug_dev_le_metrics"
+params.experiment_name = "pitn_log_euclid_mid_net"
 params.override_experiment_name = False
 ###############################################
 # 6 channels for the 6 DTI components
 params.n_channels = 6
-params.n_subjs = 16
+params.n_subjs = 48
 params.lr_vox_size = 2.5
 params.fr_vox_size = 1.25
 params.use_anat = False
@@ -193,7 +206,7 @@ params.net.kwargs.center_crop_output_side_amt = params.hr_center_crop_per_side
 
 # Adam optimizer kwargs
 params.optim.name = "AdamW"
-params.optim.kwargs.lr = 2e-4
+params.optim.kwargs.lr = 2.5e-4
 # params.optim.kwargs.lr = 1e-3
 params.optim.kwargs.betas = (0.9, 0.999)
 params.optim.kwargs.eps = (
@@ -201,35 +214,24 @@ params.optim.kwargs.eps = (
 )
 
 # Testing params
-params.test.dataset_subj_percent = 0.4
+params.test.dataset_n_subjs = 34
 
 # Validation params
-params.val.dataset_subj_percent = 0.2
+params.val.dataset_n_subjs = 4
 
 # Training params
+params.train.dataset_n_subjs = 10
+
 params.train.in_patch_size = (24, 24, 24)
 params.train.batch_size = 32
-params.train.samples_per_subj_per_epoch = 8000
+params.train.samples_per_subj_per_epoch = 4000
 params.train.max_epochs = 50
 params.train.loss_name = "mse"
-# params.train.lambda_pre_anat_loss = 0.35
-# Percentage of subjs in dataset that go into the training set.
-params.train.dataset_subj_percent = 1 - (
-    params.test.dataset_subj_percent + params.val.dataset_subj_percent
-)
-
+params.train.grad_2norm_clip_val = 0.25
 # Learning rate scheduler config.
-# params.train.lr_scheduler = None
-params.train.lr_scheduler.name = "onecycle"
-params.train.lr_scheduler.kwargs.max_lr = 0.0002
-params.train.lr_scheduler.kwargs.epochs = params.train.max_epochs
-# params.trail.lr_scheduler.kwargs.pct_start = 0.45
-num_test_subjs = int(np.ceil(params.n_subjs * params.test.dataset_subj_percent))
-num_val_subjs = int(np.ceil(params.n_subjs * params.val.dataset_subj_percent))
-num_train_subjs = params.n_subjs - (num_test_subjs + num_val_subjs)
-params.train.lr_scheduler.kwargs.steps_per_epoch = (
-    params.train.samples_per_subj_per_epoch * num_train_subjs // params.train.batch_size
-)"""
+params.train.lr_scheduler = None
+
+"""
 
 if __name__ == "__main__":
     main()
