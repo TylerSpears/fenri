@@ -239,6 +239,7 @@ def minmax_normalized_rmse(
 def minmax_normalized_dti_root_vec_fro_norm(
     x: torch.Tensor,
     y: torch.Tensor,
+    mask=None,
     scale_off_diags=True,
     range_based_on: str = "y",
     reduction="mean",
@@ -254,6 +255,8 @@ def minmax_normalized_dti_root_vec_fro_norm(
     2. Finds the squared error of the entire input without any reduction.
     3. Sums the error of each diffusion tensor component ("sum over the channels dim")
     4. Calculates the mean squared error for each element in the batch, over all spatial
+       dimensions; if a mask is given, the sum squared-error is divided by the number of
+       elements in the mask.
        dimensions.
     5. Takes the square root of that per-batch MSE
     6. Normalizes this per-batch RMSE by the range in `y` calculated as:
@@ -274,6 +277,11 @@ def minmax_normalized_dti_root_vec_fro_norm(
 
         The 6 component dims are assumed to be the lower triangular elements of a full
         3 x 3 symmetric diffusion tensor.
+    mask : torch.Tensor, optional
+        Boolean Tensor with dimensions `batch x 1 x sp_dim_1 [x sp_dim_2 ...]`.
+
+        Indicates which elements in `input` and `target` are to be considered by the
+        mean.
     scale_off_diags : bool, optional
         Indicates whether or not to scale off-diagonals by sqrt of 2, by default True
 
@@ -311,23 +319,32 @@ def minmax_normalized_dti_root_vec_fro_norm(
     y_range = y_max - y_min
 
     tensor_se = pitn.nn.loss.dti_vec_fro_norm_loss(
-        x, y, scale_off_diags=scale_off_diags, reduction="none"
+        x, y, scale_off_diags=scale_off_diags, mask=mask, reduction="none"
     )
 
     if reduce == "none":
         result = torch.sqrt(tensor_se) / y_range
     else:
         y_range = y_range.flatten()
-        # Find the Mean SE for each item in the batch (MSE)
-        # Then, square root each item's MSE (RMSE)
-        # Then, normalize each RMSE (NRMSE) independently.
-        b_nrmse = torch.sqrt(einops.reduce(tensor_se, "b ... -> b", "mean")) / y_range
-        # Take mean over the entire batch.
+
+        # Take sum of all tensor errors for each element in the batch.
+        fro_bsse = einops.reduce(tensor_se, "b ... -> b", "sum")
+        # If a mask is present, average out the sum of tensor errors by the amount of
+        # selected elements in the mask.
+        if mask is not None:
+            fro_bmse = fro_bsse / mask.reshape(mask.shape[0], -1).sum(-1)
+        # Otherwise, average by the number of "spatial" elements (non-batch dims).
+        else:
+            fro_bmse = fro_bsse / tensor_se[0].numel()
+        # Find the per-volume NRMSE, with the mean properly calculated according to the
+        # mask.
+        fro_bmse = torch.sqrt(fro_bmse) / y_range
+
+        # Take the mean across batches, the "MNRMSE"
         if reduce == "mean":
-            result = b_nrmse.mean()
-        # Maintain the batch dimension.
+            result = fro_bmse.mean()
         elif reduce == "mean_dti":
-            result = b_nrmse
+            result = fro_bmse
         else:
             raise ValueError(f"ERROR: Invalid reduction {reduction}")
 

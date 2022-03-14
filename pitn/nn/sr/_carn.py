@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from typing import Optional, Callable
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -22,8 +24,8 @@ class CascadeUpsample(torch.nn.Module):
         activate_fn,
         upsample_activate_fn,
         center_crop_output_side_amt=None,
-        input_scaler=None,
-        output_descaler=None,
+        input_scale_fn: Optional[Callable] = None,
+        output_descale_fn: Optional[Callable] = None,
     ):
         super().__init__()
 
@@ -38,11 +40,11 @@ class CascadeUpsample(torch.nn.Module):
                 upsample_activate_fn
             ]
 
-        self.input_scaler = (
-            input_scaler if input_scaler is not None else torch.nn.Identity()
+        self.input_scale_fn = (
+            input_scale_fn if input_scale_fn is not None else torch.nn.Identity()
         )
-        self.output_descaler = (
-            output_descaler if output_descaler is not None else torch.nn.Identity()
+        self.output_descale_fn = (
+            output_descale_fn if output_descale_fn is not None else torch.nn.Identity()
         )
 
         # Pad to maintain the same input shape.
@@ -113,17 +115,17 @@ class CascadeUpsample(torch.nn.Module):
             x = self.output_cropper(x)
         return x
 
-    def transform_input(self, x):
-        return self.input_scaler(x.float()).float()
+    def transform_input(self, x, **scale_fn_kwargs):
+        return self.input_scale_fn(x.float(), **scale_fn_kwargs).float()
 
-    def transform_output(self, y_pred, crop=True):
-        y_pred = self.output_descaler(y_pred.float())
+    def transform_output(self, y, crop=True, **scale_fn_kwargs):
+        y = self.output_descale_fn(y.float(), **scale_fn_kwargs)
         if crop:
-            y_pred = self.crop_full_output(y_pred)
-        return y_pred.float()
+            y = self.crop_full_output(y)
+        return y.float()
 
-    def transform_ground_truth_for_training(self, y, crop=True):
-        y = self.input_scaler(y.float())
+    def transform_ground_truth_for_training(self, y, crop=True, **scale_fn_kwargs):
+        y = self.input_scale_fn(y.float(), **scale_fn_kwargs)
         if crop:
             y = self.crop_full_output(y)
         return y.float()
@@ -133,13 +135,15 @@ class CascadeUpsample(torch.nn.Module):
         x: torch.Tensor,
         transform_x: bool = True,
         transform_y: bool = True,
+        scale_x_kwargs: dict = dict(),
+        scale_y_kwargs: dict = dict(),
         debug=False,
     ):
         # debug = (torch.rand(1).item() <= DEBUG_RAND_PROB) or debug
         # if debug:
         #     breakpoint()
         if transform_x:
-            x = self.transform_input(x)
+            x = self.transform_input(x, **scale_x_kwargs)
         y = self.pre_conv(x)
         y = self.activate_fn(y)
         y = self.cascade(y)
@@ -149,7 +153,7 @@ class CascadeUpsample(torch.nn.Module):
         y = self.post_conv(y)
 
         if transform_y:
-            y = self.transform_output(y, crop=self._crop)
+            y = self.transform_output(y, crop=self._crop, **scale_y_kwargs)
 
         return y
 
@@ -164,7 +168,7 @@ class CascadeUpsampleLogEuclid(CascadeUpsample):
         mat_norm_coeffs = mat_norm_coeffs.reshape(1, -1, 1, 1, 1)
         self.register_buffer("mat_norm_coeffs", mat_norm_coeffs, persistent=True)
 
-    def transform_input(self, x):
+    def transform_input(self, x, **scale_fn_kwargs):
         x = x.float()
         if x.ndim == 5:
             x = pitn.eig.tril_vec2sym_mat(x, tril_dim=1)
@@ -172,32 +176,32 @@ class CascadeUpsampleLogEuclid(CascadeUpsample):
         x = pitn.eig.sym_mat2tril_vec(x, dim1=-2, dim2=-1, tril_dim=1)
         # Scale off-diagonals to use regular L2 norm.
         x = x * self.mat_norm_coeffs
-        x = self.input_scaler(x.float()).float()
+        x = self.input_scale_fn(x.float(), **scale_fn_kwargs).float()
         return x
 
-    def transform_output(self, y_pred, crop=True):
+    def transform_output(self, y, crop=True, **scale_fn_kwargs):
         # Need to convert to a the lower triangular vector to perform scaling as a
         # log-euclidean metric.
-        y_pred = y_pred.float()
-        if y_pred.ndim > 5:
-            y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        y = y.float()
+        if y.ndim > 5:
+            y = pitn.eig.sym_mat2tril_vec(y, dim1=-2, dim2=-1, tril_dim=1)
         # Descale off-diagonals used to make log-euclidean domain L2 distance.
-        y_pred = self.output_descaler(y_pred).float()
-        y_pred = (y_pred / self.mat_norm_coeffs).float()
-        y_pred = pitn.eig.tril_vec2sym_mat(y_pred, tril_dim=1)
-        y_pred = log_euclid.exp_map(y_pred.float()).float()
-        y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
+        y = self.output_descale_fn(y, **scale_fn_kwargs).float()
+        y = (y / self.mat_norm_coeffs).float()
+        y = pitn.eig.tril_vec2sym_mat(y, tril_dim=1)
+        y = log_euclid.exp_map(y.float()).float()
+        y = pitn.eig.sym_mat2tril_vec(y, dim1=-2, dim2=-1, tril_dim=1)
         if crop:
-            y_pred = self.crop_full_output(y_pred)
-        return y_pred.float()
+            y = self.crop_full_output(y)
+        return y.float()
 
-    def transform_ground_truth_for_training(self, y, crop=True):
+    def transform_ground_truth_for_training(self, y, crop=True, **scale_fn_kwargs):
         # Assume that the ground truth is already the matrix log, scaled for the
         # euclidean norm.
         y = y.float()
         if y.ndim > 5:
             y = pitn.eig.sym_mat2tril_vec(y, tril_dim=1).float()
-        y = self.input_scaler(y).float()
+        y = self.input_scale_fn(y, **scale_fn_kwargs).float()
         if crop:
             y = self.crop_full_output(y)
         return y.float()
@@ -214,9 +218,9 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         activate_fn,
         upsample_activate_fn,
         center_crop_output_side_amt=None,
-        input_scaler=None,
-        multi_modal_input_scaler=None,
-        output_descaler=None,
+        input_scale_fn=None,
+        multi_modal_input_scale_fn=None,
+        output_descale_fn=None,
     ):
         super().__init__()
 
@@ -231,16 +235,16 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
                 upsample_activate_fn
             ]
 
-        self.input_scaler = (
-            input_scaler if input_scaler is not None else torch.nn.Identity()
+        self.input_scale_fn = (
+            input_scale_fn if input_scale_fn is not None else torch.nn.Identity()
         )
-        self.multi_modal_input_scaler = (
-            multi_modal_input_scaler
-            if multi_modal_input_scaler is not None
+        self.multi_modal_input_scale_fn = (
+            multi_modal_input_scale_fn
+            if multi_modal_input_scale_fn is not None
             else torch.nn.Identity()
         )
-        self.output_descaler = (
-            output_descaler if output_descaler is not None else torch.nn.Identity()
+        self.output_descale_fn = (
+            output_descale_fn if output_descale_fn is not None else torch.nn.Identity()
         )
 
         # Pad to maintain the same input shape.
@@ -334,16 +338,16 @@ class CascadeUpsampleModeRefine(torch.nn.Module):
         return x
 
     def transform_input(self, x):
-        return self.input_scaler(x)
+        return self.input_scale_fn(x)
 
     def transform_input_mode_refine(self, x_mode_refine):
-        return self.multi_modal_input_scaler(x_mode_refine)
+        return self.multi_modal_input_scale_fn(x_mode_refine)
 
     def transform_output(self, y_pred):
-        return self.output_descaler(y_pred)
+        return self.output_descale_fn(y_pred)
 
     def transform_ground_truth_for_training(self, y):
-        return self.input_scaler(y)
+        return self.input_scale_fn(y)
 
     def forward(
         self,
@@ -408,10 +412,10 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
         x = pitn.eig.sym_mat2tril_vec(x, dim1=-2, dim2=-1, tril_dim=1)
         # Scale off-diagonals to use regular L2 norm.
         x = x * self.mat_norm_coeffs
-        return self.input_scaler(x.float()).float()
+        return self.input_scale_fn(x.float()).float()
 
     def transform_input_mode_refine(self, x_mode_refine):
-        return self.multi_modal_input_scaler(x_mode_refine.float()).float()
+        return self.multi_modal_input_scale_fn(x_mode_refine.float()).float()
 
     def transform_output(self, y_pred):
         # Need to convert to a the lower triangular vector to perform scaling as a
@@ -421,7 +425,7 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
             y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
         # Descale off-diagonals used to make log-euclidean domain L2 distance.
         y_pred = (y_pred / self.mat_norm_coeffs).float()
-        y_pred = self.output_descaler(y_pred)
+        y_pred = self.output_descale_fn(y_pred)
         y_pred = pitn.eig.tril_vec2sym_mat(y_pred, tril_dim=1)
         y_pred = log_euclid.exp_map(y_pred.float())
         y_pred = pitn.eig.sym_mat2tril_vec(y_pred, dim1=-2, dim2=-1, tril_dim=1)
@@ -435,7 +439,7 @@ class CascadeLogEuclid(CascadeUpsampleModeRefine):
         y = pitn.eig.sym_mat2tril_vec(y, dim1=-2, dim2=-1, tril_dim=1)
         # Scale off-diagonals to use regular L2 norm.
         y = (y * self.mat_norm_coeffs).float()
-        y = self.input_scaler(y).float()
+        y = self.input_scale_fn(y).float()
         return y
 
 

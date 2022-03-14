@@ -7,6 +7,8 @@ import torch.optim.lr_scheduler as lr
 import monai
 import pyrsistent
 
+import pitn
+
 
 class _CaseInsensitiveDict(pyrsistent.CheckedPMap):
 
@@ -30,6 +32,9 @@ loss_fn = _CaseInsensitiveDict.create(
         "mae": partial(monai.metrics.MAEMetric, reduction="mean"),
         "frobenius_norm": lambda: (
             lambda x, y: torch.linalg.matrix_norm((x - y).float(), ord="fro").mean()
+        ),
+        "vfro": lambda: partial(
+            pitn.nn.loss.dti_vec_fro_norm_loss, scale_off_diags=False, reduction="mean"
         ),
     },
 )

@@ -269,8 +269,14 @@ def plot_im_grid(
                     if ax.get_subplotspec().is_last_row():
                         ax_div = make_axes_locatable(ax)
                         cax = ax_div.append_axes("bottom", size="7%", pad="4%")
-                        fig.colorbar(color_mappable, cax=cax, orientation="horizontal")
+                        cbar = fig.colorbar(
+                            color_mappable,
+                            cax=cax,
+                            orientation="horizontal",
+                            format="%.4e",
+                        )
                         cax.xaxis.set_ticks_position("bottom")
+                        cbar.ax.tick_params(rotation=90)
                 elif cbars == "each":
                     ax_div = make_axes_locatable(ax)
                     cax = ax_div.append_axes("right", size="7%", pad="4%")
@@ -384,6 +390,7 @@ def fa_map(dti, channels_first=True) -> np.ndarray:
     fa = dipy.reconst.dti.fractional_anisotropy(eigvals)
 
     return fa
+
 
 # Generate FA-weighted diffusion direction map.
 def direction_map(dti, channels_first=True) -> np.ndarray:
