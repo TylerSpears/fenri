@@ -3,14 +3,17 @@
 # Running script for spawning jobs of the diqt.ipynb notebook.
 import os
 import io
+import sys
 import subprocess
 import tempfile
 import shutil
 from pathlib import Path
 import datetime
 import atexit
+import functools
 
 import papermill as pm
+import jupyter_client
 import dotenv
 from box import Box
 import yaml
@@ -20,36 +23,61 @@ import torch.multiprocessing as mp
 SUCCESS = 0
 FAILURE = 1
 
+
+def patch_file_stream(file_stream, std_stream, prefix: str):
+    def stream_fn_wrapper(fn, fn_key, stdio_stream):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            stdio_stream.__getattribute__(fn_key)(*args, **kwargs)
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    def prefix_write(fn, prefix: str):
+        @functools.wraps(fn)
+        def wrapper(s: str):
+            # print("===USING WRITE")
+            # print("===Number of newlines: ", s.count('\n'))
+            new_s = s.splitlines(keepends=True)
+            new_s = "".join([prefix + " " + str_line for str_line in new_s])
+            return fn(new_s)
+        return wrapper
+
+    def prefix_writelines(fn, prefix: str):
+        @functools.wraps(fn)
+        def wrapper(lines: list):
+            print("USING WRITELINES")
+            ls = [prefix + " " + s for s in lines]
+            return fn(ls)
+        return wrapper
+
+    file_stream.write = stream_fn_wrapper(file_stream.write, "write", std_stream)
+    file_stream.write = prefix_write(file_stream.write, prefix)
+    file_stream.writelines = stream_fn_wrapper(
+        file_stream.writelines, "writelines", std_stream
+    )
+    file_stream.writelines = prefix_writelines(file_stream.writelines, prefix)
+    file_stream.flush = stream_fn_wrapper(file_stream.flush, "flush", std_stream)
+    return file_stream
+
 def proc_runner(
-    param_queue,
+    run_params: Box,
     exp_root_name: str,
+    gpu_idx: int,
+    gpu_idx_queue_bag,
     nb_path: Path,
     kernel_name: str,
     run_work_dir: Path,
-    gpu_idx_queue_bag,
     os_environ: dict,
     results_dirs: list,
-    output_queue,
 ):
-    os.setpgrp()
     print("PID ", os.getpid())
     print("GROUP ID ", os.getgid())
     # Update this process' env vars.
     os.environ.update(os_environ)
-    # Grab a gpu idx.
-    gpu_idx = gpu_idx_queue_bag.get()
     # set gpu idx with CUDA_VISIBLE_DEVICES
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
 
-    # Grab new params for this run.
-    run_params = Box(default_box=True, dot_box=True)
-    try:
-        new_params = param_queue.get()
-    except ValueError:
-        print(f"PID {os.getpid()} exiting, queue empty")
-        return
-
-    # Merge set and popped params.
-    run_params.merge_update(new_params)
     run_params.override_experiment_name = True
     # Determine tmp directory name for this run.
     ts = datetime.datetime.now().replace(microsecond=0).isoformat()
@@ -59,7 +87,9 @@ def proc_runner(
     run_params.experiment_name = experiment_name
 
     # Save out the config file
-    with tempfile.TemporaryDirectory(prefix=run_params.experiment_Name) as tmpdir_name:
+    with tempfile.TemporaryDirectory(
+        prefix=run_params.experiment_name + "__"
+    ) as tmpdir_name:
         tmpdir = Path(tmpdir_name)
 
         conf_fname = tmpdir / "config.yml"
@@ -67,44 +97,51 @@ def proc_runner(
         # add PITN_CONFIG to env vars
         os.environ["PITN_CONFIG"] = str(conf_fname)
         tmp_nb_fname = tmpdir / "temp_nb.ipynb"
-        stdout_file = tmpdir / "stdout.log"
-        stderr_file = tmpdir / "stderr.log"
+        # Set up stdout and stderr logs.
+        log_prefix = run_params.experiment_name + " |"
+        stdout_fname = tmpdir / "stdout.log"
+        stdout_stream = open(stdout_fname, "w")
+        stdout_stream = patch_file_stream(stdout_stream, sys.stdout, prefix=log_prefix)
+        stderr_fname = tmpdir / "stderr.log"
+        stderr_stream = open(stderr_fname, "w")
+        stderr_stream = patch_file_stream(stderr_stream, sys.stderr, prefix=log_prefix)
 
-        # Run the notebook.
-        result = pm.execute_notebook(
-            input_path=nb_path,
-            output_path=tmp_nb_fname,
-            language="python",
-            cwd=run_work_dir,
-            kernel_name=kernel_name,
-            log_output=True,
-            stdout_file=stdout_file,
-            stderr_file=stderr_file,
-        )
-
-        final_result_dir = None
-        for d in results_dirs:
-            possible_result_dirs = list(d.glob(run_params.experiment_name))
-            if len(possible_result_dirs) == 1:
-                final_result_dir = possible_result_dirs[0]
-                break
-            elif len(possible_result_dirs) > 1:
-                break
-        if final_result_dir is None:
-            raise RuntimeError(
-                "ERROR: Could not find final result dir "
-                + str(run_params.experiment_name)
+        try:
+            # Run the notebook.
+            result = pm.execute_notebook(
+                input_path=nb_path,
+                output_path=tmp_nb_fname,
+                language="python",
+                cwd=run_work_dir,
+                kernel_name=kernel_name,
+                log_output=True,
+                stdout_file=stdout_stream,
+                stderr_file=stderr_stream,
             )
 
-        # copy stdout and stderr files to final result dir.
-        shutil.copyfile(stdout_file, final_result_dir / stdout_file.name)
-        shutil.copyfile(stderr_file, final_result_dir / stderr_file.name)
+            final_result_dir = None
+            for d in results_dirs:
+                possible_result_dirs = list(Path(d).glob(run_params.experiment_name))
+                if len(possible_result_dirs) == 1:
+                    final_result_dir = possible_result_dirs[0]
+                    break
+                elif len(possible_result_dirs) > 1:
+                    break
+            if final_result_dir is None:
+                raise RuntimeError(
+                    "ERROR: Could not find final result dir "
+                    + str(run_params.experiment_name)
+                )
 
-    # If successful, push the filename onto the output queue. Otherwise, push a failure
-    # signal.
-    output_queue.put(SUCCESS)
+            # copy stdout and stderr files to final result dir.
+            shutil.copyfile(stdout_fname, final_result_dir / stdout_fname.name)
+            shutil.copyfile(stderr_fname, final_result_dir / stderr_fname.name)
+        finally:
+            gpu_idx_queue_bag.put(gpu_idx)
+            stdout_stream.close()
+            stderr_stream.close()
 
-    return
+    return SUCCESS, result
 
 
 def main():
@@ -136,18 +173,26 @@ def main():
         rd = Path(os.environ[dk]).resolve()
         assert rd.exists()
         env_vars[dk] = str(rd)
+    results_dirs = [env_vars["RESULTS_DIR"], env_vars["TMP_RESULTS_DIR"]]
 
     # Locate and select source notebook to run.
     source_nb = Path(os.getcwd()).resolve() / "test_runner.ipynb"
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
 
-    # Find number of gpus and put them into a "pool" to be used by child procs.
     n_gpus = torch.cuda.device_count()
-    gpu_idx_pool = mp.Queue(maxsize=n_gpus)
-    for i in range(n_gpus):
-        gpu_idx_pool.put(i)
 
+    kernel_names = jupyter_client.kernelspec.find_kernel_specs()
+    target_kernels = list(filter(lambda kv: "/pitn/" in kv[1], kernel_names.items()))
+    print(target_kernels)
+    if len(target_kernels) == 1:
+        kernel_name = target_kernels[0][0]
+    else:
+        raise RuntimeError(
+            "ERROR: Undetermined kernelspec, got "
+            + str(target_kernels)
+            + ", expected one valid kernel"
+        )
     # To allow editing of the notebook while experiments are running, copy the source
     # notebook into a temp dir and run with that, while staying in the original
     # notebook's directory.
@@ -171,10 +216,60 @@ def main():
         fixed_params.train.lr_scheduler = None
 
         # Create iterable of all desired parameter combinations.
+        run_params = list()
+        run_basenames = list()
+        basename = "test_diqt_runner"
+        for i in range(3):
+            run_p = Box(default_box=False, **fixed_params)
+            run_basenames.append(basename + f"_rep_{i}")
+            run_params.append(run_p)
 
         # Create proc pool, one proc for each GPU.
+        with mp.Pool(
+            n_gpus,
+            maxtasksperchild=1,
+            initializer=os.setpgrp,
+        ) as pool:
 
-        # Put run params into params queue, block while all child procs are busy.
+            # Must create a manager to share queues with child processes.
+            manager = mp.Manager()
+            # Find number of gpus and put them into a "pool" to be used by child procs.
+            gpu_idx_pool = manager.Queue(maxsize=n_gpus)
+            for i in range(n_gpus):
+                gpu_idx_pool.put(i)
+            results = list()
+            try:
+                # Pull gpu indices as they become available, and run a process for each gpu
+                for p, basename in zip(run_params, run_basenames):
+                    gpu_idx = gpu_idx_pool.get()
+                    proc_fn = functools.partial(
+                        proc_runner,
+                        run_params=p,
+                        exp_root_name=basename,
+                        gpu_idx=gpu_idx,
+                        gpu_idx_queue_bag=gpu_idx_pool,
+                        nb_path=tmp_nb,
+                        run_work_dir=proc_working_dir,
+                        kernel_name=kernel_name,
+                        os_environ=env_vars,
+                        results_dirs=results_dirs,
+                    )
+                    result = pool.apply_async(proc_fn)
+                    # Results won't be "completed" until the pool is join()'ed.
+                    results.append(result)
+
+                    # Check the status of all "ready" results so far. If any errored out, then
+                    # the .get() call will re-raise that exception.
+                    list(map(lambda r: r.get(), filter(lambda r: r.ready(), results)))
+
+                pool.close()
+                pool.join()
+
+            except Exception as e:
+                pool.terminate()
+                raise e
+            finally:
+                manager.shutdown()
 
 
 # Just a list of params, only for human readability. Defaults are set within the
