@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 from ._carn import (
-    CascadeUpsampleModeRefine,
-    CascadeLogEuclid,
-    CascadeLogEuclidMultiOutput,
     CascadeUpsample,
     CascadeUpsampleLogEuclid,
+    CascadeUpsampleAnatRefine,
+    CascadeUpsampleAnatRefineLogEuclid,
 )
 
 from . import espcn
