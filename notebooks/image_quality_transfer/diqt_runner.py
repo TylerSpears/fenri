@@ -11,6 +11,7 @@ from pathlib import Path
 import datetime
 import atexit
 import functools
+from pprint import pprint as ppr
 
 import papermill as pm
 import jupyter_client
@@ -22,6 +23,37 @@ import torch.multiprocessing as mp
 
 SUCCESS = 0
 FAILURE = 1
+
+# fmt: off
+splits = [
+    {
+        "train": {"subjs": ['634748', '386250', '751348', '150019', '910241', '406432', '815247', '690152', '141422', '100408']},
+        "val": {"subjs": ['644246', '567759', '231928', '157437']},
+        "test": {"subjs": ['701535', '978578', '118124', '894774', '185947', '297655', '135528', '679770', '792867', '567961', '189450', '227432', '108828', '307127', '156637', '803240', '164030', '196952', '753251', '140117', '103515', '198047', '124220', '118730', '303624', '103010', '397154', '700634', '810439', '382242', '203923', '224022', '175035', '167238']},
+    },
+    {
+        "train": {"subjs": ['803240', '118124', '406432', '203923', '224022', '175035', '189450', '198047', '141422', '118730']},
+        "val": {"subjs": ['156637', '307127', '894774', '567961']},
+        "test": {"subjs": ['701535', '978578', '910241', '185947', '297655', '231928', '690152', '135528', '679770', '792867', '815247', '227432', '108828', '634748', '386250', '751348', '157437', '164030', '150019', '196952', '140117', '753251', '103515', '100408', '124220', '567759', '303624', '103010', '397154', '700634', '810439', '382242', '644246', '167238']},
+    },
+    {
+        "train": {"subjs": ['386250', '679770', '634748', '700634', '978578', '150019', '894774', '406432', '815247', '141422']},
+        "val": {"subjs": ['297655', '231928', '140117', '135528']},
+        "test": {"subjs": ['701535', '118124', '910241', '185947', '690152', '792867', '189450', '567961', '227432', '108828', '156637', '307127', '803240', '751348', '164030', '157437', '196952', '753251', '103515', '198047', '124220', '100408', '118730', '303624', '567759', '103010', '397154', '810439', '382242', '203923', '224022', '175035', '644246', '167238']},
+    },
+    {
+        "train": {"subjs": ['386250', '803240', '157437', '700634', '978578', '382242', '175035', '753251', '567961', '644246']},
+        "val": {"subjs": ['224022', '100408', '141422', '397154']},
+        "test": {"subjs": ['701535', '118124', '894774', '910241', '185947', '297655', '231928', '690152', '135528', '679770', '792867', '815247', '189450', '227432', '108828', '634748', '307127', '751348', '156637', '164030', '150019', '406432', '196952', '140117', '103515', '198047', '124220', '118730', '567759', '303624', '103010', '810439', '203923', '167238']},
+    },
+    {
+        "train": {"subjs": ['307127', '700634', '150019', '894774', '297655', '203923', '792867', '567961', '303624', '167238']},
+        "val": {"subjs": ['141422', '382242', '224022', '157437']},
+        "test": {"subjs": ['701535', '978578', '118124', '910241', '185947', '231928', '690152', '135528', '679770', '815247', '189450', '227432', '108828', '386250', '634748', '156637', '803240', '751348', '164030', '406432', '196952', '140117', '753251', '103515', '198047', '124220', '118730', '567759', '100408', '103010', '397154', '810439', '175035', '644246']},
+    },
+]
+# fmt: on
+split_idx = list(range(1, len(splits) + 1))
 
 
 def patch_file_stream(file_stream, std_stream, prefix: str):
@@ -36,11 +68,10 @@ def patch_file_stream(file_stream, std_stream, prefix: str):
     def prefix_write(fn, prefix: str):
         @functools.wraps(fn)
         def wrapper(s: str):
-            # print("===USING WRITE")
-            # print("===Number of newlines: ", s.count('\n'))
             new_s = s.splitlines(keepends=True)
             new_s = "".join([prefix + " " + str_line for str_line in new_s])
             return fn(new_s)
+
         return wrapper
 
     def prefix_writelines(fn, prefix: str):
@@ -49,6 +80,7 @@ def patch_file_stream(file_stream, std_stream, prefix: str):
             print("USING WRITELINES")
             ls = [prefix + " " + s for s in lines]
             return fn(ls)
+
         return wrapper
 
     file_stream.write = stream_fn_wrapper(file_stream.write, "write", std_stream)
@@ -59,6 +91,7 @@ def patch_file_stream(file_stream, std_stream, prefix: str):
     file_stream.writelines = prefix_writelines(file_stream.writelines, prefix)
     file_stream.flush = stream_fn_wrapper(file_stream.flush, "flush", std_stream)
     return file_stream
+
 
 def proc_runner(
     run_params: Box,
@@ -96,7 +129,7 @@ def proc_runner(
         run_params.to_yaml(conf_fname)
         # add PITN_CONFIG to env vars
         os.environ["PITN_CONFIG"] = str(conf_fname)
-        tmp_nb_fname = tmpdir / "temp_nb.ipynb"
+        tmp_nb_fname = tmpdir / "tmp_espcn_baseline_diqt.ipynb"
         # Set up stdout and stderr logs.
         log_prefix = run_params.experiment_name + " |"
         stdout_fname = tmpdir / "stdout.log"
@@ -176,14 +209,17 @@ def main():
     results_dirs = [env_vars["RESULTS_DIR"], env_vars["TMP_RESULTS_DIR"]]
 
     # Locate and select source notebook to run.
-    source_nb = Path(os.getcwd()).resolve() / "test_runner.ipynb"
+    # source_nb = Path(__file__).parent.resolve() / "baselines" / "espcn_baseline_diqt.ipynb"
+    source_nb = Path(__file__).parent.resolve() / "runner_tester.ipynb"
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
 
     n_gpus = torch.cuda.device_count()
 
     kernel_names = jupyter_client.kernelspec.find_kernel_specs()
-    target_kernels = list(filter(lambda kv: "/pitn/" in kv[1], kernel_names.items()))
+    target_kernels = list(
+        filter(lambda kv: "/pitn-runner/" in kv[1], kernel_names.items())
+    )
     print(target_kernels)
     if len(target_kernels) == 1:
         kernel_name = target_kernels[0][0]
@@ -196,7 +232,7 @@ def main():
     # To allow editing of the notebook while experiments are running, copy the source
     # notebook into a temp dir and run with that, while staying in the original
     # notebook's directory.
-    with tempfile.TemporaryDirectory(prefix="pitn_diqt_run_") as tmp_dir_name:
+    with tempfile.TemporaryDirectory(prefix="pitn_espcn_diqt_run_") as tmp_dir_name:
         tmp_dir = Path(tmp_dir_name).resolve()
         tmp_nb = tmp_dir / source_nb.name
         shutil.copyfile(source_nb, tmp_nb)
@@ -205,23 +241,25 @@ def main():
         # Create fixed params for all runs.
         fixed_params = Box(default_box=True, box_dots=True)
         fixed_params.override_experiment_name = True
-        fixed_params.n_channels = 6
         fixed_params.progress_bar = False
         fixed_params.num_workers = os.cpu_count() // n_gpus
-        fixed_params.hr_center_crop_per_side = 0
-        fixed_params.net.kwargs.center_crop_output_side_amt = (
-            fixed_params.hr_center_crop_per_side
-        )
-        fixed_params.train.grad_2norm_clip_val = 0.25
-        fixed_params.train.lr_scheduler = None
 
         # Create iterable of all desired parameter combinations.
         run_params = list()
         run_basenames = list()
-        basename = "test_diqt_runner"
-        for i in range(3):
+        basename = "uvers_espcn_revnet"
+        for i_split, split in zip(split_idx, splits):
             run_p = Box(default_box=False, **fixed_params)
-            run_basenames.append(basename + f"_rep_{i}")
+            run_p.merge_update(split)
+            run_p.test.dataset_n_subjs = len(run_p.test.subjs)
+            run_p.val.dataset_n_subjs = len(run_p.val.subjs)
+            run_p.train.dataset_n_subjs = len(run_p.train.subjs)
+            run_p.n_subjs = (
+                run_p.test.dataset_n_subjs
+                + run_p.val.dataset_n_subjs
+                + run_p.train.dataset_n_subjs
+            )
+            run_basenames.append(basename + f"_split_{i_split}")
             run_params.append(run_p)
 
         # Create proc pool, one proc for each GPU.
