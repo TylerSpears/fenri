@@ -9,6 +9,7 @@ import tempfile
 import shutil
 from pathlib import Path
 import datetime
+import time
 import atexit
 import functools
 from pprint import pprint as ppr
@@ -77,7 +78,6 @@ def patch_file_stream(file_stream, std_stream, prefix: str):
     def prefix_writelines(fn, prefix: str):
         @functools.wraps(fn)
         def wrapper(lines: list):
-            print("USING WRITELINES")
             ls = [prefix + " " + s for s in lines]
             return fn(ls)
 
@@ -131,13 +131,16 @@ def proc_runner(
         os.environ["PITN_CONFIG"] = str(conf_fname)
         tmp_nb_fname = tmpdir / "tmp_espcn_baseline_diqt.ipynb"
         # Set up stdout and stderr logs.
-        log_prefix = run_params.experiment_name + " |"
         stdout_fname = tmpdir / "stdout.log"
         stdout_stream = open(stdout_fname, "w")
-        stdout_stream = patch_file_stream(stdout_stream, sys.stdout, prefix=log_prefix)
+        stdout_stream = patch_file_stream(
+            stdout_stream, sys.stdout, prefix=f"{os.getpid()} {exp_root_name} |"
+        )
         stderr_fname = tmpdir / "stderr.log"
         stderr_stream = open(stderr_fname, "w")
-        stderr_stream = patch_file_stream(stderr_stream, sys.stderr, prefix=log_prefix)
+        stderr_stream = patch_file_stream(
+            stderr_stream, sys.stderr, prefix=f"{os.getpid()} {exp_root_name} |"
+        )
 
         try:
             # Run the notebook.
@@ -209,8 +212,9 @@ def main():
     results_dirs = [env_vars["RESULTS_DIR"], env_vars["TMP_RESULTS_DIR"]]
 
     # Locate and select source notebook to run.
-    # source_nb = Path(__file__).parent.resolve() / "baselines" / "espcn_baseline_diqt.ipynb"
-    source_nb = Path(__file__).parent.resolve() / "runner_tester.ipynb"
+    source_nb = (
+        Path(__file__).parent.resolve() / "baselines" / "espcn_baseline_diqt.ipynb"
+    )
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
 
@@ -299,7 +303,9 @@ def main():
                     # Check the status of all "ready" results so far. If any errored out, then
                     # the .get() call will re-raise that exception.
                     list(map(lambda r: r.get(), filter(lambda r: r.ready(), results)))
-
+                    # Delay next iteration so run names don't have the exact same
+                    # starting time.
+                    time.sleep(2)
                 pool.close()
                 pool.join()
 
