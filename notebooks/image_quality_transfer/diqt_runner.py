@@ -42,16 +42,16 @@ splits = [
         "val": {"subjs": ['297655', '231928', '140117', '135528']},
         "test": {"subjs": ['701535', '118124', '910241', '185947', '690152', '792867', '189450', '567961', '227432', '108828', '156637', '307127', '803240', '751348', '164030', '157437', '196952', '753251', '103515', '198047', '124220', '100408', '118730', '303624', '567759', '103010', '397154', '810439', '382242', '203923', '224022', '175035', '644246', '167238']},
     },
-    {
-        "train": {"subjs": ['386250', '803240', '157437', '700634', '978578', '382242', '175035', '753251', '567961', '644246']},
-        "val": {"subjs": ['224022', '100408', '141422', '397154']},
-        "test": {"subjs": ['701535', '118124', '894774', '910241', '185947', '297655', '231928', '690152', '135528', '679770', '792867', '815247', '189450', '227432', '108828', '634748', '307127', '751348', '156637', '164030', '150019', '406432', '196952', '140117', '103515', '198047', '124220', '118730', '567759', '303624', '103010', '810439', '203923', '167238']},
-    },
-    {
-        "train": {"subjs": ['307127', '700634', '150019', '894774', '297655', '203923', '792867', '567961', '303624', '167238']},
-        "val": {"subjs": ['141422', '382242', '224022', '157437']},
-        "test": {"subjs": ['701535', '978578', '118124', '910241', '185947', '231928', '690152', '135528', '679770', '815247', '189450', '227432', '108828', '386250', '634748', '156637', '803240', '751348', '164030', '406432', '196952', '140117', '753251', '103515', '198047', '124220', '118730', '567759', '100408', '103010', '397154', '810439', '175035', '644246']},
-    },
+    # {
+    #     "train": {"subjs": ['386250', '803240', '157437', '700634', '978578', '382242', '175035', '753251', '567961', '644246']},
+    #     "val": {"subjs": ['224022', '100408', '141422', '397154']},
+    #     "test": {"subjs": ['701535', '118124', '894774', '910241', '185947', '297655', '231928', '690152', '135528', '679770', '792867', '815247', '189450', '227432', '108828', '634748', '307127', '751348', '156637', '164030', '150019', '406432', '196952', '140117', '103515', '198047', '124220', '118730', '567759', '303624', '103010', '810439', '203923', '167238']},
+    # },
+    # {
+    #     "train": {"subjs": ['307127', '700634', '150019', '894774', '297655', '203923', '792867', '567961', '303624', '167238']},
+    #     "val": {"subjs": ['141422', '382242', '224022', '157437']},
+    #     "test": {"subjs": ['701535', '978578', '118124', '910241', '185947', '231928', '690152', '135528', '679770', '815247', '189450', '227432', '108828', '386250', '634748', '156637', '803240', '751348', '164030', '406432', '196952', '140117', '753251', '103515', '198047', '124220', '118730', '567759', '100408', '103010', '397154', '810439', '175035', '644246']},
+    # },
 ]
 # fmt: on
 split_idx = list(range(1, len(splits) + 1))
@@ -129,7 +129,7 @@ def proc_runner(
         run_params.to_yaml(conf_fname)
         # add PITN_CONFIG to env vars
         os.environ["PITN_CONFIG"] = str(conf_fname)
-        tmp_nb_fname = tmpdir / "tmp_espcn_baseline_diqt.ipynb"
+        tmp_nb_fname = tmpdir / "tmp_diqt_running.ipynb"
         # Set up stdout and stderr logs.
         stdout_fname = tmpdir / "stdout.log"
         stdout_stream = open(stdout_fname, "w")
@@ -213,7 +213,7 @@ def main():
 
     # Locate and select source notebook to run.
     source_nb = (
-        Path(__file__).parent.resolve() / "baselines" / "espcn_baseline_diqt.ipynb"
+        Path(__file__).parent.resolve() / "diqt_anat.ipynb"
     )
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
@@ -236,7 +236,7 @@ def main():
     # To allow editing of the notebook while experiments are running, copy the source
     # notebook into a temp dir and run with that, while staying in the original
     # notebook's directory.
-    with tempfile.TemporaryDirectory(prefix="pitn_espcn_diqt_run_") as tmp_dir_name:
+    with tempfile.TemporaryDirectory(prefix="pitn_diqt_anat_run_") as tmp_dir_name:
         tmp_dir = Path(tmp_dir_name).resolve()
         tmp_nb = tmp_dir / source_nb.name
         shutil.copyfile(source_nb, tmp_nb)
@@ -246,14 +246,14 @@ def main():
         fixed_params = Box(default_box=True, box_dots=True)
         fixed_params.override_experiment_name = True
         fixed_params.progress_bar = False
-        fixed_params.num_workers = os.cpu_count() // n_gpus
+        fixed_params.num_workers = (os.cpu_count() // n_gpus) - 1
 
         # Create iterable of all desired parameter combinations.
         run_params = list()
         run_basenames = list()
-        basename = "uvers_espcn_revnet"
+        basename = "uvers_pitn_anat_stream"
         for i_split, split in zip(split_idx, splits):
-            run_p = Box(default_box=False, **fixed_params)
+            run_p = Box(default_box=False, **fixed_params.copy())
             run_p.merge_update(split)
             run_p.test.dataset_n_subjs = len(run_p.test.subjs)
             run_p.val.dataset_n_subjs = len(run_p.val.subjs)
@@ -263,8 +263,18 @@ def main():
                 + run_p.val.dataset_n_subjs
                 + run_p.train.dataset_n_subjs
             )
-            run_basenames.append(basename + f"_split_{i_split}")
-            run_params.append(run_p)
+            for domain in ("dti", "le"):
+                # Already got this one!
+                if (domain == 'dti') and (i_split == 1):
+                    continue
+
+                if domain == "dti":
+                    run_p.use_log_euclid = False
+                elif domain == "le":
+                    run_p.use_log_euclid = True
+                run_p.use_half_precision_float = True
+                run_basenames.append(basename + f"_{domain}_split_{i_split}")
+                run_params.append(run_p.copy())
 
         # Create proc pool, one proc for each GPU.
         with mp.Pool(
