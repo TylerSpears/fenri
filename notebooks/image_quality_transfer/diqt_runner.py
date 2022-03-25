@@ -9,8 +9,7 @@ import tempfile
 import shutil
 from pathlib import Path
 import datetime
-import time
-import atexit
+import time import atexit
 import functools
 from pprint import pprint as ppr
 
@@ -214,12 +213,13 @@ def main():
 
     # Locate and select source notebook to run.
     source_nb = (
-        Path(__file__).parent.resolve() / "diqt_fake_anat.ipynb"
+        Path(__file__).parent.resolve() / "diqt.ipynb"
     )
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
 
-    n_gpus = torch.cuda.device_count()
+    # n_gpus = torch.cuda.device_count()
+    n_gpus = 1
 
     kernel_names = jupyter_client.kernelspec.find_kernel_specs()
     target_kernels = list(
@@ -237,7 +237,7 @@ def main():
     # To allow editing of the notebook while experiments are running, copy the source
     # notebook into a temp dir and run with that, while staying in the original
     # notebook's directory.
-    with tempfile.TemporaryDirectory(prefix="pitn_diqt_fake_anat_run_") as tmp_dir_name:
+    with tempfile.TemporaryDirectory(prefix="pitn_diqt_run_") as tmp_dir_name:
         tmp_dir = Path(tmp_dir_name).resolve()
         tmp_nb = tmp_dir / source_nb.name
         shutil.copyfile(source_nb, tmp_nb)
@@ -266,14 +266,31 @@ def main():
                     + run_p.train.dataset_n_subjs
                 )
 
+        # Create iterable of all desired parameter combinations.
+        run_params = list()
+        run_basenames = list()
+        basename = "uvers_pitn_single_stream"
+        for i_split, split in zip(split_idx, splits):
+            run_p = Box(default_box=False, **fixed_params.copy())
+            run_p.merge_update(split)
+            run_p.test.dataset_n_subjs = len(run_p.test.subjs)
+            run_p.val.dataset_n_subjs = len(run_p.val.subjs)
+            run_p.train.dataset_n_subjs = len(run_p.train.subjs)
+            run_p.n_subjs = (
+                run_p.test.dataset_n_subjs
+                + run_p.val.dataset_n_subjs
+                + run_p.train.dataset_n_subjs
+            )
+            for domain in ("dti", "le"):
+
                 if domain == "dti":
                     run_p.use_log_euclid = False
                 elif domain == "le":
                     run_p.use_log_euclid = True
-                run_p.use_anat = False
-                run_p.use_half_precision_float = True
-                run_p.train.batch_size = 16
                 run_p.train.accumulate_grad_batches = 2
+                run_p.use_half_precision_float = True
+                run_p.use_anat = False
+                run_p.train.batch_size = 16
                 run_basenames.append(basename + f"_{domain}_split_{i_split}")
                 run_params.append(run_p.copy())
 
