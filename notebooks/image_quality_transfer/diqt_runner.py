@@ -9,7 +9,7 @@ import tempfile
 import shutil
 from pathlib import Path
 import datetime
-import time import atexit
+import time
 import functools
 from pprint import pprint as ppr
 
@@ -218,8 +218,8 @@ def main():
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
 
-    # n_gpus = torch.cuda.device_count()
-    n_gpus = 1
+    n_gpus = torch.cuda.device_count()
+    # n_gpus = 1
 
     kernel_names = jupyter_client.kernelspec.find_kernel_specs()
     target_kernels = list(
@@ -252,7 +252,7 @@ def main():
         # Create iterable of all desired parameter combinations.
         run_params = list()
         run_basenames = list()
-        basename = "uvers_pitn_fake_anat_stream"
+        basename = "uvers_pitn_single_stream"
         for domain in ("dti", "le"):
             for i_split, split in zip(split_idx, splits):
                 run_p = Box(default_box=False, **fixed_params.copy())
@@ -265,23 +265,6 @@ def main():
                     + run_p.val.dataset_n_subjs
                     + run_p.train.dataset_n_subjs
                 )
-
-        # Create iterable of all desired parameter combinations.
-        run_params = list()
-        run_basenames = list()
-        basename = "uvers_pitn_single_stream"
-        for i_split, split in zip(split_idx, splits):
-            run_p = Box(default_box=False, **fixed_params.copy())
-            run_p.merge_update(split)
-            run_p.test.dataset_n_subjs = len(run_p.test.subjs)
-            run_p.val.dataset_n_subjs = len(run_p.val.subjs)
-            run_p.train.dataset_n_subjs = len(run_p.train.subjs)
-            run_p.n_subjs = (
-                run_p.test.dataset_n_subjs
-                + run_p.val.dataset_n_subjs
-                + run_p.train.dataset_n_subjs
-            )
-            for domain in ("dti", "le"):
 
                 if domain == "dti":
                     run_p.use_log_euclid = False
