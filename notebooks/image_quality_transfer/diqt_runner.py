@@ -109,7 +109,8 @@ def proc_runner(
     # Update this process' env vars.
     os.environ.update(os_environ)
     # set gpu idx with CUDA_VISIBLE_DEVICES
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+    os.environ["CUDA_PYTORCH_DEVICE_IDX"] = str(gpu_idx)
 
     run_params.override_experiment_name = True
     # Determine tmp directory name for this run.
@@ -222,7 +223,7 @@ def main():
 
     kernel_names = jupyter_client.kernelspec.find_kernel_specs()
     target_kernels = list(
-        filter(lambda kv: "/pitn-runner/" in kv[1], kernel_names.items())
+        filter(lambda kv: "/pitn/" in kv[1], kernel_names.items())
     )
     print(target_kernels)
     if len(target_kernels) == 1:
