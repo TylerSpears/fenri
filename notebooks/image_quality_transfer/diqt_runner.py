@@ -214,7 +214,7 @@ def main():
 
     # Locate and select source notebook to run.
     source_nb = (
-        Path(__file__).parent.resolve() / "diqt_anat.ipynb"
+        Path(__file__).parent.resolve() / "diqt_fake_anat.ipynb"
     )
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
@@ -237,7 +237,7 @@ def main():
     # To allow editing of the notebook while experiments are running, copy the source
     # notebook into a temp dir and run with that, while staying in the original
     # notebook's directory.
-    with tempfile.TemporaryDirectory(prefix="pitn_diqt_anat_run_") as tmp_dir_name:
+    with tempfile.TemporaryDirectory(prefix="pitn_diqt_fake_anat_run_") as tmp_dir_name:
         tmp_dir = Path(tmp_dir_name).resolve()
         tmp_nb = tmp_dir / source_nb.name
         shutil.copyfile(source_nb, tmp_nb)
@@ -247,33 +247,33 @@ def main():
         fixed_params = Box(default_box=True, box_dots=True)
         fixed_params.override_experiment_name = True
         fixed_params.progress_bar = False
-        fixed_params.num_workers = (os.cpu_count() // n_gpus) - 1
+        fixed_params.num_workers = (os.cpu_count() // n_gpus) - 2
 
         # Create iterable of all desired parameter combinations.
         run_params = list()
         run_basenames = list()
-        basename = "uvers_pitn_anat_stream"
-        for i_split, split in zip(split_idx, splits):
-            run_p = Box(default_box=False, **fixed_params.copy())
-            run_p.merge_update(split)
-            run_p.test.dataset_n_subjs = len(run_p.test.subjs)
-            run_p.val.dataset_n_subjs = len(run_p.val.subjs)
-            run_p.train.dataset_n_subjs = len(run_p.train.subjs)
-            run_p.n_subjs = (
-                run_p.test.dataset_n_subjs
-                + run_p.val.dataset_n_subjs
-                + run_p.train.dataset_n_subjs
-            )
-            for domain in ("dti", "le"):
-                # Already got this one!
-                if (domain == 'dti') and (i_split == 1):
-                    continue
+        basename = "uvers_pitn_fake_anat_stream"
+        for domain in ("dti", "le"):
+            for i_split, split in zip(split_idx, splits):
+                run_p = Box(default_box=False, **fixed_params.copy())
+                run_p.merge_update(split)
+                run_p.test.dataset_n_subjs = len(run_p.test.subjs)
+                run_p.val.dataset_n_subjs = len(run_p.val.subjs)
+                run_p.train.dataset_n_subjs = len(run_p.train.subjs)
+                run_p.n_subjs = (
+                    run_p.test.dataset_n_subjs
+                    + run_p.val.dataset_n_subjs
+                    + run_p.train.dataset_n_subjs
+                )
 
                 if domain == "dti":
                     run_p.use_log_euclid = False
                 elif domain == "le":
                     run_p.use_log_euclid = True
+                run_p.use_anat = False
                 run_p.use_half_precision_float = True
+                run_p.train.batch_size = 16
+                run_p.train.accumulate_grad_batches = 2
                 run_basenames.append(basename + f"_{domain}_split_{i_split}")
                 run_params.append(run_p.copy())
 
@@ -307,6 +307,7 @@ def main():
                         os_environ=env_vars,
                         results_dirs=results_dirs,
                     )
+
                     result = pool.apply_async(proc_fn)
                     # Results won't be "completed" until the pool is join()'ed.
                     results.append(result)
