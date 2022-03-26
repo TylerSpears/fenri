@@ -213,7 +213,7 @@ def main():
 
     # Locate and select source notebook to run.
     source_nb = (
-        Path(__file__).parent.resolve() / "diqt.ipynb"
+        Path(__file__).parent.resolve() / "diqt_fake_anat.ipynb"
     )
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
@@ -265,15 +265,13 @@ def main():
                     + run_p.val.dataset_n_subjs
                     + run_p.train.dataset_n_subjs
                 )
-
                 if domain == "dti":
                     run_p.use_log_euclid = False
                 elif domain == "le":
                     run_p.use_log_euclid = True
-                run_p.train.accumulate_grad_batches = 2
                 run_p.use_half_precision_float = True
                 run_p.use_anat = False
-                run_p.train.batch_size = 16
+
                 run_basenames.append(basename + f"_{domain}_split_{i_split}")
                 run_params.append(run_p.copy())
 
@@ -295,6 +293,9 @@ def main():
                 # Pull gpu indices as they become available, and run a process for each gpu
                 for p, basename in zip(run_params, run_basenames):
                     gpu_idx = gpu_idx_pool.get()
+                    # Check the status of all "ready" results so far. If any errored out, then
+                    # the .get() call will re-raise that exception.
+                    list(map(lambda r: r.get(), filter(lambda r: r.ready(), results)))
                     proc_fn = functools.partial(
                         proc_runner,
                         run_params=p,
