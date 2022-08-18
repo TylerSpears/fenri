@@ -4,7 +4,7 @@ import torch
 
 import pitn.eig
 
-EPSILON_LOG = 1e-5
+EPSILON_LOG = 0.0
 
 
 def log_map(x: torch.Tensor, **eigh_kwargs) -> torch.Tensor:

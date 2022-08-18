@@ -213,7 +213,7 @@ def main():
 
     # Locate and select source notebook to run.
     source_nb = (
-        Path(__file__).parent.resolve() / "diqt_fake_anat.ipynb"
+        Path(__file__).parent.resolve() / "diqt.ipynb"
     )
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
@@ -247,14 +247,16 @@ def main():
         fixed_params = Box(default_box=True, box_dots=True)
         fixed_params.override_experiment_name = True
         fixed_params.progress_bar = False
-        fixed_params.num_workers = (os.cpu_count() // n_gpus) - 2
+        fixed_params.num_workers = (os.cpu_count() // n_gpus)
 
         # Create iterable of all desired parameter combinations.
         run_params = list()
         run_basenames = list()
         basename = "uvers_pitn_single_stream"
-        for domain in ("dti", "le"):
-            for i_split, split in zip(split_idx, splits):
+        for domain in ("le",):
+            for i_split, split in zip(reversed(split_idx), reversed(splits)):
+                if i_split != 3:
+                    continue
                 run_p = Box(default_box=False, **fixed_params.copy())
                 run_p.merge_update(split)
                 run_p.test.dataset_n_subjs = len(run_p.test.subjs)
@@ -265,12 +267,16 @@ def main():
                     + run_p.val.dataset_n_subjs
                     + run_p.train.dataset_n_subjs
                 )
+
                 if domain == "dti":
                     run_p.use_log_euclid = False
                 elif domain == "le":
                     run_p.use_log_euclid = True
+
                 run_p.use_half_precision_float = True
                 run_p.use_anat = False
+                run_p.train.max_epochs = 50
+                run_p.train.grad_2norm_clip_val = 0.25
 
                 run_basenames.append(basename + f"_{domain}_split_{i_split}")
                 run_params.append(run_p.copy())
