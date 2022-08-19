@@ -799,6 +799,8 @@ $RECYCLE.BIN/
 .envrc
 .direnv
 
+# Ignore redun configuration directory.
+.redun
 
 # Ignore pytorch lightning logs.
 lightning_logs/

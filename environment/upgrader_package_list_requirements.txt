@@ -1,0 +1,11 @@
+antspyx      
+ciftify      
+duecredit    
+ivy-core     
+pdbr         
+piqa         
+pybids       
+pykale       
+python-dotenv
+sewar        
+# Re-install nibabel with mamba after installing antspyx

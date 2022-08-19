@@ -5,12 +5,16 @@ conda env export -p "$ACTIVE_PREFIX" \
     | sed '/prefix:/d' \
     | sed 's/name: null/name: pitn/' \
     > environment.yml
-conda-lock lock \
-    --mamba \
-    --strip-auth \
-    --file environment.yml \
-    --extras environment.yml \
-    --platform linux-64
+conda env export --from-history -p "$ACTIVE_PREFIX" \
+    | sed '/prefix:/d' \
+    | sed 's/name: null/name: pitn/' \
+    > from_history_environment.yml
+# conda-lock lock \
+#     --mamba \
+#     --strip-auth \
+#     --file environment.yml \
+#     --extras environment.yml \
+#     --platform linux-64
 # Export the pypi-only packages into a requirements.txt-like file.
 # Note that file contains *only* the pip-installed packges, not the conda/mamba packages.
 # Taken from <https://stackoverflow.com/a/62617146/13225248>

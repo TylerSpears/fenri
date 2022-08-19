@@ -7,3 +7,11 @@ source export_conda_env.sh
 # Don't do this!
 # ./export_conda_env.sh
 ```
+
+If you want to mass-upgrade packages, then use the `upgrader_plain_package_*` files along with the command
+
+```bash
+mamba upgrade --file upgrader_plain_package_environment.yml
+pip install -U -r upgrader_plain_package_requirements.txt --upgrade-strategy eager
+```
+**NOTE** This hasn't been tested extensively, so be careful!
