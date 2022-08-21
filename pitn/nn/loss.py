@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
+import einops
 import torch
 import torch.nn.functional as F
-import einops
 
 
 def dti_vec_fro_norm_loss(

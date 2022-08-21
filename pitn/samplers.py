@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 import collections
-import typing
-from typing import Generator
-import numbers
-import warnings
 import itertools
-
-# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
-from pitn._lazy_loader import LazyLoader
+import numbers
+import typing
+import warnings
+from typing import Generator
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
+from pitn._lazy_loader import LazyLoader
 
 torchio = LazyLoader("torchio", globals(), "torchio")
 monai = LazyLoader("monai", globals(), "monai")

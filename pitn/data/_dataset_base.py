@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-from pathlib import Path
 import collections
-from typing import Sequence, Optional, Callable, Tuple, Union
+from pathlib import Path
+from typing import Callable, Optional, Sequence, Tuple, Union
 
+import einops
+import monai
+import nibabel as nib
 import numpy as np
 import torch
 from torch.utils.data import Subset
-import monai
-import einops
-import nibabel as nib
 
 import pitn
 

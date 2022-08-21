@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-import numpy as np
 import einops
+import numpy as np
+
 
 # Shuffle operation as a function.
 def espcn_shuffle(x, channels):

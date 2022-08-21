@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 
-from pitn._lazy_loader import LazyLoader
-
 import torch
+
+from pitn._lazy_loader import LazyLoader
 
 GPUtil = LazyLoader("GPUtil", globals(), "GPUtil")
 tabulate = LazyLoader("tabulate", globals(), "tabulate")

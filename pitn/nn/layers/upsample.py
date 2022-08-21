@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import functools
 
-import torch
 import einops
+import torch
 
 
 class ESPCNShuffle3d(einops.layers.torch.Rearrange):
@@ -41,14 +41,14 @@ def _icnr_init(w, scale, init_fn):
         Initialized Tensor with the same shape as `w`
     """
     n_spatial_dims = len(w.shape[2:])
-    new_shape = (w.shape[0] // (scale ** n_spatial_dims),) + tuple(w.shape[1:])
+    new_shape = (w.shape[0] // (scale**n_spatial_dims),) + tuple(w.shape[1:])
     set_sub_w = torch.zeros(*new_shape)
     set_sub_w = init_fn(set_sub_w)
 
     w_nn = einops.repeat(
         set_sub_w,
         "c_lr_out c_lr_in ... -> (c_lr_out repeat) c_lr_in ...",
-        repeat=scale ** n_spatial_dims,
+        repeat=scale**n_spatial_dims,
     )
 
     return w_nn
@@ -134,7 +134,7 @@ class ICNRUpsample3d(torch.nn.Module):
         """
 
         super().__init__()
-        pre_shuffle_c = out_channels * (upscale_factor ** 3)
+        pre_shuffle_c = out_channels * (upscale_factor**3)
 
         self.pre_conv = torch.nn.Conv3d(
             in_channels=in_channels,

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from functools import partial
 
+import monai
+import pyrsistent
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr
-import monai
-import pyrsistent
 
 import pitn
 

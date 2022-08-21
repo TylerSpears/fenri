@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-from typing import Optional, Callable
+from typing import Callable, Optional
 
+import einops
 import numpy as np
 import torch
 import torch.nn.functional as F
-import einops
 
 import pitn
 import pitn.nn.layers as layers

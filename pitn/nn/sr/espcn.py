@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
+import torch.nn.functional as F
 
 import pitn
 
@@ -31,7 +31,7 @@ class ESPCNBaseline(torch.nn.Module):
         self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(3, 3, 3))
         self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
         self.conv3 = torch.nn.Conv3d(
-            100, self.channels * (self.upscale_factor ** 3), kernel_size=(3, 3, 3)
+            100, self.channels * (self.upscale_factor**3), kernel_size=(3, 3, 3)
         )
         self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle3d(
             self.channels, self.upscale_factor
@@ -166,7 +166,7 @@ class ESPCNRevNet(ESPCNBaseline):
 
         self.rev_block3 = RevBlock(100, revnet_stack_size, batch_norm=batch_norm)
         self.conv3 = torch.nn.Conv3d(
-            100, self.channels * (self.upscale_factor ** 3), kernel_size=(3, 3, 3)
+            100, self.channels * (self.upscale_factor**3), kernel_size=(3, 3, 3)
         )
 
         self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle3d(

@@ -2,9 +2,9 @@
 import collections
 from typing import Callable, Tuple
 
+import einops
 import numpy as np
 import torch
-import einops
 
 
 def eigh_workaround(A: torch.Tensor, *args, chunk_size=100000, **kwargs):
@@ -127,9 +127,7 @@ def tril_vec2sym_mat(x: torch.Tensor, tril_dim=1) -> torch.Tensor:
     return m
 
 
-def sym_mat2tril_vec(
-    x: torch.Tensor, dim1=-2, dim2=-1, tril_dim=1
-) -> torch.Tensor:
+def sym_mat2tril_vec(x: torch.Tensor, dim1=-2, dim2=-1, tril_dim=1) -> torch.Tensor:
 
     dims = [[f"d{i}", x.shape[i]] for i in range(len(x.shape))]
     dims[dim1][0] = "md1"

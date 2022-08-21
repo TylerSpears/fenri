@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 
+
 def conv3d_out_shape(
     out_channels,
     input_shape,

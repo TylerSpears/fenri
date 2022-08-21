@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 import itertools
 
-import numpy as np
-import torch
-import torch.nn.functional as F
-import skimage
 import einops
 import monai
+import numpy as np
+import skimage
+import torch
+import torch.nn.functional as F
 
-from pitn._lazy_loader import LazyLoader
 import pitn
+from pitn._lazy_loader import LazyLoader
 
 # Make pytorch_msssim an optional import.
 pytorch_msssim = LazyLoader("pytorch_msssim", globals(), "pytorch_msssim")
@@ -28,7 +28,7 @@ def psnr_batch_channel_regularized(
     # Use a small epsilon to avoid 0s in the MSE.
     epsilon = 1e-10
     # Calculate squared error then regularize by the per-batch-per-channel range.
-    regular_mse = (y_range ** 2) / torch.clamp_min(
+    regular_mse = (y_range**2) / torch.clamp_min(
         F.mse_loss(x, y, reduction="none"), epsilon
     )
     # Calculate the mean over channels and spatial dims.
@@ -221,7 +221,7 @@ def minmax_normalized_rmse(
     y_max = einops.reduce(y, reduce_str, "max")
     y_range = y_max - y_min
 
-    norm_square_err = F.mse_loss(x, y, reduction="none") / (y_range ** 2)
+    norm_square_err = F.mse_loss(x, y, reduction="none") / (y_range**2)
 
     if reduction.casefold() == "mean":
         nrmse = torch.sqrt(torch.mean(norm_square_err))

@@ -2,9 +2,9 @@
 import functools
 from typing import Tuple
 
+import einops
 import numpy as np
 import torch
-import einops
 
 import pitn
 

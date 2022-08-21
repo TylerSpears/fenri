@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-import itertools
 import dataclasses
+import itertools
 from dataclasses import dataclass
 from typing import Optional
 
-import numpy as np
-import torch
 import monai
-import skimage
+import numpy as np
 import scipy
+import skimage
+import torch
 
 
 def normalize_batch(batch, mean, var, eps=1.0e-10):
@@ -396,10 +396,9 @@ class MinMaxScaler:
 
         return x_unscaled
 
+
 class StandardScaler:
-    def __init__(
-        self, data_mean=None, data_std=None
-    ):
+    def __init__(self, data_mean=None, data_std=None):
         self._data_mean = data_mean
         self._data_std = data_std
 

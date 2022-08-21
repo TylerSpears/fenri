@@ -9,8 +9,8 @@ def gaussian_kernel_3d(kernel_radius: int, sigma: float) -> torch.Tensor:
     x = y = z = torch.arange(-kernel_radius, kernel_radius + 1, 1)
     xx, yy, zz = torch.meshgrid(x, y, z)
 
-    k = (1 / 2 * np.pi * sigma ** 2) * torch.exp(
-        -(xx ** 2 + yy ** 2 + zz ** 2) / (2 * sigma ** 2)
+    k = (1 / 2 * np.pi * sigma**2) * torch.exp(
+        -(xx**2 + yy**2 + zz**2) / (2 * sigma**2)
     )
 
     k = k / k.sum()

@@ -1,29 +1,26 @@
 # -*- coding: utf-8 -*-
-from ast import Param
 import collections
 import itertools
 import math
-from typing import Optional, List, Union, Sequence
-
-from addict import Addict
-from box import Box
-
-import numpy as np
-import torch
-import torchio
-import einops
-import pandas as pd
+from ast import Param
+from typing import List, Optional, Sequence, Union
 
 import dipy
 import dipy.core
 import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
-
+import einops
 import matplotlib as mpl
-from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
+import torch
+import torchio
+from addict import Addict
+from box import Box
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 from pitn._lazy_loader import LazyLoader
 

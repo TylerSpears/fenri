@@ -175,9 +175,7 @@ class StandardNormalScaler:
         x = x.float()
         mean = self._select_scaler(data_mean, self._data_mean, "data_mean").to(x)
         std = self._select_scaler(data_std, self._data_std, "data_std").to(x)
-        mask = self._select_scaler(
-            mask, self._mask, "mask", none_okay=True
-        )
+        mask = self._select_scaler(mask, self._mask, "mask", none_okay=True)
 
         x_standard_norm = (x - mean) / (torch.clamp_min(std, self.STD_EPSILON))
 
@@ -196,9 +194,9 @@ class StandardNormalScaler:
         x_normed = x_standard_norm.float()
         mean = self._select_scaler(data_mean, self._data_mean, "data_mean").to(x_normed)
         std = self._select_scaler(data_std, self._data_std, "data_std").to(x_normed)
-        mask = self._select_scaler(
-            mask, self._mask, "mask", none_okay=True
-        ).to(x_normed)
+        mask = self._select_scaler(mask, self._mask, "mask", none_okay=True).to(
+            x_normed
+        )
 
         x = (x_normed * torch.clamp_min(std, self.STD_EPSILON)) + mean
 

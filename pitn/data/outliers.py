@@ -13,6 +13,7 @@ EIGVAL_CUTOFF = 0.00332008
 # error, or background.
 EIGVAL_MIN = 1e-5
 
+
 def clip_dti_eigvals(
     dti: torch.Tensor,
     tensor_components_dim: int = 1,

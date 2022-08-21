@@ -3,11 +3,11 @@ import collections
 import typing
 from pathlib import Path
 
-# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
-from pitn._lazy_loader import LazyLoader
-
 import numpy as np
 import torch
+
+# Use lazy-loader of slow, unoptimized, or rarely-used module imports.
+from pitn._lazy_loader import LazyLoader
 
 torchio = LazyLoader("torchio", globals(), "torchio")
 ants = LazyLoader("ants", globals(), "ants")

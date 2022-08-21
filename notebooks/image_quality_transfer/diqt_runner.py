@@ -1,25 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Running script for spawning jobs of the diqt.ipynb notebook.
-import os
-import io
-import sys
-import subprocess
-import tempfile
-import shutil
-from pathlib import Path
 import datetime
-import time
 import functools
+import io
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
 from pprint import pprint as ppr
 
-import papermill as pm
-import jupyter_client
 import dotenv
-from box import Box
-import yaml
+import jupyter_client
+import papermill as pm
 import torch
 import torch.multiprocessing as mp
+import yaml
+from box import Box
 
 SUCCESS = 0
 FAILURE = 1
@@ -212,9 +212,7 @@ def main():
     results_dirs = [env_vars["RESULTS_DIR"], env_vars["TMP_RESULTS_DIR"]]
 
     # Locate and select source notebook to run.
-    source_nb = (
-        Path(__file__).parent.resolve() / "diqt.ipynb"
-    )
+    source_nb = Path(__file__).parent.resolve() / "diqt.ipynb"
     assert source_nb.exists()
     proc_working_dir = source_nb.parent
 
@@ -222,9 +220,7 @@ def main():
     # n_gpus = 1
 
     kernel_names = jupyter_client.kernelspec.find_kernel_specs()
-    target_kernels = list(
-        filter(lambda kv: "/pitn/" in kv[1], kernel_names.items())
-    )
+    target_kernels = list(filter(lambda kv: "/pitn/" in kv[1], kernel_names.items()))
     print(target_kernels)
     if len(target_kernels) == 1:
         kernel_name = target_kernels[0][0]
@@ -247,7 +243,7 @@ def main():
         fixed_params = Box(default_box=True, box_dots=True)
         fixed_params.override_experiment_name = True
         fixed_params.progress_bar = False
-        fixed_params.num_workers = (os.cpu_count() // n_gpus)
+        fixed_params.num_workers = os.cpu_count() // n_gpus
 
         # Create iterable of all desired parameter combinations.
         run_params = list()

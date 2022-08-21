@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-from . import models, functional, layers, gan, sr, loss, norm
+from . import functional, gan, layers, loss, models, norm, sr

@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
-import math
 import collections
-import itertools
 import functools
-from typing import Union, Sequence, Optional, List, Tuple
+import itertools
+import math
+from typing import List, Optional, Sequence, Tuple, Union
 
-from pitn._lazy_loader import LazyLoader
-
+import einops
 import numpy as np
 import torch
-import einops
+
+from pitn._lazy_loader import LazyLoader
 
 monai = LazyLoader("monai", globals(), "monai")
 
 SwatchIdxSample = collections.namedtuple("SwatchIdxSample", ("full_idx", "start_idx"))
-SwatchSample = collections.namedtuple(
-    "SwatchSample", ("swatch", "start_idx")
-)
+SwatchSample = collections.namedtuple("SwatchSample", ("swatch", "start_idx"))
 
 
 def patch_center(
@@ -364,9 +362,7 @@ def batched_patches_iter2(
     unfolded_ims = list()
     # Make no-copy views of each im.
     for i_im in range(len(ims)):
-        unfold_im = ims[i_im].unfold(
-            unfold_dim, patch_shape[0], stride[0]
-        )
+        unfold_im = ims[i_im].unfold(unfold_dim, patch_shape[0], stride[0])
         unfolded_ims.append(unfold_im.movedim(-1, 3))
 
     unfold_remain_patch_shape = patch_shape[1:]

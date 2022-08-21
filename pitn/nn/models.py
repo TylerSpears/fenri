@@ -7,12 +7,12 @@ Code taken from:
 <github.com/sbb-gh/Deeper-Image-Quality-Transfer-Training-Low-Memory-Neural-Networks-for-3D-Images>
 """
 
-import numpy as np
-import torch
-import torch.nn.functional as F
 import einops
 import einops.layers
 import einops.layers.torch
+import numpy as np
+import torch
+import torch.nn.functional as F
 
 import pitn
 
@@ -33,7 +33,7 @@ class ThreeConv(torch.nn.Module):
         self.conv1 = torch.nn.Conv3d(self.channels, 50, kernel_size=(3, 3, 3))
         self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
         self.conv3 = torch.nn.Conv3d(
-            100, self.channels * (self.downsample_factor ** 3), kernel_size=(3, 3, 3)
+            100, self.channels * (self.downsample_factor**3), kernel_size=(3, 3, 3)
         )
         self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle(
             self.channels, self.downsample_factor
@@ -103,7 +103,7 @@ class FractDownReduceBy5Conv(torch.nn.Module):
         self.conv2 = torch.nn.Conv3d(50, 100, kernel_size=(1, 1, 1))
         self.conv3 = torch.nn.Conv3d(
             100,
-            self.channels * (self._espcn_upsample_factor ** 3),
+            self.channels * (self._espcn_upsample_factor**3),
             kernel_size=(3, 3, 3),
         )
         self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle(
@@ -179,7 +179,7 @@ class FractionThreeConv(torch.nn.Module):
         self.conv5 = torch.nn.Conv3d(75, 60, kernel_size=(2, 2, 2))
 
         rounded_downsample_factor = int(np.ceil(self.downsample_factor))
-        unshuffled_n_channels = self.channels * (rounded_downsample_factor ** 3)
+        unshuffled_n_channels = self.channels * (rounded_downsample_factor**3)
         self.conv6 = torch.nn.Conv3d(60, unshuffled_n_channels, kernel_size=(3, 3, 3))
         self.output_shuffle = pitn.nn.layers.upsample.ESPCNShuffle(
             self.channels, rounded_downsample_factor

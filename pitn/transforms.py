@@ -1,37 +1,34 @@
 # -*- coding: utf-8 -*-
 # torchio.Transform functions/objects.
 
-from typing import (
-    Dict,
-    Hashable,
-    Mapping,
-)
+from typing import Dict, Hashable, Mapping
+
+import monai
+import numpy as np
+import skimage
+import skimage.morphology
+import skimage.transform
+import torch
+import torch.nn.functional as F
+import torchio
+from monai.config import KeysCollection
+from monai.config.type_definitions import NdarrayOrTensor
+from monai.transforms.intensity.array import ThresholdIntensity
+from monai.transforms.utils_pytorch_numpy_unification import clip, percentile
+from torchio.transforms.preprocessing.label.label_transform import LabelTransform
 
 # Use lazy-loader of slow, unoptimized, or rarely-used module imports.
 from pitn._lazy_loader import LazyLoader
 
-import numpy as np
-import torch
-import torch.nn.functional as F
-import torchio
-from torchio.transforms.preprocessing.label.label_transform import LabelTransform
-import monai
-from monai.transforms.intensity.array import ThresholdIntensity
-from monai.config import KeysCollection
-from monai.config.type_definitions import NdarrayOrTensor
-from monai.transforms.utils_pytorch_numpy_unification import percentile, clip
-
-import skimage
-import skimage.transform
-import skimage.morphology
-scipy = LazyLoader('scipy', globals(), 'scipy')
+scipy = LazyLoader("scipy", globals(), "scipy")
 import dipy
 import dipy.core
 import dipy.reconst
 import dipy.reconst.dti
 import dipy.segment.mask
-nib = LazyLoader('nib', globals(), 'nibabel')
-joblib = LazyLoader('joblib', globals(), 'joblib')
+
+nib = LazyLoader("nib", globals(), "nibabel")
+joblib = LazyLoader("joblib", globals(), "joblib")
 
 
 class BValSelectionTransform(torchio.SpatialTransform):
@@ -232,7 +229,7 @@ class FractionalMeanDownsampleTransform(torchio.SpatialTransform):
             if self.downsample_factor == 1:
                 continue
 
-            scale_factor = self.downsample_factor ** -1
+            scale_factor = self.downsample_factor**-1
 
             img_data = img.data
             # Input image must be a floating point dtype to have a valid average.
