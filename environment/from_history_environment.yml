@@ -1,4 +1,4 @@
-name: pitn2
+name: pitn
 channels:
   - pytorch
   - defaults
@@ -72,3 +72,4 @@ dependencies:
   - packaging[version='>=20.4,<21.0']
   - docker-py
   - isort
+  - black-jupyter

@@ -1,4 +1,4 @@
-name: pitn2
+name: pitn
 channels:
   - mrtrix3
   - pytorch
@@ -25,6 +25,7 @@ dependencies:
   - backcall=0.2.0=pyhd3eb1b0_0
   - beautifulsoup4=4.11.1=py310h06a4308_0
   - black=22.6.0=py310h06a4308_0
+  - black-jupyter=22.6.0=hd8ed1ab_2
   - blas=2.116=openblas
   - blas-devel=3.9.0=16_linux64_openblas
   - bleach=5.0.1=pyhd8ed1ab_0
@@ -389,6 +390,7 @@ dependencies:
   - timm=0.4.12=pyhd8ed1ab_0
   - tinycss2=1.1.1=pyhd8ed1ab_0
   - tk=8.6.12=h1ccaba5_0
+  - tokenize-rt=4.2.1=pyhd8ed1ab_0
   - toml=0.10.2=pyhd3eb1b0_0
   - tomli=2.0.1=py310h06a4308_0
   - tomlkit=0.11.4=pyha770c72_0
