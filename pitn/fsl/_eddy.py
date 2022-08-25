@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 import inspect
+import re
 import shlex
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
+
+from . import convert_seq_for_params, is_sequence
 
 
 def eddy_cmd(
@@ -134,7 +137,7 @@ def eddy_cmd(
     Second level EC model for b0 scans (none/linear/quadratic, default none)
     b0_slm=none
     FWHM for conditioning filter when estimating the parameters (default 0)
-    fwhm=10,8,4,2,1,0,0,0,0,0
+    fwhm=0
     FWHM for conditioning filter when estimating slice-to-vol parameters (default 0)
     s2v_fwhm=0
     Number of iterations (default 5)
@@ -186,7 +189,7 @@ def eddy_cmd(
     # of voxels used to estimate the hyperparameters (default 1000)
     nvoxhp=1000
     Seeds rand for when selecting voxels (default 0=no seeding)
-    initrand=2985
+    initrand=0
     Fudge factor for hyperparameter error variance (default 10.0)
     ff=10
     User specified values for GP hyperparameters
@@ -258,7 +261,7 @@ def eddy_cmd(
     switch on diagnostic messages
     -v,--verbose=False
     """
-    # Some arg types need to be converted appropriately, so it's easier to loop through
+    # Most arg types need to be converted appropriately, so it's easier to loop through
     # and check arg values.
     args = locals()
     func_params_list = list(inspect.signature(eddy_cmd).parameters.keys())
@@ -290,17 +293,14 @@ def eddy_cmd(
                 v = v.upper()
 
         # None options won't be set at all, unless they fall under one of the enumerated
-        # params (which have an option of 'none', but don't default to that value).
+        # params (which have an option of 'none', but don't default to that value in
+        # the eddy command itself).
         if v is None:
             continue
-        # If non-string Sequence
-        if (
-            not isinstance(v, str)
-            and hasattr(type(v), "__len__")
-            and hasattr(type(v), "__getitem__")
-        ):
-            v_arr = [str(e) for e in np.asarray(v).flatten()]
-            cval = ",".join(v_arr)
+        # If non-string Sequence, convert to a comma-separated string.
+        if is_sequence(v):
+            cval = convert_seq_for_params(v)
+        # Everything else should just be a string.
         else:
             cval = str(v)
 
@@ -310,20 +310,142 @@ def eddy_cmd(
     return shlex.join(cmd)
 
 
-def parse_params_f():
-    pass
+def parse_params_f(
+    params_f: Path, as_dataframe: bool = True
+) -> Union[np.ndarray, pd.DataFrame]:
+
+    p = np.loadtxt(params_f)
+    if as_dataframe:
+        motion_cols = (
+            "Translate X (mm)",
+            "Translate Y (mm)",
+            "Translate Z (mm)",
+            "Rotate X (rads)",
+            "Rotate Y (rads)",
+            "Rotate Z (rads)",
+        )
+        ec_model_cols = (
+            "X (Hz/mm)",
+            "Y (Hz/mm)",
+            "Z (Hz/mm)",
+            "X^2 (Hz/mm)",
+            "Y^2 (Hz/mm)",
+            "Z^2 (Hz/mm)",
+            "XY (Hz/mm)",
+            "XZ (Hz/mm)",
+            "YZ (Hz/mm)",
+            "Isocenter Offset (Hz)",
+        )
+        p = pd.DataFrame(p, columns=motion_cols + ec_model_cols)
+        p.index = p.index.rename("DWI idx")
+
+    return p
 
 
-def parse_gp_hyperparams_from_log():
-    pass
+def parse_gp_hyperparams_from_log(eddy_output_log_f: Path) -> np.ndarray:
+
+    with open(Path(eddy_output_log_f), "r") as f:
+        matches = re.findall(
+            r"estimated\s+hyperparameters\:((?:\s*\d+\.\d+\s*)+)",
+            f.read(),
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+
+    target_params = matches[-1]
+    gp_hyperparams = np.fromstring(target_params, dtype=float, sep=" ")
+
+    return gp_hyperparams
 
 
-def parse_s2v_params_f():
-    pass
+def parse_s2v_params_f(
+    move_over_time_f: Path, as_dataframe: bool = True
+) -> Union[pd.DataFrame, np.ndarray]:
+    p_s2v = np.loadtxt(move_over_time_f)
+
+    if as_dataframe:
+        cols = (
+            "Translate X (mm)",
+            "Translate Y (mm)",
+            "Translate Z (mm)",
+            "Rotate X (rads)",
+            "Rotate Y (rads)",
+            "Rotate Z (rads)",
+        )
+        p_s2v = pd.DataFrame(p_s2v, columns=cols)
+        p_s2v.index = p_s2v.index.rename("Multiband Slice Group idx")
+
+    return p_s2v
 
 
-def slice_timing2slspec() -> np.ndarray:
-    pass
+def slice_timing2slspec(slice_timing: np.ndarray) -> np.ndarray:
+    groups = list()
+    for time_i in np.unique(slice_timing):
+        groups.append(np.where(slice_timing == time_i)[0].astype(int).flatten())
+
+    return np.stack(groups)
+
+
+def parse_post_eddy_shell_align_f(peas_f: Path) -> pd.DataFrame:
+    with open(Path(peas_f), "rt") as f:
+        peas_d = f.read()
+    # TODO This algorithm could be simplified substantially.
+    # Find all blocks of text that correspond to a report of parameters.
+    matches = re.findall(
+        r"((?:Shell.*to.*b0.*\n\s*x\-tr.*z.rot.*\n(?:\-?\s*\d+\.\d+\s*)+)+)",
+        peas_d,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    # Find the "parameters applied to data" heading.
+    applied_params_heading_match = re.search(
+        r"^.*parameter.*appl.*data.*$",
+        peas_d,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    heading_str_idx = applied_params_heading_match.span()[1]
+    # Find the params string closest to the "parameters applied to data" heading.
+    matches_under_applied_heading = [peas_d.find(m, heading_str_idx) for m in matches]
+    applied_params_str_loc = min(filter(lambda x: x > 0, matches_under_applied_heading))
+    applied_params_str = matches[
+        matches_under_applied_heading.index(applied_params_str_loc)
+    ]
+
+    # Parse the params string/block.
+    applied_params_str = applied_params_str.strip()
+    # Should equal number of non-b0 shells in the DWI.
+    shell_param_matches = list(
+        re.finditer(
+            r"Shell\s*(?P<shell>.+)\s*to\s*b0.*(?:\n.*){2}",
+            applied_params_str,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    )
+
+    shell_params = list()
+    cols = [
+        "Shell val",
+        "x-tr (mm)",
+        "y-tr (mm)",
+        "z-tr (mm)",
+        "x-rot (deg)",
+        "y-rot (deg)",
+        "z-rot (deg)",
+    ]
+    # Convert columns to rads & rename labels.
+    radian_cols = ["x-rot (rads)", "y-rot (rads)", "z-rot (rads)"]
+    for match in shell_param_matches:
+        shell = match.groupdict()["shell"]
+        shell = float(shell)
+        shell = int(shell) if shell.is_integer() else shell
+        # Split the table into lines, ignore the first shell value line.
+        val_str = match.group(0).split("\n")[-1]
+        shell_vals = np.fromstring(val_str, sep=" ", dtype=float)
+        # Convert rotation params from degrees to radians.
+        shell_vals[3:] = shell_vals[3:] * np.pi / 180
+        shell_params.append([shell] + shell_vals.tolist())
+    # Store all shell & param values into a dataframe.
+    shell_params_table = pd.DataFrame(shell_params, columns=cols[:4] + radian_cols)
+
+    return shell_params_table
 
 
 if __name__ == "__main__":
@@ -337,5 +459,12 @@ if __name__ == "__main__":
             "",
             "",
             hypar=[0.02, 0.42, 1.2, -0.2536],
+        )
+    )
+    print(
+        parse_post_eddy_shell_align_f(
+            Path(
+                "/srv/tmp/data/pitn/uva/liu_laser_pain_study/derivatives/sub-001/eddy_apply_no_move/raw_params/eddy_full_run.eddy_post_eddy_shell_alignment_parameters"
+            )
         )
     )

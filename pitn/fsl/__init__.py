@@ -6,3 +6,4 @@ from ._eddy import (
     parse_s2v_params_f,
 )
 from ._topup import phase_encoding_dirs2acqparams, topup_cmd
+from ._utils import convert_seq_for_params, is_sequence
