@@ -7,7 +7,11 @@ from typing import List, Optional, Sequence, Union
 
 import numpy as np
 
-from . import convert_seq_for_params, is_sequence
+from pitn.utils.cli_parse import (
+    add_equals_cmd_args,
+    convert_seq_for_params,
+    is_sequence,
+)
 
 TOPUP_CONFIG_MAP = {"minmet": {"LM": 0, "SCG": 1}, "bool": {True: 1, False: 0}}
 TOPUP_ACQ_DIR_MAP = {"i": (1, 0, 0), "j": (0, 1, 0), "k": (0, 0, 1)}
@@ -126,8 +130,9 @@ def topup_cmd(
         cmd.append(f"--{k}")
         if k != "verbose":
             cmd.append(cval)
-
-    return shlex.join(cmd)
+    cmd = shlex.join(cmd)
+    cmd = add_equals_cmd_args(cmd)
+    return cmd
 
 
 def phase_encoding_dirs2acqparams(

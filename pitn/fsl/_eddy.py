@@ -8,7 +8,11 @@ from typing import List, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 
-from . import convert_seq_for_params, is_sequence
+from pitn.utils.cli_parse import (
+    add_equals_cmd_args,
+    convert_seq_for_params,
+    is_sequence,
+)
 
 
 def eddy_cmd(
@@ -306,8 +310,10 @@ def eddy_cmd(
 
         cmd.append(f"--{k}")
         cmd.append(cval)
+    cmd = shlex.join(cmd)
+    cmd = add_equals_cmd_args(cmd)
 
-    return shlex.join(cmd)
+    return cmd
 
 
 def parse_params_f(
