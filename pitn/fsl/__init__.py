@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from ._bet import bet_cmd
+from ._config import FSL_OUTPUT_TYPE_SUFFIX_MAP
 from ._eddy import (
     eddy_cmd,
     parse_gp_hyperparams_from_log,

@@ -4,10 +4,6 @@ import shlex
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import numpy as np
-
-# from pitn.utils.cli_parse import convert_seq_for_params, is_sequence, add_equals_cmd_args
-
 
 def dwi_bias_correct_cmd(
     algorithm: str,
