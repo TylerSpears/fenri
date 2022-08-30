@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 import shlex
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import Dict, List, Union
 
 from pitn.utils.cli_parse import add_equals_cmd_args
+
+from . import FSL_OUTPUT_TYPE_SUFFIX_MAP
 
 
 def bet_cmd(
@@ -38,3 +40,24 @@ def bet_cmd(
     cmd = shlex.join(cmd)
     cmd = add_equals_cmd_args(cmd)
     return cmd
+
+
+def _bet_output_files(
+    out_file_basename: str,
+    mask: bool = False,
+    skip_brain_output: bool = False,
+    fsl_output_type: str = "NIFTI_GZ",
+    **kwargs,
+) -> Dict[str, Union[str, List[str]]]:
+
+    base = str(out_file_basename)
+    out_files = dict()
+    suffix = FSL_OUTPUT_TYPE_SUFFIX_MAP[fsl_output_type.upper()]
+
+    if not skip_brain_output:
+        out_files["brain"] = "".join([base, suffix])
+
+    if mask:
+        out_files["mask"] = "".join([base, "_mask", suffix])
+
+    return out_files

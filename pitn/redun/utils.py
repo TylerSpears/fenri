@@ -21,7 +21,7 @@ def stringify_shell_log(cmd_out: Union[str, bytes]) -> str:
     return ret
 
 
-def flatten_dict_depth_1(d):
+def flatten_dict_depth_1(d: dict):
     flat_list = list()
     idx_map = dict()
     idx = 0
