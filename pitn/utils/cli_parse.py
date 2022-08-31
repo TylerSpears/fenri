@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import collections.abc
 import re
-from typing import Any, Callable, Optional
+import shlex
+from pathlib import Path
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 
@@ -71,3 +73,24 @@ def is_sequence(seq: Any) -> bool:
         ret = False
 
     return ret
+
+
+def append_cmd_stdout_stderr_to_file(
+    cmd: str, log_file: str, overwrite_log=True
+) -> str:
+    log_tokens = list()
+    log_tokens.append("2>&1")
+    log_tokens.append("|")
+    log_tokens.append("tee")
+    if not overwrite_log:
+        log_tokens.append("--append")
+    log_f = str(log_file)
+    log_tokens.append(shlex.quote(log_f))
+    joined_cmd = " ".join([cmd] + log_tokens)
+
+    return joined_cmd
+
+
+def file_basename(fname: Union[str, Path]) -> str:
+    f = Path(fname)
+    return str(f).replace("".join(f.suffixes), "")

@@ -1,18 +1,24 @@
 # -*- coding: utf-8 -*-
+import collections
 import inspect
 import re
 import shlex
+import textwrap
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from pitn.utils.cli_parse import (
     add_equals_cmd_args,
+    append_cmd_stdout_stderr_to_file,
     convert_seq_for_params,
+    file_basename,
     is_sequence,
 )
+
+from . import FSL_OUTPUT_TYPE_SUFFIX_MAP
 
 
 def eddy_cmd(
@@ -30,8 +36,8 @@ def eddy_cmd(
     mporder: int = 0,
     s2v_lambda=1,
     topup: Optional[str] = None,
-    field: Optional[Path] = None,
-    field_mat: Optional[str] = None,
+    field: Optional[str] = None,
+    field_mat: Optional[Path] = None,
     flm: str = "quadratic",
     slm: str = "none",
     b0_flm: str = "movement",
@@ -43,7 +49,6 @@ def eddy_cmd(
     dwi_only: bool = False,
     b0_only: bool = False,
     fields: bool = True,
-    rms: bool = False,
     dfields: bool = False,
     cnr_maps: bool = False,
     range_cnr_maps: bool = False,
@@ -97,6 +102,7 @@ def eddy_cmd(
     log_timings: bool = False,
     very_verbose: bool = True,
     verbose: bool = False,
+    fsl_output_type: str = "NIFTI_GZ",
 ) -> str:
     """File containing all the images to estimate distortions for
     imain
@@ -149,7 +155,7 @@ def eddy_cmd(
     Number of iterations for slice-to-vol (default 5)
     s2v_niter=5
     Basename for output
-    out=/srv/tmp/data/pitn/uva/liu_laser_pain_study/derivatives/sub-001/eddy/eddy_full_run
+    out=
     Switch on detailed diagnostic messages (default false)
     very_verbose=True
     Only register the dwi images (default false)
@@ -158,8 +164,6 @@ def eddy_cmd(
     b0_only=False
     Write EC fields as images (default false)
     fields=True
-    Write movement induced RMS (deprecated, its use will crash future versions)
-    rms=False
     Write total displacement fields (default false)
     dfields=True
     Write shell-wise cnr-maps (default false)
@@ -272,11 +276,21 @@ def eddy_cmd(
     call_args = {k: args[k] for k in func_params_list}
 
     cmd = list()
+    # Always avoid ambiguity regarding duplicate basenames. This is the default, but
+    # it's good to be explicit.
+    cmd.append("FSLMULTIFILEQUIT=TRUE")
+    cmd.append(f"FSLOUTPUTTYPE={fsl_output_type.upper().strip()}")
+    call_args.pop("fsl_output_type")
     if use_cuda:
         cmd.append("eddy_cuda")
     else:
         cmd.append("eddy")
     call_args.pop("use_cuda")
+
+    # Can only set none or one of `dwi_only` and `b0_only`.
+    if (not dwi_only) and (not b0_only):
+        call_args.pop("dwi_only")
+        call_args.pop("b0_only")
 
     for k, v in call_args.items():
         # Clean up some string arguments.
@@ -290,11 +304,10 @@ def eddy_cmd(
             "extrap",
             "resamp",
             "covfunc",
-            "hpcf",
         }:
-            v = str(v).lower()
-            if k in {"hpcf"}:
-                v = v.upper()
+            v = str(v).lower().strip()
+        elif k in {"hpcf"}:
+            v = str(v).upper().strip()
 
         # None options won't be set at all, unless they fall under one of the enumerated
         # params (which have an option of 'none', but don't default to that value in
@@ -304,16 +317,373 @@ def eddy_cmd(
         # If non-string Sequence, convert to a comma-separated string.
         if is_sequence(v):
             cval = convert_seq_for_params(v)
+        # boolean flags are only set by calling them, not assigning a value.
+        if isinstance(v, bool):
+            if not v:
+                continue
+            else:
+                cval = None
         # Everything else should just be a string.
         else:
             cval = str(v)
 
         cmd.append(f"--{k}")
-        cmd.append(cval)
+        if cval is not None:
+            cmd.append(cval)
     cmd = shlex.join(cmd)
     cmd = add_equals_cmd_args(cmd)
 
     return cmd
+
+
+def eddy_cmd_explicit_in_out_files(
+    imain: Union[str, Path],
+    bvecs: Union[str, Path],
+    bvals: Union[str, Path],
+    mask: Union[str, Path],
+    index: Union[str, Path],
+    acqp: Union[str, Path],
+    out: str,
+    use_cuda: bool = True,
+    session: Optional[Union[str, Path]] = None,
+    slspec: Optional[Union[str, Path]] = None,
+    json: Optional[Union[str, Path]] = None,
+    mporder: int = 0,
+    s2v_lambda=1,
+    topup_fieldcoef: Optional[Union[str, Path]] = None,
+    topup_movpar: Optional[Union[str, Path]] = None,
+    field: Optional[Union[str, Path]] = None,
+    field_mat: Optional[Union[str, Path]] = None,
+    flm: str = "quadratic",
+    slm: str = "none",
+    b0_flm: str = "movement",
+    b0_slm: str = "none",
+    fwhm: Union[int, List[int]] = 0,
+    s2v_fwhm: Union[int, List[int]] = 0,
+    niter: int = 5,
+    s2v_niter: int = 5,
+    dwi_only: bool = False,
+    b0_only: bool = False,
+    fields: bool = True,
+    dfields: bool = False,
+    cnr_maps: bool = False,
+    range_cnr_maps: bool = False,
+    residuals: bool = False,
+    with_outliers: bool = False,
+    history: bool = False,
+    fep: bool = False,
+    dont_mask_output: bool = False,
+    interp: str = "spline",
+    s2v_interp: str = "trilinear",
+    extrap: str = "periodic",
+    epvalid: bool = False,
+    resamp: str = "jac",
+    covfunc: str = "spheri",
+    hpcf: str = "CV",
+    nvoxhp: int = 1000,
+    initrand: int = 0,
+    ff: float = 10,
+    hypar: Optional[Sequence[float]] = None,
+    wss: bool = False,
+    repol: bool = False,
+    rep_noise: bool = False,
+    ol_nstd: int = 4,
+    ol_nvox: int = 250,
+    ol_ec: int = 1,
+    ol_type: str = "sw",
+    ol_pos: bool = False,
+    ol_sqr: bool = False,
+    estimate_move_by_susceptibility: bool = False,
+    mbs_niter: int = 10,
+    mbs_lambda: int = 10,
+    mbs_ksp: int = 10,
+    dont_sep_offs_move: bool = False,
+    offset_model: str = "linear",
+    dont_peas: bool = False,
+    b0_peas: bool = False,
+    data_is_shelled: bool = False,
+    init: Optional[Union[str, Path]] = None,
+    init_s2v: Optional[Union[str, Path]] = None,
+    init_mbs: Optional[Union[str, Path]] = None,
+    debug: int = 0,
+    dbgindx: Optional[Sequence[int]] = None,
+    lsr_lambda: float = 0.01,
+    ref_scan_no: int = 0,
+    rbvde: bool = False,
+    test_rot: bool = False,
+    pmiv: bool = False,
+    pmip: bool = False,
+    write_predictions: bool = False,
+    write_scatter_brain_predictions: bool = False,
+    log_timings: bool = False,
+    very_verbose: bool = True,
+    verbose: bool = False,
+    fsl_output_type: str = "NIFTI_GZ",
+    stdout_log_f: Optional[Union[str, Path]] = None,
+) -> Tuple[str, List[str], Dict[str, Union[List[str], str]]]:
+
+    args = locals()
+    # Take the kwargs of this function and intersect them with the parameters of
+    # the associated "cmd" function.
+    self_params = list(
+        inspect.signature(eddy_cmd_explicit_in_out_files).parameters.keys()
+    )
+    func_params_list = list(inspect.signature(eddy_cmd).parameters.keys())
+    # Params that are not common between these two cmd functions will be inserted later.
+    eddy_cmd_kwargs = {k: args[k] for k in set(self_params) & set(func_params_list)}
+
+    in_files = list()
+    out_files = dict()
+
+    # Handle topup inputs/basenames
+    topup_basename = None
+    top_field_basename = None
+    mov_basename = None
+    if topup_fieldcoef is not None:
+        top_field_basename = file_basename(topup_fieldcoef).replace("_fieldcoef", "")
+        in_files.append(str(Path(topup_fieldcoef)))
+    if topup_movpar is not None:
+        mov_basename = file_basename(topup_movpar).replace("_movpar", "")
+        in_files.append(str(Path(topup_movpar)))
+
+    if (top_field_basename is not None) and (mov_basename is not None):
+        if mov_basename != top_field_basename:
+            raise ValueError(
+                f"""
+                ERROR: Basenames of topup files
+                {topup_fieldcoef} (base "{top_field_basename}")
+                and
+                {topup_movpar} (base "{mov_basename}")
+                are not equal.""".replace(
+                    "\n", " "
+                )
+            )
+
+    if top_field_basename is not None:
+        topup_basename = top_field_basename
+    elif mov_basename is not None:
+        topup_basename = mov_basename
+
+    # Non-topup field files.
+    field_basename = None
+    field_mat_basename = None
+    if field is not None:
+        field_basename = file_basename(field)
+        in_files.append(str(Path(field)))
+    if field_mat is not None:
+        field_mat_basename = file_basename(field_mat)
+        in_files.append(str(Path(field_mat)))
+
+    # Stdout log file.
+    if stdout_log_f is not None:
+        out_files["stdout"] = str(Path(stdout_log_f))
+
+    # Grab the remaining input files.
+    input_f_kwargs = eddy_cmd_kwargs.copy()
+    input_f_kwargs["topup"] = None
+    input_f_kwargs["field"] = None
+    input_f_kwargs["field_mat"] = None
+    in_files.extend(_eddy_unambiguous_input_files(**input_f_kwargs))
+
+    # Create and modify the eddy command string.
+    cmd_kwargs = eddy_cmd_kwargs.copy()
+    cmd_kwargs["topup"] = topup_basename
+    cmd_kwargs["field"] = field_basename
+    cmd_kwargs["field_mat"] = field_mat_basename
+    cmd = eddy_cmd(**cmd_kwargs)
+    # Add stdout output piping, if needed.
+    if stdout_log_f is not None:
+        cmd = append_cmd_stdout_stderr_to_file(
+            cmd, str(Path(stdout_log_f)), overwrite_log=True
+        )
+
+    out_base = str(Path(out))
+    # Add commands to zip all displacement field files, if present.
+    if dfields:
+        zip_cmd = f"""
+        if compgen -G "{out_base}.eddy_displacement_fields.*" > /dev/null; then
+            sorted_fs="$($(which ls) {out_base}.eddy_displacement_fields.* | sort -V)"
+            zip --move --test {out_base}.eddy_displacement_fields.zip $sorted_fs
+        fi
+        """
+        zip_cmd = textwrap.dedent(zip_cmd)
+        cmd = "".join([cmd, zip_cmd])
+        out_files["displacement_fields"] = out_base + ".eddy_displacement_fields.zip"
+
+    out_files.update(_eddy_unambiguous_output_files(**cmd_kwargs))
+
+    return cmd, in_files, out_files
+
+
+def _eddy_unambiguous_input_files(
+    imain: Path,
+    bvecs: Path,
+    bvals: Path,
+    mask: Path,
+    index: Path,
+    acqp: Path,
+    session: Optional[Path],
+    slspec: Optional[Path],
+    json: Optional[Path],
+    init: Optional[Path],
+    init_s2v: Optional[Path],
+    init_mbs: Optional[Path],
+    **kwargs,
+) -> List[str]:
+    args = locals()
+    func_params_list = list(
+        inspect.signature(_eddy_unambiguous_input_files).parameters.keys()
+    )
+    call_args = {k: args[k] for k in func_params_list}
+    call_args.pop("kwargs", None)
+
+    in_files = list()
+    for v in call_args.values():
+        if v is None:
+            continue
+        f = str(Path(v))
+        in_files.append(f)
+
+    return in_files
+
+
+def _eddy_unambiguous_output_files(
+    out: str,
+    mporder: int = 0,
+    dwi_only: bool = False,
+    b0_only: bool = False,
+    fields: bool = True,
+    cnr_maps: bool = False,
+    range_cnr_maps: bool = False,
+    residuals: bool = False,
+    repol: bool = False,
+    with_outliers: bool = False,
+    history: bool = False,
+    wss: bool = False,
+    estimate_move_by_susceptibility: bool = False,
+    dont_peas: bool = False,
+    b0_peas: bool = False,
+    write_predictions: bool = False,
+    write_scatter_brain_predictions: bool = False,
+    log_timings: bool = False,
+    fsl_output_type: str = "NIFTI_GZ",
+    **kwargs,
+) -> Dict[str, Union[List[str], str]]:
+    args = locals()
+    func_params_list = list(
+        inspect.signature(_eddy_unambiguous_output_files).parameters.keys()
+    )
+    call_args = {k: args[k] for k in func_params_list}
+    call_args.pop("kwargs", None)
+
+    out_base = str(Path(out))
+    call_args.pop("out")
+    im_suffix = FSL_OUTPUT_TYPE_SUFFIX_MAP[fsl_output_type.strip().upper()]
+    call_args.pop("fsl_output_type")
+    b0_and_dwi = (not b0_only) and (not dwi_only)
+    call_args.pop("b0_only")
+    call_args.pop("dwi_only")
+
+    def fname(f, suff=im_suffix, base=out_base):
+        if suff is None:
+            suff = ""
+        return "".join([base, str(f), suff])
+
+    # Construct dict of output filenames.
+    out_files = collections.defaultdict(list)
+    # These files are always given as outputs.
+    out_files["corrected"] = fname("")
+    out_files["motion_ec_parameters"] = fname(".eddy_parameters", None)
+    out_files["rotated_bvecs"] = fname(".eddy_rotated_bvecs", None)
+    out_files["movement_rms"] = fname(".eddy_movement_rms", None)
+    out_files["restricted_movement_rms"] = fname(".eddy_restricted_movement_rms", None)
+    out_files["peas"] = [
+        fname(".eddy_post_eddy_shell_alignment_parameters", None),
+        fname(".eddy_post_eddy_shell_PE_translation_parameters", None),
+    ]
+    out_files["outliers"] = [
+        fname(".eddy_outlier_report", None),
+        fname(".eddy_outlier_map", None),
+        fname(".eddy_outlier_n_stdev_map", None),
+        fname(".eddy_outlier_n_sqr_stdev_map", None),
+    ]
+
+    for k, v in call_args.items():
+        if v is None:
+            continue
+        # Reuse the key name by default, but allow it to be overridden if the arg name
+        # is not clearly related to the actual content(s) of the file(s).
+        l = k
+        if k == "fields" and v:
+            f = fname(".eddy_fields")
+        elif k == "estimate_move_by_susceptibility" and v:
+            f = fname(".eddy_mbs_first_order_fields")
+            l = "mbs_first_order_fields"
+        elif k == "history" and v:
+            f = list()
+            # Base parameter history.
+            if b0_and_dwi or dwi_only:
+                f.extend(
+                    [
+                        fname(".eddy_dwi_mss_history", None),
+                        fname(".eddy_dwi_parameter_history", None),
+                    ]
+                )
+            if b0_and_dwi or b0_only:
+                f.extend(
+                    [
+                        fname(".eddy_b0_mss_history", None),
+                        fname(".eddy_b0_parameter_history", None),
+                    ]
+                )
+            # s2v parameter history, but still stored in the "history" entry.
+            if mporder > 0:
+                if b0_and_dwi or dwi_only:
+                    f.extend(
+                        [
+                            fname(".eddy_slice_to_vol_b0_mss_history", None),
+                            fname(".eddy_slice_to_vol_b0_parameter_history", None),
+                        ]
+                    )
+                if b0_and_dwi or b0_only:
+                    f.extend(
+                        [
+                            fname(".eddy_slice_to_vol_dwi_mss_history", None),
+                            fname(".eddy_slice_to_vol_dwi_parameter_history", None),
+                        ]
+                    )
+        elif k == "mporder" and v > 0:
+            f = fname(".eddy_movement_over_time", None)
+            l = "s2v"
+        elif k == "repol" and v:
+            out_files["outliers"].append(fname(".eddy_outlier_free_data"))
+            l = None
+        elif k == "cnr_maps" and v:
+            f = fname(".eddy_cnr_maps")
+        elif k == "residuals" and v:
+            f = fname(".eddy_residuals")
+        elif (
+            k
+            in {
+                "range_cnr_maps",
+                "with_outliers",
+                "write_predictions",
+                "write_scatter_brain_predictions",
+                "log_timings",
+                "wss",
+            }
+            and v
+        ):
+            raise NotImplementedError(f"ERROR: Param {k} not accounted for.")
+        else:
+            l = None
+            f = None
+
+        # Allow skipping assignment with l = None
+        if l is not None:
+            out_files[l] = f
+
+    return dict(out_files)
 
 
 def parse_params_f(

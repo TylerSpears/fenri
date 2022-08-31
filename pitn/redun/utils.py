@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
-import shlex
 from typing import Union
 
-import redun
-from redun import File, script, task
-from redun.file import Dir
+from redun import task
 
 import pitn
 
@@ -48,17 +45,3 @@ def unflatten_dict_depth_1(flat_sequence, idx_map: dict):
             out_dict[k] = flat_sequence[i]
 
     return out_dict
-
-
-def append_cmd_stdout_stderr_to_file(cmd: str, log_file: str, overwrite=True) -> str:
-    log_tokens = list()
-    log_tokens.append("2>&1")
-    log_tokens.append("|")
-    log_tokens.append("tee")
-    if not overwrite:
-        log_tokens.append("--append")
-    log_f = str(log_file)
-    log_tokens.append(shlex.quote(log_f))
-    joined_cmd = " ".join([cmd] + log_tokens)
-
-    return joined_cmd
