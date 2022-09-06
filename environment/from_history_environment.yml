@@ -25,7 +25,6 @@ dependencies:
   - tensorboard
   - seaborn
   - ipympl
-  - redun
   - natsort
   - toolz
   - boltons
@@ -73,3 +72,4 @@ dependencies:
   - docker-py
   - isort
   - black-jupyter
+  - graphviz

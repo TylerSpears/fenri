@@ -48,7 +48,7 @@ def eddy_cmd(
     s2v_niter: int = 5,
     dwi_only: bool = False,
     b0_only: bool = False,
-    fields: bool = True,
+    fields: bool = False,
     dfields: bool = False,
     cnr_maps: bool = False,
     range_cnr_maps: bool = False,
@@ -364,7 +364,7 @@ def eddy_cmd_explicit_in_out_files(
     s2v_niter: int = 5,
     dwi_only: bool = False,
     b0_only: bool = False,
-    fields: bool = True,
+    fields: bool = False,
     dfields: bool = False,
     cnr_maps: bool = False,
     range_cnr_maps: bool = False,
@@ -419,7 +419,7 @@ def eddy_cmd_explicit_in_out_files(
     very_verbose: bool = True,
     verbose: bool = False,
     fsl_output_type: str = "NIFTI_GZ",
-    stdout_log_f: Optional[Union[str, Path]] = None,
+    log_stdout: bool = True,
 ) -> Tuple[str, List[str], Dict[str, Union[List[str], str]]]:
 
     args = locals()
@@ -474,9 +474,11 @@ def eddy_cmd_explicit_in_out_files(
         field_mat_basename = file_basename(field_mat)
         in_files.append(str(Path(field_mat)))
 
+    out_base = str(Path(out))
+    log_f = out_base + ".stdout.log"
     # Stdout log file.
-    if stdout_log_f is not None:
-        out_files["stdout"] = str(Path(stdout_log_f))
+    if log_stdout:
+        out_files["stdout"] = str(Path(log_f))
 
     # Grab the remaining input files.
     input_f_kwargs = eddy_cmd_kwargs.copy()
@@ -492,23 +494,28 @@ def eddy_cmd_explicit_in_out_files(
     cmd_kwargs["field_mat"] = field_mat_basename
     cmd = eddy_cmd(**cmd_kwargs)
     # Add stdout output piping, if needed.
-    if stdout_log_f is not None:
+    if log_stdout:
         cmd = append_cmd_stdout_stderr_to_file(
-            cmd, str(Path(stdout_log_f)), overwrite_log=True
+            cmd, str(Path(log_f)), overwrite_log=True
         )
-
-    out_base = str(Path(out))
+    cmd = "\n".join([cmd, "sync"])
     # Add commands to zip all displacement field files, if present.
     if dfields:
         zip_cmd = f"""
-        if compgen -G "{out_base}.eddy_displacement_fields.*" > /dev/null; then
-            sorted_fs="$($(which ls) {out_base}.eddy_displacement_fields.* | sort -V)"
-            zip --move --test {out_base}.eddy_displacement_fields.zip $sorted_fs
+        if compgen -G "{out_base}.eddy_displacement_fields.[0-9]*" > /dev/null; then
+            sorted_fs="$($(which ls) {out_base}.eddy_displacement_fields.[0-9]* | sort -V)"
+            tar --no-recursion --verify -cf {out_base}.eddy_displacement_fields.tar {out_base}.eddy_displacement_fields.[0-9]*
+            gzip --force --verbose --rsyncable -9 {out_base}.eddy_displacement_fields.tar
+            gzip --test {out_base}.eddy_displacement_fields.tar.gz && rm {out_base}.eddy_displacement_fields.[0-9]*
+            sync
         fi
         """
+
+        # tar --verify --no-recursion --remove-files -zcf {out_base}.eddy_displacement_fields.tar.gz $sorted_fs
+        # zip --move --test {out_base}.eddy_displacement_fields.zip $sorted_fs
         zip_cmd = textwrap.dedent(zip_cmd)
         cmd = "".join([cmd, zip_cmd])
-        out_files["displacement_fields"] = out_base + ".eddy_displacement_fields.zip"
+        out_files["displacement_fields"] = out_base + ".eddy_displacement_fields.tar.gz"
 
     out_files.update(_eddy_unambiguous_output_files(**cmd_kwargs))
 

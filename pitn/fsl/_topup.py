@@ -167,7 +167,8 @@ def topup_cmd_explicit_in_out_files(
     regrid: Union[bool, Sequence[bool]] = True,
     verbose: bool = True,
     builtin_logout: Optional[Path] = None,
-    stdout_log_f: Optional[Union[str, Path]] = None,
+    log_stdout: bool = True,
+    # stdout_log_f: Optional[Union[str, Path]] = None,
     fsl_output_type: str = "NIFTI_GZ",
 ) -> Tuple[str, List[str], Dict[str, Union[List[str], str]]]:
 
@@ -210,14 +211,14 @@ def topup_cmd_explicit_in_out_files(
 
     if builtin_logout is not None:
         out_files["log"] = str(builtin_logout)
-    if stdout_log_f is not None:
-        out_files["stdout"] = str(stdout_log_f)
+    if log_stdout:
+        out_files["stdout"] = out_base + ".stdout.log"
 
     cmd = topup_cmd(**topup_cmd_kwargs)
 
-    if stdout_log_f is not None:
+    if log_stdout is not None:
         cmd = append_cmd_stdout_stderr_to_file(
-            cmd, str(stdout_log_f), overwrite_log=True
+            cmd, out_files["stdout"], overwrite_log=True
         )
 
     return cmd, in_files, out_files

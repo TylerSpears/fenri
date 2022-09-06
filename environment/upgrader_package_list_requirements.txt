@@ -1,11 +1,12 @@
-antspyx      
-ciftify      
-duecredit    
-ivy-core     
-pdbr         
-piqa         
-pybids       
-pykale       
+antspyx
+ciftify
+duecredit
+git+https:///github.com/insitro/redun.git
+ivy-core
+pdbr
+piqa
+pybids
+pykale
 python-dotenv
-sewar        
+sewar
 # Re-install nibabel with mamba after installing antspyx

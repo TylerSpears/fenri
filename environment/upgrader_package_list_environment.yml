@@ -32,7 +32,6 @@ dependencies:
   - seaborn
   - ipywidgets
   - ipympl
-  - redun
   - natsort
   - toolz
   - boltons

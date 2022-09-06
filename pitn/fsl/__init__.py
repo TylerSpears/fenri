@@ -8,4 +8,8 @@ from ._eddy import (
     parse_params_f,
     parse_s2v_params_f,
 )
-from ._topup import phase_encoding_dirs2acqparams, topup_cmd
+from ._topup import (
+    phase_encoding_dirs2acqparams,
+    topup_cmd,
+    topup_cmd_explicit_in_out_files,
+)

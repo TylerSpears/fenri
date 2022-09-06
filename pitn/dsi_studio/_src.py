@@ -6,12 +6,12 @@ from typing import Optional, Sequence, Union
 from pitn.utils import cli_parse
 
 
-def convert_to_src_cmd(
-    source: Path,
-    output: Path,
-    bval: Optional[Path] = None,
-    bvec: Optional[Path] = None,
-    b_table: Optional[Path] = None,
+def src_cmd(
+    source: Union[str, Path],
+    output: Union[str, Path],
+    bval: Optional[Union[str, Path]] = None,
+    bvec: Optional[Union[str, Path]] = None,
+    b_table: Optional[Union[str, Path]] = None,
     other_sources: Optional[Union[Path, Sequence[Path]]] = None,
 ) -> str:
     """
@@ -38,6 +38,13 @@ def convert_to_src_cmd(
     up_sampling 	0 	upsampling the DWI, 0:no resampling, 1:upsample by 2, 2:downsample by 2, 3:upsample by 4, 4:downsample by 4
     """
 
+    # We're going to explicitly require either a bval & bvec file pair, or a b-table
+    # file. Otherwise, we could lose track of input files.
+    if ((bval is None) and (bvec is None)) and (b_table is None):
+        raise ValueError(
+            "ERROR: Must specify either bval and bvec files, or one b-table file"
+        )
+
     cmd = list()
     cmd.append("dsi_studio")
     cmd.append("--action=src")
@@ -59,6 +66,9 @@ def convert_to_src_cmd(
         cmd.append(str(Path(b_table)))
 
     if other_sources is not None:
+        raise NotImplementedError(
+            "ERROR: arg `other_sources` not implemented, concat all DWIs into one file."
+        )
         # Try if other_sources is a single Path/string.
         try:
             s = str(Path(other_sources))

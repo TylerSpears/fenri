@@ -17,7 +17,8 @@ if __package__ is not None:
         pitn.fsl._eddy._eddy_unambiguous_input_files,
         pitn.fsl._eddy._eddy_unambiguous_output_files,
     ],
-    config_args=["docker_exec_config"],
+    config_args=["script_exec_config"],
+    version="1",
 )
 def eddy(
     imain: File,
@@ -47,7 +48,7 @@ def eddy(
     s2v_niter: int = 5,
     dwi_only: bool = False,
     b0_only: bool = False,
-    fields: bool = True,
+    fields: bool = False,
     dfields: bool = False,
     cnr_maps: bool = False,
     range_cnr_maps: bool = False,
@@ -102,9 +103,8 @@ def eddy(
     very_verbose: bool = True,
     verbose: bool = False,
     fsl_output_type: str = "NIFTI_GZ",
-    stdout_log_f: Optional[File] = None,
-    docker_image: Optional[str] = None,
-    docker_exec_config: Optional[Dict[str, Any]] = None,
+    log_stdout: bool = True,
+    script_exec_config: Optional[Dict[str, Any]] = None,
 ):
     args = locals()
     # Take the kwargs of this function and intersect them with the parameters of
@@ -119,35 +119,98 @@ def eddy(
             call_kwargs[k] = str(call_kwargs[k].path)
 
     cmd, in_files, out_files = pitn.fsl.eddy_cmd_explicit_in_out_files(**call_kwargs)
-    in_files = [File(str(f)).stage(str(f)) for f in in_files]
-    out_files = {k: File(str(out_files[k])) for k in out_files.keys()}
-    nouts = sum(map(lambda v: len(v) if isinstance(v, list) else 1, out_files.values()))
 
-    script_exec_conf = dict()
-    if docker_exec_config is not None:
-        script_exec_conf.update(docker_exec_config)
-    if docker_image is not None:
-        script_exec_conf["image"] = docker_image
+    for k, v in out_files.items():
+        if isinstance(v, list):
+            new_v = [File(f).stage(f) for f in v]
+        else:
+            new_v = File(v).stage(v)
+        out_files[k] = new_v
+
+    script_executor = dict()
+    if script_exec_config is not None:
+        script_executor.update(script_exec_config)
 
     cmd_task_outs = script(
         cmd,
-        inputs=in_files,
+        inputs=[File(f).stage(f) for f in in_files],
         outputs=out_files,
-        nouts=nouts,
-        **script_exec_conf,
+        **script_executor,
     )
 
     return cmd_task_outs
 
 
-@task()
-def topup():
-    pass
+@task(
+    hash_includes=[
+        pitn.fsl.topup_cmd_explicit_in_out_files,
+        pitn.fsl.topup_cmd,
+    ],
+    config_args=["script_exec_config"],
+)
+def topup(
+    imain: File,
+    datain: File,
+    out: Optional[str] = None,
+    iout: Optional[File] = None,
+    fout: Optional[File] = None,
+    warpres: Union[int, Sequence[int]] = 10,
+    subsamp: Union[int, Sequence[int]] = 1,
+    fwhm: Union[int, Sequence[int]] = 8,
+    miter: Union[int, Sequence[int]] = 5,
+    lambd: Optional[Union[float, Sequence[float]]] = None,
+    ssqlambda: Union[bool, Sequence[bool]] = True,
+    estmov: Union[bool, Sequence[bool]] = True,
+    minmet: Union[str, Sequence[str]] = "LM",
+    regmod: str = "bending_energy",
+    splineorder: int = 3,
+    numprec: str = "double",
+    interp: str = "spline",
+    scale: Union[bool, Sequence[bool]] = False,
+    regrid: Union[bool, Sequence[bool]] = True,
+    verbose: bool = True,
+    builtin_logout: Optional[File] = None,
+    log_stdout: bool = True,
+    fsl_output_type: str = "NIFTI_GZ",
+    script_exec_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Union[File, List[File]]]:
+    args = locals()
+    # Take the kwargs of this function and intersect them with the parameters of
+    # the associated "cmd" function.
+    func_params_list = list(
+        inspect.signature(pitn.fsl.topup_cmd_explicit_in_out_files).parameters.keys()
+    )
+    call_kwargs = {k: args[k] for k in func_params_list}
+    # Convert over to strings for functions outside of redun tasks.
+    for k in call_kwargs.keys():
+        if isinstance(call_kwargs[k], File):
+            call_kwargs[k] = str(call_kwargs[k].path)
+
+    cmd, in_files, out_files = pitn.fsl.topup_cmd_explicit_in_out_files(**call_kwargs)
+    in_files = [File(str(f)).stage(f) for f in in_files]
+    for k, v in out_files.items():
+        if pitn.utils.cli_parse.is_sequence(v):
+            out_files[k] = [File(str(f)).stage(f) for f in v]
+        else:
+            out_files[k] = File(str(v))
+
+    script_executor = dict()
+    if script_exec_config is not None:
+        script_executor.update(script_exec_config)
+
+    cmd_task_outs = script(
+        cmd,
+        inputs=in_files,
+        outputs=out_files,
+        **script_executor,
+    )
+
+    return cmd_task_outs
 
 
 @task(
-    config_args=["docker_exec_config"],
-    hash_includes=[pitn.fsl.bet_cmd, pitn.fsl._bet_output_files],
+    config_args=["script_exec_config"],
+    hash_includes=[pitn.fsl.bet_cmd, pitn.fsl._bet._bet_output_files],
 )
 def bet(
     in_file: File,
@@ -158,9 +221,8 @@ def bet(
     eye_cleanup: bool = False,
     verbose: bool = True,
     fsl_output_type: str = "NIFTI_GZ",
-    stdout_log_f: Optional[str] = None,
-    docker_image: Optional[str] = None,
-    docker_exec_config: Optional[Dict[str, Any]] = None,
+    log_stdout: bool = True,
+    script_exec_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Union[File, List[File]]]:
     args = locals()
     # Take the kwargs of this function and intersect them with the parameters of
@@ -172,8 +234,8 @@ def bet(
     # Build the command and determine output files based on inputs/parameters.
     cmd = pitn.fsl.bet_cmd(**call_kwargs)
     out_files = pitn.fsl._bet_output_files(**call_kwargs)
-    if stdout_log_f is not None:
-        out_files["stdout"] = str(stdout_log_f)
+    if log_stdout:
+        out_files["stdout"] = str(out_file_basename) + "_stdout.log"
         cmd = pitn.utils.cli_parse.append_cmd_stdout_stderr_to_file(
             cmd, out_files["stdout"], overwrite_log=True
         )
@@ -186,27 +248,15 @@ def bet(
             new_v = File(v).stage(v)
         out_files[k] = new_v
 
-    # Flatten for easier management of the output expression from the script task.
-    flat_file_list, idx_map = pitn.redun.utils.flatten_dict_depth_1(out_files)
-    nouts = len(flat_file_list)
-
-    if docker_exec_config is not None:
-        script_exec_conf = dict(docker_exec_config)
-    else:
-        script_exec_conf = dict()
-    if docker_image is not None:
-        script_exec_conf["image"] = docker_image
+    script_executor = dict()
+    if script_exec_config is not None:
+        script_executor.update(script_exec_config)
     # Run the command.
     cmd_task_outs = script(
         cmd,
-        inputs=[in_file.stage(in_file.path)],
-        outputs=flat_file_list,
-        nouts=nouts,
-        **script_exec_conf,
+        inputs=[in_file.stage(in_file)],
+        outputs=out_files,
+        **script_executor,
     )
 
-    # Unflatten the script's output files as the original dict, for easier usability
-    # of the output.
-    out_expr = pitn.redun.utils.unflatten_dict_depth_1(cmd_task_outs, idx_map)
-
-    return out_expr
+    return cmd_task_outs
