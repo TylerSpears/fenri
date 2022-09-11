@@ -92,6 +92,108 @@ def gen_src(
     return cmd_task_outs
 
 
-@task()
-def recon():
-    pass
+@task(
+    hash_includes=[pitn.dsi_studio.recon_cmd],
+    config_args=["thread_count", "script_exec_config"],
+)
+def recon(
+    source: File,
+    method: str = "GQI",
+    param0: float = 1.25,
+    align_acpc: bool = True,
+    check_btable: bool = True,
+    other_output: Union[str, Sequence[str]] = (
+        "fa",
+        "ad",
+        "rd",
+        "md",
+        "nqa",
+        "iso",
+        "rdi",
+        "nrdi",
+    ),
+    record_odf: bool = False,
+    qsdr_reso: Optional[float] = None,
+    mask: Optional[File] = None,
+    rev_pe: Optional[File] = None,
+    rotate_to: Optional[File] = None,
+    align_to: Optional[File] = None,
+    other_image: Optional[File] = None,
+    save_src: Optional[str] = None,
+    cmd: Optional[str] = None,
+    cmd_files: Optional[Sequence[File]] = None,
+    thread_count: Optional[int] = None,
+    dti_no_high_b: Optional[bool] = None,
+    r2_weighted: bool = False,
+    log_stdout: bool = True,
+    script_exec_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, File]:
+
+    args = locals()
+    # Take the kwargs of this function and intersect them with the parameters of
+    # the associated "cmd" function.
+    func_params_list = list(
+        inspect.signature(pitn.dsi_studio.recon_cmd).parameters.keys()
+    )
+    call_kwargs = {k: args[k] for k in set(func_params_list) & set(args.keys())}
+    # Convert over to strings for functions outside of redun tasks.
+    for k in call_kwargs.keys():
+        if isinstance(call_kwargs[k], File):
+            call_kwargs[k] = str(call_kwargs[k].path)
+
+    cmd = pitn.dsi_studio.recon_cmd(**call_kwargs)
+
+    in_files = [source.stage(source.path)]
+    for file_arg in (mask, rev_pe, rotate_to, align_to, other_image):
+        if file_arg is not None:
+            in_files.append(file_arg.stage(file_arg.path))
+    if cmd_files is not None:
+        in_files.extend(f.stage(f.path) for f in cmd_files)
+
+    out_files = dict()
+
+    main_im_out_extensions = list()
+    method_name = method.upper().strip()
+    if method_name == "DTI":
+        main_im_out_extensions.append(method.lower().strip())
+    elif method_name == "GQI":
+        if record_odf:
+            main_im_out_extensions.append("odf")
+        main_im_out_extensions.append(method.lower().strip())
+        main_im_out_extensions.append(str(param0))
+    elif method_name == "QSDR":
+        raise NotImplementedError(method_name)
+    else:
+        main_im_out_extensions.append(method.lower().strip())
+    main_im_out_extensions.extend(["fib", "gz"])
+
+    main_im = File(".".join([source.path] + main_im_out_extensions))
+    out_files["fib"] = main_im.stage(main_im.path)
+
+    if save_src is not None:
+        out_files["preproc"] = File(save_src).stage(save_src)
+
+    if log_stdout:
+        # Add command to save stdout to file.
+        log_f = ".".join([main_im.path, "stdout.log"])
+        cmd = pitn.utils.cli_parse.append_cmd_stdout_stderr_to_file(
+            cmd, str(log_f), overwrite_log=True
+        )
+        cmd = "\n".join([cmd, "sync"])
+
+        # Convert the log file to a `File` object.
+        log_f = File(log_f).stage(log_f)
+        out_files["stdout"] = log_f
+
+    script_executor = dict()
+    if script_exec_config is not None:
+        script_executor.update(script_exec_config)
+
+    cmd_task_outs = script(
+        cmd,
+        inputs=in_files,
+        outputs=out_files,
+        **script_executor,
+    )
+
+    return cmd_task_outs
