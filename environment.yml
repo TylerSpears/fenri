@@ -1,4 +1,4 @@
-name: pitn
+name: pitn2
 channels:
   - mrtrix3
   - pytorch

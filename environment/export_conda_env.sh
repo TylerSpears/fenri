@@ -3,11 +3,11 @@
 ACTIVE_PREFIX=$(conda info --json | jq -e -r '.active_prefix')
 conda env export -p "$ACTIVE_PREFIX" \
     | sed '/prefix:/d' \
-    | sed 's/name: null/name: pitn/' \
+    | sed 's/name: null/name: pitn2/' \
     > environment.yml
 conda env export --from-history -p "$ACTIVE_PREFIX" \
     | sed '/prefix:/d' \
-    | sed 's/name: null/name: pitn/' \
+    | sed 's/name: null/name: pitn2/' \
     > from_history_environment.yml
 # conda-lock lock \
 #     --mamba \
