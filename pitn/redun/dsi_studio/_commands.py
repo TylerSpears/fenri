@@ -80,14 +80,21 @@ def gen_src(
     script_executor = dict()
     if script_exec_config is not None:
         script_executor.update(script_exec_config)
-
-    cmd_task_outs = script(
-        cmd,
-        inputs=in_files,
-        outputs=out_files,
-        nout=nout,
-        **script_executor,
-    )
+    if nout is not None:
+        cmd_task_outs = script(
+            cmd,
+            inputs=in_files,
+            outputs=out_files,
+            nout=nout,
+            **script_executor,
+        )
+    else:
+        cmd_task_outs = script(
+            cmd,
+            inputs=in_files,
+            outputs=out_files,
+            **script_executor,
+        )
 
     return cmd_task_outs
 

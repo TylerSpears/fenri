@@ -110,7 +110,10 @@ def topup_cmd(
             else:
                 v = [TOPUP_CONFIG_MAP["bool"][v_i] for v_i in v]
         elif k in {"minmet"}:
-            v = TOPUP_CONFIG_MAP["minmet"][str(v).upper()]
+            if not is_sequence(v):
+                v = TOPUP_CONFIG_MAP["minmet"][str(v).upper()]
+            else:
+                v = [TOPUP_CONFIG_MAP["minmet"][str(v_i).upper()] for v_i in v]
 
         # None options won't be set at all.
         if v is None:
@@ -216,7 +219,7 @@ def topup_cmd_explicit_in_out_files(
 
     cmd = topup_cmd(**topup_cmd_kwargs)
 
-    if log_stdout is not None:
+    if log_stdout:
         cmd = append_cmd_stdout_stderr_to_file(
             cmd, out_files["stdout"], overwrite_log=True
         )

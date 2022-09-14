@@ -152,8 +152,8 @@ def topup(
     imain: File,
     datain: File,
     out: Optional[str] = None,
-    iout: Optional[File] = None,
-    fout: Optional[File] = None,
+    iout: Optional[str] = None,
+    fout: Optional[str] = None,
     warpres: Union[int, Sequence[int]] = 10,
     subsamp: Union[int, Sequence[int]] = 1,
     fwhm: Union[int, Sequence[int]] = 8,
@@ -169,7 +169,7 @@ def topup(
     scale: Union[bool, Sequence[bool]] = False,
     regrid: Union[bool, Sequence[bool]] = True,
     verbose: bool = True,
-    builtin_logout: Optional[File] = None,
+    builtin_logout: Optional[str] = None,
     log_stdout: bool = True,
     fsl_output_type: str = "NIFTI_GZ",
     script_exec_config: Optional[Dict[str, Any]] = None,
@@ -185,6 +185,14 @@ def topup(
     for k in call_kwargs.keys():
         if isinstance(call_kwargs[k], File):
             call_kwargs[k] = str(call_kwargs[k].path)
+
+    # These args must not be File objects, otherwise they will be interpreted as being
+    # "input files" according to the function hash, rather than
+    # "write target locations", which is what they actually are.
+    assert not isinstance(out, File)
+    assert not isinstance(iout, File)
+    assert not isinstance(fout, File)
+    assert not isinstance(builtin_logout, File)
 
     cmd, in_files, out_files = pitn.fsl.topup_cmd_explicit_in_out_files(**call_kwargs)
     in_files = [File(str(f)).stage(f) for f in in_files]

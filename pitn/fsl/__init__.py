@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
+from ._config import FSL_OUTPUT_TYPE_SUFFIX_MAP # isort: split
 from ._bet import _bet_output_files, bet_cmd
-from ._config import FSL_OUTPUT_TYPE_SUFFIX_MAP
 from ._eddy import (
     eddy_cmd,
     eddy_cmd_explicit_in_out_files,

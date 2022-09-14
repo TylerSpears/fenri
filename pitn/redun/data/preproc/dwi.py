@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import gzip
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
+import os
 
 import nibabel as nib
 import numpy as np
@@ -10,9 +10,63 @@ import scipy
 from redun import File, task
 
 import pitn
+from pitn.redun.utils import NDArrayValue, save_np_txt
 
 if __package__ is not None:
     redun_namespace = str(__package__)
+
+
+@task(
+    # check_valid="shallow",
+    config_args=["tmp_dir", "script_exec_config"],
+)
+def bvec_flip_correct_files(
+    dwi_f: File,
+    bval_f: File,
+    bvec_f: File,
+    tmp_dir: str,
+    mask_f: Optional[File] = None,
+    script_exec_config: Optional[Dict[str, Any]] = None,
+) -> np.ndarray:
+
+    d = Path(tmp_dir)
+    # dwi_f_basename = Path(dwi_f.path).name.replace(
+    #     "".join(Path(dwi_f.path).suffixes), ""
+    # )
+    # dwi_f_basename = str(dwi_f_basename)
+    # bval_f = save_np_txt(str(d / f"{dwi_f_basename}.bval"), bval)
+    # bvec_f = save_np_txt(str(d / f"{dwi_f_basename}.bvec"), bvec)
+    # bvec_f = str(d / "bvec")
+    # np.savetxt(bvec_f, bvec)
+
+    src_output_f = str(d / "dwi_data.src.gz")
+    src_dwi = pitn.redun.dsi_studio.gen_src.options(cache=False)(
+        source=dwi_f,
+        output=src_output_f,
+        bval=bval_f,
+        bvec=bvec_f,
+        log_stdout=False,
+        script_exec_config=script_exec_config,
+    )
+    preproc_src_dwi_f = str(d / "dwi_data_preproc.src.gz")
+
+    recon_files = pitn.redun.dsi_studio.recon(
+        source=src_dwi,
+        mask=mask_f,
+        method="DTI",
+        check_btable=True,
+        save_src=preproc_src_dwi_f,
+        align_acpc=False,
+        other_output="md",
+        record_odf=False,
+        log_stdout=False,
+        script_exec_config=script_exec_config,
+    )
+    preproc_src_dwi = recon_files["preproc"]
+
+    corrected_btable = _extract_btable(preproc_src_dwi)
+    corrected_bvec = _extract_bvec(corrected_btable)
+    return corrected_bvec
 
 
 @task(
@@ -20,30 +74,44 @@ if __package__ is not None:
     config_args=["tmp_dir", "script_exec_config"],
 )
 def bvec_flip_correct(
-    dwi_data: np.ndarray,
-    dwi_affine: np.ndarray,
     bval: np.ndarray,
     bvec: np.ndarray,
     tmp_dir: str,
+    dwi_f: Optional[File] = None,
+    dwi_data: Optional[np.ndarray] = None,
+    dwi_affine: Optional[np.ndarray] = None,
     mask: Optional[np.ndarray] = None,
     script_exec_config: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
 
-    dwi = nib.Nifti1Image(dwi_data, affine=dwi_affine)
+    if dwi_f is None:
+        assert dwi_data is not None and dwi_affine is not None
+    elif dwi_data is None or dwi_affine is None:
+        assert dwi_f is not None
+    else:
+        raise ValueError("ERROR: Must only have one of {dwi_f, (dwi_data, dwi_affine)}")
+
     d = Path(tmp_dir)
-    dwi_f = str(d / "dwi_data.nii.gz")
-    nib.save(dwi, dwi_f)
-    bval_f = str(d / "bval")
-    np.savetxt(bval_f, bval)
-    bvec_f = str(d / "bvec")
-    np.savetxt(bvec_f, bvec)
+    if dwi_f is None:
+        dwi = nib.Nifti1Image(dwi_data, affine=dwi_affine)
+        dwi_f = File(d / "dwi_data.nii.gz")
+        nib.save(dwi, dwi_f.path)
+    dwi_f_basename = Path(dwi_f.path).name.replace(
+        "".join(Path(dwi_f.path).suffixes), ""
+    )
+    dwi_f_basename = str(dwi_f_basename)
+    bval_f = save_np_txt(str(d / f"{dwi_f_basename}.bval"), bval)
+    # np.savetxt(bval_f, bval)
+    bvec_f = save_np_txt(str(d / f"{dwi_f_basename}.bvec"), bvec)
+    # bvec_f = str(d / "bvec")
+    # np.savetxt(bvec_f, bvec)
 
     src_output_f = str(d / "dwi_data.src.gz")
     src_dwi = pitn.redun.dsi_studio.gen_src(
-        source=File(dwi_f),
+        source=dwi_f,
         output=src_output_f,
-        bval=File(bval_f),
-        bvec=File(bvec_f),
+        bval=bval_f,
+        bvec=bvec_f,
         log_stdout=False,
         script_exec_config=script_exec_config,
     )
@@ -73,6 +141,28 @@ def bvec_flip_correct(
     corrected_btable = _extract_btable(preproc_src_dwi)
     corrected_bvec = _extract_bvec(corrected_btable)
     return corrected_bvec
+
+
+@task(cache=False, hash_includes=[pitn.data.utils.least_distort_b0_idx])
+def top_k_b0s(
+    dwi: NDArrayValue,
+    bval: np.ndarray,
+    bvec: np.ndarray,
+    n_b0s: int = 3,
+    b0_max: float = 100,
+) -> dict:
+    b0_mask = bval <= b0_max
+    b0s = dwi[..., b0_mask]
+    b0_bvals = bval[b0_mask]
+    b0_bvecs = bvec[:, b0_mask]
+    top_b0s_idx = pitn.data.utils.least_distort_b0_idx(b0s, num_selections=n_b0s)
+    output = dict(
+        dwi=NDArrayValue(b0s[..., top_b0s_idx]),
+        bval=b0_bvals[top_b0s_idx],
+        bvec=b0_bvecs[:, top_b0s_idx],
+    )
+
+    return output
 
 
 @task(cache=False)
