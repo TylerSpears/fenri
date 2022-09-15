@@ -1,18 +1,25 @@
 # -*- coding: utf-8 -*-
-from typing import Union, Optional, Any
 import io
+from collections import namedtuple
+from typing import Any, Optional, Union
 
-from redun import task, File
+import nibabel as nib
+import numpy
+import numpy as np
 import redun
 import redun.value
-import numpy as np
-import numpy
-import nibabel as nib
+from redun import File, task
 
 import pitn
 
 if __package__ is not None:
     redun_namespace = str(__package__)
+
+NibImageTuple = namedtuple(
+    "NibImageTuple",
+    ("dataobj", "affine", "header", "extra", "file_map"),
+    defaults=(None, None, None),
+)
 
 
 class NDArrayValue(redun.value.ProxyValue):
@@ -123,16 +130,24 @@ def load_np_txt(f: File, **kwargs) -> np.ndarray:
 
 
 @task(cache=False)
-def save_nib(im, f: str, **kwargs) -> File:
-    nib.save(im, str(f), **kwargs)
+def save_nib(im: NibImageTuple, f: str, **kwargs) -> File:
+    nib.save(nib.Nifti1Image(**im._asdict()), str(f), **kwargs)
     out_f = File(str(f))
     return out_f
 
 
 @task(cache=False)
-def save_np_to_nib(arr: np.ndarray, affine: np.ndarray, f: str, **kwargs) -> File:
-    im = nib.Nifti1Image(arr, affine=affine, **kwargs)
+def save_np_to_nib(arr: NDArrayValue, affine: np.ndarray, f: str, **kwargs) -> File:
+    im = NibImageTuple(arr, affine=affine, **kwargs)
     return save_nib(im, f)
+
+
+@task(cache=False)
+def load_nib(f: File, **kwargs) -> NibImageTuple:
+    im = nib.load(f.path, **kwargs)
+    return NibImageTuple(
+        NDArrayValue(im.get_fdata()), im.affine, dict(im.header), im.extra
+    )
 
 
 @task(cache=False)
@@ -158,57 +173,6 @@ def join_save_dwis(
         join_out["bvec"] = save_np_txt(str(bvecs_out_f), join_bvecs)
 
     return join_out
-
-
-# class NDArrayValue(redun.value.ProxyValue):
-
-#     MIME_TYPE_NDARRAY = "application/x-python-numpy-ndarray"
-#     type: numpy.ndarray
-#     type_name = "numpy.ndarray"
-
-#     def _serialize(self) -> bytes:
-#         arr = self.instance
-#         mem_bytes_file = io.BytesIO()
-#         np.save(mem_bytes_file, arr, allow_pickle=False)
-#         return mem_bytes_file.getvalue()
-
-#     @classmethod
-#     def _deserialize(cls, data: bytes) -> Any:
-#         # User defined deserialization.
-#         arr_bytes = io.BytesIO(data)
-#         return np.load(arr_bytes, allow_pickle=False)
-
-#     def get_hash(self, data: Optional[bytes] = None) -> str:
-#         """
-#         Returns a hash for the value.
-#         """
-#         if data is None:
-#             data = self.serialize()
-#         return super().get_hash(data)
-
-#     def serialize(self) -> bytes:
-#         return self._serialize()
-
-#     @classmethod
-#     def deserialize(cls, raw_type: type, data: bytes) -> Any:
-#         """
-#         Returns a deserialization of bytes `data` into a new Value.
-#         """
-#         return cls._deserialize(data)
-
-#     @classmethod
-#     def get_serialization_format(cls) -> str:
-#         """
-#         Returns mimetype of serialization.
-#         """
-#         return cls.MIME_TYPE_NDARRAY
-
-#     @classmethod
-#     def parse_arg(cls, raw_type: type, arg: str) -> Any:
-#         """
-#         Parse a command line argument in a new Value.
-#         """
-#         return np.fromstring(arg)
 
 
 @task(cache=False)

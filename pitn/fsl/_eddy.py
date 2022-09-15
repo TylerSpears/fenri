@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from box import Box
 
 from pitn.utils.cli_parse import (
     add_equals_cmd_args,
@@ -758,6 +759,59 @@ def parse_s2v_params_f(
         p_s2v.index = p_s2v.index.rename("Multiband Slice Group idx")
 
     return p_s2v
+
+
+def estimate_slspec(json_sidecar: dict, n_slices: int) -> Optional[np.ndarray]:
+    if "SliceTiming" in json_sidecar.keys():
+        slspec = slice_timing2slspec(np.asarray(json_sidecar["SliceTiming"]))
+    elif (
+        "ParallelReductionOutOfPlane" in json_sidecar.keys()
+        or "MultibandAccelerationFactor" in json_sidecar.keys()
+    ):
+        mb_k = list(
+            filter(
+                lambda k: k
+                in {"ParallelReductionOutOfPlane", "MultibandAccelerationFactor"},
+                json_sidecar.keys(),
+            )
+        )[0]
+        mb_factor = int(round(json_sidecar[mb_k]))
+        mb_groups = n_slices // mb_factor
+
+        if mb_groups % 2 == 0:
+            raise NotImplementedError("ERROR: Even-value MB groups not supported")
+
+        slspec_rows = list()
+
+        slice_idx = np.arange(n_slices)
+        for even_idx in slice_idx[::2]:
+            group = slice_idx[even_idx::mb_groups]
+            if len(group) < mb_factor:
+                break
+            slspec_rows.append(group)
+        for odd_idx in slice_idx[1::2]:
+            group = slice_idx[odd_idx::mb_groups]
+            if len(group) < mb_factor:
+                break
+            slspec_rows.append(group)
+
+        slspec = np.stack(slspec_rows, axis=0)
+    else:
+        # Assume single-band, which still has a slice acqusition order.
+        slspec = np.arange(n_slices).reshape(-1, 1)
+
+    # An inverted SliceEncodingDirection indicates that the SliceTiming info is
+    # reversed. If the encoding direction is set and is negative, then we must
+    # flip the slspec to get the correct ordering (though the grouping is still
+    # correct). See
+    # <https://bids-specification.readthedocs.io/en/stable/04-modality-specific-files/01-magnetic-resonance-imaging-data.html#timing-parameters>
+    # for details.
+    if "SliceEncodingDirection" in json_sidecar.keys():
+        direct = str(json_sidecar["SliceEncodingDirection"])
+        if "-" in direct:
+            slspec = np.flip(slspec, axis=0)
+
+    return slspec
 
 
 def slice_timing2slspec(slice_timing: np.ndarray) -> np.ndarray:

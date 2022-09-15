@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import gzip
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
-import os
 
 import nibabel as nib
 import numpy as np
@@ -10,7 +10,7 @@ import scipy
 from redun import File, task
 
 import pitn
-from pitn.redun.utils import NDArrayValue, save_np_txt
+from pitn.redun.utils import NDArrayValue, save_nib, save_np_txt
 
 if __package__ is not None:
     redun_namespace = str(__package__)
@@ -163,6 +163,43 @@ def top_k_b0s(
     )
 
     return output
+
+
+@task(config_args=["script_exec_config"])
+def bet_mask_median_dwis(
+    dwi_f: File,
+    out_file: str,
+    script_exec_config: Optional[Dict[str, Any]] = None,
+    **bet_kwargs,
+) -> File:
+    dwi = nib.load(dwi_f.path)
+    median_dwi_data = np.median(dwi.get_fdata(), axis=-1)
+    out_path = Path(out_file).parent
+    # dwi_path = Path(dwi_f.path)
+    median_out_fname = "_tmp_median.nii.gz"
+    median_out_path = out_path / median_out_fname
+    median_dwi = nib.Nifti1Image(median_dwi_data, dwi.affine, dwi.header)
+    median_dwi_f = save_nib(median_dwi, str(median_out_path))
+
+    mask_out_basename = str(out_path / Path(out_file).name)
+
+    bet_outputs = pitn.redun.fsl.bet(
+        median_dwi_f,
+        out_file_basename=mask_out_basename,
+        mask=True,
+        skip_brain_output=True,
+        verbose=False,
+        log_stdout=False,
+        script_exec_config=script_exec_config,
+        **bet_kwargs,
+    )
+    target_mask_f = File(out_file)
+    mask_f = bet_outputs["mask"].copy_to(target_mask_f)
+    # Copy the bet output mask to the given output location.
+    mask_f = mask_f.copy
+    # Delete the temporary median dwi.
+    median_dwi_f.remove()
+    return mask_f
 
 
 @task(cache=False)
