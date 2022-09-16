@@ -21,6 +21,90 @@ NibImageTuple = namedtuple(
     defaults=(None, None, None),
 )
 
+# class NDArrayValue(redun.value.ProxyValue):
+
+#     MIME_TYPE_NDARRAY = "application/x-python-numpy-ndarray"
+#     type: numpy.ndarray
+#     type_name = "numpy.ndarray"
+#     _NPZ_KEY = "array"
+
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self._hash = None
+
+#     def __repr__(self) -> str:
+#         return (
+#             "<NDArrayValue "
+#             f"size '{self.instance.shape}', "
+#             f"dtype '{self.instance.dtype}', "
+#             f"at {hex(id(self))}>"
+#         )
+
+#     def __getstate__(self) -> dict:
+#         return {"hash": self.get_hash(), "serialized": self.serialize()}
+
+#     def __setstate__(self, state: dict) -> None:
+#         """
+#         Populates the value from state during deserialization.
+#         """
+#         arr_bytes = io.BytesIO(state["serialized"])
+#         self.instance = self.deserialize(None, arr_bytes)
+#         self._hash = state["hash"]
+
+#     def _serialize(self) -> bytes:
+#         arr = self.instance
+#         mem_bytes_file = io.BytesIO()
+#         np.save(mem_bytes_file, arr, allow_pickle=False)
+#         return mem_bytes_file.getvalue()
+
+#     @classmethod
+#     def _deserialize(cls, data: bytes) -> Any:
+#         # User defined deserialization.
+#         arr_bytes = io.BytesIO(data)
+#         arr = np.load(arr_bytes, allow_pickle=False)
+#         return arr
+
+#     def get_hash(self, data: Optional[bytes] = None) -> str:
+#         """
+#         Returns a hash for the value.
+#         """
+#         # The hash is calculated from the serialize() output, while the state dict data
+#         # is made up of the .npz compressed data.
+#         if data is None:
+#             if self._hash is None:
+#                 data = self.serialize()
+#                 # Cache the hash.
+#                 self._hash = super().get_hash(data)
+#             ret = self._hash
+#         else:
+#             ret = super().get_hash(data)
+
+#         return ret
+
+#     def serialize(self) -> bytes:
+#         return self._serialize()
+
+#     @classmethod
+#     def deserialize(cls, raw_type: type, data: bytes) -> Any:
+#         """
+#         Returns a deserialization of bytes `data` into a new Value.
+#         """
+#         return cls._deserialize(data)
+
+#     @classmethod
+#     def get_serialization_format(cls) -> str:
+#         """
+#         Returns mimetype of serialization.
+#         """
+#         return cls.MIME_TYPE_NDARRAY
+
+#     @classmethod
+#     def parse_arg(cls, raw_type: type, arg: str) -> Any:
+#         """
+#         Parse a command line argument in a new Value.
+#         """
+#         return np.fromstring(arg)
+
 
 class NDArrayValue(redun.value.ProxyValue):
 
@@ -42,25 +126,15 @@ class NDArrayValue(redun.value.ProxyValue):
         )
 
     def __getstate__(self) -> dict:
-        """
-        The state is a compressed version of the (much faster) serialize/deserialize
-            methods.
-        """
-        arr = self.instance
-        mem_bytes_file = io.BytesIO()
-        np.savez_compressed(mem_bytes_file, **{self._NPZ_KEY: arr})
-        return {"hash": self.get_hash(), "serialized": mem_bytes_file.getvalue()}
+        return {"hash": self.get_hash()}  # , "serialized": self.serialize()}
 
-    def __setstate__(self, state: dict) -> None:
-        """
-        Populates the value from state during deserialization.
-        """
-        arr_bytes = io.BytesIO(state["serialized"])
-        with np.load(arr_bytes, allow_pickle=False) as data:
-            arr = data[self._NPZ_KEY]
-
-        self.instance = arr
-        self._hash = state["hash"]
+    # def __setstate__(self, state: dict) -> None:
+    #     """
+    #     Populates the value from state during deserialization.
+    #     """
+    #     arr_bytes = io.BytesIO(state["serialized"])
+    #     self.instance = self.deserialize(None, arr_bytes)
+    #     self._hash = state["hash"]
 
     def _serialize(self) -> bytes:
         arr = self.instance
