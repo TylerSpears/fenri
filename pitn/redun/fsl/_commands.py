@@ -200,7 +200,7 @@ def topup(
         if pitn.utils.cli_parse.is_sequence(v):
             out_files[k] = [File(str(f)).stage(f) for f in v]
         else:
-            out_files[k] = File(str(v))
+            out_files[k] = File(str(v)).stage(v)
 
     script_executor = dict()
     if script_exec_config is not None:

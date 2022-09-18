@@ -17,17 +17,19 @@ if __package__ is not None:
 
 
 @task(
-    # check_valid="shallow",
-    config_args=["tmp_dir", "script_exec_config"],
+    check_valid="shallow",
+    config_args=["tmp_dir", "script_exec_config", "thread_count"],
 )
 def bvec_flip_correct_files(
     dwi_f: File,
     bval_f: File,
     bvec_f: File,
     tmp_dir: str,
+    bval_out_f: str,
     mask_f: Optional[File] = None,
+    thread_count: Optional[int] = None,
     script_exec_config: Optional[Dict[str, Any]] = None,
-) -> np.ndarray:
+) -> File:
 
     d = Path(tmp_dir)
     # dwi_f_basename = Path(dwi_f.path).name.replace(
@@ -56,17 +58,23 @@ def bvec_flip_correct_files(
         method="DTI",
         check_btable=True,
         save_src=preproc_src_dwi_f,
-        align_acpc=False,
+        align_acpc=True,
         other_output="md",
         record_odf=False,
         log_stdout=False,
+        thread_count=thread_count,
         script_exec_config=script_exec_config,
     )
     preproc_src_dwi = recon_files["preproc"]
 
     corrected_btable = _extract_btable(preproc_src_dwi)
     corrected_bvec = _extract_bvec(corrected_btable)
-    return corrected_bvec
+
+    corrected_bvec_f = pitn.redun.utils.save_np_txt(
+        str(bval_out_f), corrected_bvec, fmt="%g"
+    )
+
+    return corrected_bvec_f
 
 
 @task(
@@ -145,19 +153,22 @@ def bvec_flip_correct(
 
 @task(cache=False, hash_includes=[pitn.data.utils.least_distort_b0_idx])
 def top_k_b0s(
-    dwi: NDArrayValue,
+    dwi: np.ndarray,
     bval: np.ndarray,
     bvec: np.ndarray,
     n_b0s: int = 3,
     b0_max: float = 100,
+    seed: Optional[int] = None,
 ) -> dict:
     b0_mask = bval <= b0_max
     b0s = dwi[..., b0_mask]
     b0_bvals = bval[b0_mask]
     b0_bvecs = bvec[:, b0_mask]
-    top_b0s_idx = pitn.data.utils.least_distort_b0_idx(b0s, num_selections=n_b0s)
+    top_b0s_idx = pitn.data.utils.least_distort_b0_idx(
+        b0s, num_selections=n_b0s, seed=seed
+    )
     output = dict(
-        dwi=NDArrayValue(b0s[..., top_b0s_idx]),
+        dwi=b0s[..., top_b0s_idx],
         bval=b0_bvals[top_b0s_idx],
         bvec=b0_bvecs[:, top_b0s_idx],
     )
@@ -178,7 +189,10 @@ def bet_mask_median_dwis(
     # dwi_path = Path(dwi_f.path)
     median_out_fname = "_tmp_median.nii.gz"
     median_out_path = out_path / median_out_fname
-    median_dwi = nib.Nifti1Image(median_dwi_data, dwi.affine, dwi.header)
+    # median_dwi = nib.Nifti1Image(median_dwi_data, dwi.affine, dwi.header)
+    median_dwi = pitn.redun.utils.NibImageTuple(
+        median_dwi_data, dwi.affine, header=dict(dwi.header)
+    )
     median_dwi_f = save_nib(median_dwi, str(median_out_path))
 
     mask_out_basename = str(out_path / Path(out_file).name)
@@ -194,9 +208,8 @@ def bet_mask_median_dwis(
         **bet_kwargs,
     )
     target_mask_f = File(out_file)
-    mask_f = bet_outputs["mask"].copy_to(target_mask_f)
     # Copy the bet output mask to the given output location.
-    mask_f = mask_f.copy
+    mask_f = bet_outputs["mask"].copy_to(target_mask_f)
     # Delete the temporary median dwi.
     median_dwi_f.remove()
     return mask_f

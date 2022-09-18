@@ -9,13 +9,17 @@ def b0_idx(bvals) -> np.ndarray:
 
 # For use mainly with topup when sub-selecting AP/PA b0s, want the b0s with the lowest
 # amount of head motion, i.e. the ones closest to the median b0.
-def least_distort_b0_idx(b0s, num_selections=1):
+def least_distort_b0_idx(b0s, num_selections=1, seed=None):
     # Compare each b0 to the median of all b0s.
     median = np.median(b0s, axis=3).astype(b0s.dtype)
     sitk_median = sitk.GetImageFromArray(median)
     l_b0 = np.split(b0s, b0s.shape[-1], axis=3)
     sitk_mi = sitk.ImageRegistrationMethod()
     sitk_mi.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    if seed is not None:
+        sitk_mi.SetMetricSamplingPercentage(
+            float(sitk_mi.GetMetricSamplingPercentagePerLevel()[0]), seed=seed
+        )
     sitk_mi.SetInterpolator(sitk.sitkNearestNeighbor)
     mis = list()
     print("Mutual Information between b0s and median b0: ")

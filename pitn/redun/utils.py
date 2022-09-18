@@ -21,174 +21,103 @@ NibImageTuple = namedtuple(
     defaults=(None, None, None),
 )
 
-# class NDArrayValue(redun.value.ProxyValue):
-
-#     MIME_TYPE_NDARRAY = "application/x-python-numpy-ndarray"
-#     type: numpy.ndarray
-#     type_name = "numpy.ndarray"
-#     _NPZ_KEY = "array"
-
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self._hash = None
-
-#     def __repr__(self) -> str:
-#         return (
-#             "<NDArrayValue "
-#             f"size '{self.instance.shape}', "
-#             f"dtype '{self.instance.dtype}', "
-#             f"at {hex(id(self))}>"
-#         )
-
-#     def __getstate__(self) -> dict:
-#         return {"hash": self.get_hash(), "serialized": self.serialize()}
-
-#     def __setstate__(self, state: dict) -> None:
-#         """
-#         Populates the value from state during deserialization.
-#         """
-#         arr_bytes = io.BytesIO(state["serialized"])
-#         self.instance = self.deserialize(None, arr_bytes)
-#         self._hash = state["hash"]
-
-#     def _serialize(self) -> bytes:
-#         arr = self.instance
-#         mem_bytes_file = io.BytesIO()
-#         np.save(mem_bytes_file, arr, allow_pickle=False)
-#         return mem_bytes_file.getvalue()
-
-#     @classmethod
-#     def _deserialize(cls, data: bytes) -> Any:
-#         # User defined deserialization.
-#         arr_bytes = io.BytesIO(data)
-#         arr = np.load(arr_bytes, allow_pickle=False)
-#         return arr
-
-#     def get_hash(self, data: Optional[bytes] = None) -> str:
-#         """
-#         Returns a hash for the value.
-#         """
-#         # The hash is calculated from the serialize() output, while the state dict data
-#         # is made up of the .npz compressed data.
-#         if data is None:
-#             if self._hash is None:
-#                 data = self.serialize()
-#                 # Cache the hash.
-#                 self._hash = super().get_hash(data)
-#             ret = self._hash
-#         else:
-#             ret = super().get_hash(data)
-
-#         return ret
-
-#     def serialize(self) -> bytes:
-#         return self._serialize()
-
-#     @classmethod
-#     def deserialize(cls, raw_type: type, data: bytes) -> Any:
-#         """
-#         Returns a deserialization of bytes `data` into a new Value.
-#         """
-#         return cls._deserialize(data)
-
-#     @classmethod
-#     def get_serialization_format(cls) -> str:
-#         """
-#         Returns mimetype of serialization.
-#         """
-#         return cls.MIME_TYPE_NDARRAY
-
-#     @classmethod
-#     def parse_arg(cls, raw_type: type, arg: str) -> Any:
-#         """
-#         Parse a command line argument in a new Value.
-#         """
-#         return np.fromstring(arg)
-
 
 class NDArrayValue(redun.value.ProxyValue):
+    pass
+    # MIME_TYPE_NDARRAY = "application/x-python-numpy-ndarray"
+    # type: numpy.ndarray
+    # type_name = "numpy.ndarray"
+    # _NPZ_KEY = "array"
 
-    MIME_TYPE_NDARRAY = "application/x-python-numpy-ndarray"
-    type: numpy.ndarray
-    type_name = "numpy.ndarray"
-    _NPZ_KEY = "array"
+    # def __init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
+    #     self._hash = None
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._hash = None
+    # def __repr__(self) -> str:
+    #     return (
+    #         "<NDArrayValue "
+    #         f"size '{self.instance.shape}', "
+    #         f"dtype '{self.instance.dtype}', "
+    #         f"at {hex(id(self))}>"
+    #     )
 
-    def __repr__(self) -> str:
-        return (
-            "<NDArrayValue "
-            f"size '{self.instance.shape}', "
-            f"dtype '{self.instance.dtype}', "
-            f"at {hex(id(self))}>"
-        )
-
-    def __getstate__(self) -> dict:
-        return {"hash": self.get_hash()}  # , "serialized": self.serialize()}
+    # def __getstate__(self) -> dict:
+    #     return {"hash": self.get_hash(), "serialized": self.serialize()}
 
     # def __setstate__(self, state: dict) -> None:
     #     """
     #     Populates the value from state during deserialization.
     #     """
-    #     arr_bytes = io.BytesIO(state["serialized"])
+    #     arr_bytes = state["serialized"]
     #     self.instance = self.deserialize(None, arr_bytes)
     #     self._hash = state["hash"]
 
-    def _serialize(self) -> bytes:
-        arr = self.instance
-        mem_bytes_file = io.BytesIO()
-        np.save(mem_bytes_file, arr, allow_pickle=False)
-        return mem_bytes_file.getvalue()
+    # ### Hash only state
+    # # def __getstate__(self) -> dict:
+    # #     return {"hash": self.get_hash()}  # , "serialized": self.serialize()}
 
-    @classmethod
-    def _deserialize(cls, data: bytes) -> Any:
-        # User defined deserialization.
-        arr_bytes = io.BytesIO(data)
-        arr = np.load(arr_bytes, allow_pickle=False)
-        return arr
+    # # def __setstate__(self, state: dict) -> None:
+    # #     """
+    # #     Populates the value from state during deserialization.
+    # #     """
+    # #     arr_bytes = io.BytesIO(state["serialized"])
+    # #     self.instance = self.deserialize(None, arr_bytes)
+    # #     self._hash = state["hash"]
+    # ###
 
-    def get_hash(self, data: Optional[bytes] = None) -> str:
-        """
-        Returns a hash for the value.
-        """
-        # The hash is calculated from the serialize() output, while the state dict data
-        # is made up of the .npz compressed data.
-        if data is None:
-            if self._hash is None:
-                data = self.serialize()
-                # Cache the hash.
-                self._hash = super().get_hash(data)
-            ret = self._hash
-        else:
-            ret = super().get_hash(data)
+    # def _serialize(self) -> bytes:
+    #     arr = self.instance
+    #     mem_bytes_file = io.BytesIO()
+    #     np.save(mem_bytes_file, arr, allow_pickle=True)
+    #     return mem_bytes_file.getvalue()
 
-        return ret
+    # @classmethod
+    # def _deserialize(cls, data: bytes) -> Any:
+    #     # User defined deserialization.
+    #     arr_bytes = io.BytesIO(data)
+    #     arr = np.load(arr_bytes, allow_pickle=True)
+    #     return arr
 
-    def serialize(self) -> bytes:
-        return self._serialize()
+    # def get_hash(self, data: Optional[bytes] = None) -> str:
+    #     """
+    #     Returns a hash for the value.
+    #     """
+    #     # The hash is calculated from the serialize() output, while the state dict data
+    #     # is made up of the .npz compressed data.
+    #     if data is None:
+    #         if self._hash is None:
+    #             data = self.serialize()
+    #             # Cache the hash.
+    #             self._hash = super().get_hash(data)
+    #         ret = self._hash
+    #     else:
+    #         ret = super().get_hash(data)
 
-    @classmethod
-    def deserialize(cls, raw_type: type, data: bytes) -> Any:
-        """
-        Returns a deserialization of bytes `data` into a new Value.
-        """
-        return cls._deserialize(data)
+    #     return ret
 
-    @classmethod
-    def get_serialization_format(cls) -> str:
-        """
-        Returns mimetype of serialization.
-        """
-        return cls.MIME_TYPE_NDARRAY
+    # def serialize(self) -> bytes:
+    #     return self._serialize()
 
-    @classmethod
-    def parse_arg(cls, raw_type: type, arg: str) -> Any:
-        """
-        Parse a command line argument in a new Value.
-        """
-        return np.fromstring(arg)
+    # @classmethod
+    # def deserialize(cls, raw_type: type, data: bytes) -> Any:
+    #     """
+    #     Returns a deserialization of bytes `data` into a new Value.
+    #     """
+    #     return cls._deserialize(data)
+
+    # @classmethod
+    # def get_serialization_format(cls) -> str:
+    #     """
+    #     Returns mimetype of serialization.
+    #     """
+    #     return cls.MIME_TYPE_NDARRAY
+
+    # @classmethod
+    # def parse_arg(cls, raw_type: type, arg: str) -> Any:
+    #     """
+    #     Parse a command line argument in a new Value.
+    #     """
+    #     return np.fromstring(arg)
 
 
 @task(cache=False)
@@ -211,7 +140,7 @@ def save_nib(im: NibImageTuple, f: str, **kwargs) -> File:
 
 
 @task(cache=False)
-def save_np_to_nib(arr: NDArrayValue, affine: np.ndarray, f: str, **kwargs) -> File:
+def save_np_to_nib(arr: np.ndarray, affine: np.ndarray, f: str, **kwargs) -> File:
     im = NibImageTuple(arr, affine=affine, **kwargs)
     return save_nib(im, f)
 
@@ -220,7 +149,7 @@ def save_np_to_nib(arr: NDArrayValue, affine: np.ndarray, f: str, **kwargs) -> F
 def load_nib(f: File, **kwargs) -> NibImageTuple:
     im = nib.load(f.path, **kwargs)
     return NibImageTuple(
-        NDArrayValue(im.get_fdata()), im.affine, dict(im.header), im.extra
+        np.ndarray(im.get_fdata()), im.affine, dict(im.header), im.extra
     )
 
 

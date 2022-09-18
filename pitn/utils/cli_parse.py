@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import collections.abc
+import os
 import re
 import shlex
 from pathlib import Path
@@ -85,8 +86,12 @@ def append_cmd_stdout_stderr_to_file(
     if not overwrite_log:
         log_tokens.append("--append")
     log_f = str(log_file)
-    log_tokens.append(shlex.quote(log_f))
+    log_path = Path(log_f)
+    tmp_log_f = str(log_path.parent / (".tmp." + log_path.name))
+    log_tokens.append(shlex.quote(tmp_log_f))
     joined_cmd = " ".join([cmd] + log_tokens)
+    replace_cmd_tokens = ["mv", "--force", tmp_log_f, log_f]
+    joined_cmd = "\n".join([joined_cmd, shlex.join(replace_cmd_tokens)])
 
     return joined_cmd
 
