@@ -792,9 +792,9 @@ def vcu_dwi_preproc(
         if ap_pa_bval_path.exists():
             prev_ap_pa_bval = np.loadtxt(str(ap_pa_bval_path))
             if not np.isclose(ap_pa_bval, prev_ap_pa_bval).all():
-                nib.save(ap_pa_bval, str(ap_pa_bval_path))
+                np.savetxt(str(ap_pa_bval_path), ap_pa_bval)
         else:
-            nib.save(ap_pa_bval, str(ap_pa_bval_path))
+            np.savetxt(str(ap_pa_bval_path), ap_pa_bval)
         ap_pa_bval_f = File(str(ap_pa_bval_path))
         subj_outputs.eddy[subj_id].input_bval = ap_pa_bval_f
 
@@ -805,9 +805,9 @@ def vcu_dwi_preproc(
         if ap_pa_bvec_path.exists():
             prev_ap_pa_bvec = np.loadtxt(str(ap_pa_bvec_path))
             if not np.isclose(ap_pa_bvec, prev_ap_pa_bvec).all():
-                nib.save(ap_pa_bvec, str(ap_pa_bvec_path))
+                np.savetxt(str(ap_pa_bvec_path), ap_pa_bvec)
         else:
-            nib.save(ap_pa_bvec, str(ap_pa_bvec_path))
+            np.savetxt(str(ap_pa_bvec_path), ap_pa_bvec)
         ap_pa_bvec_f = File(str(ap_pa_bvec_path))
         subj_outputs.eddy[subj_id].input_bvec = ap_pa_bvec_f
 
@@ -815,7 +815,7 @@ def vcu_dwi_preproc(
         docker_vols = {
             str(eddy_out_path),
             str(Path(subj_outputs.topup[subj_id].corrected_im.path).parent),
-            str(Path(subj_outputs.bet_topup2eddy[subj_id].mask.path).parent),
+            str(Path(subj_outputs.bet_topup2eddy[subj_id].path).parent),
         }
         docker_vols = list((v, v) for v in tuple(docker_vols))
         script_exec_config = dict(

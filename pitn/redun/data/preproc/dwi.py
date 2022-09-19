@@ -190,12 +190,10 @@ def bet_mask_median_dwis(
     median_out_fname = "_tmp_median.nii.gz"
     median_out_path = out_path / median_out_fname
     # median_dwi = nib.Nifti1Image(median_dwi_data, dwi.affine, dwi.header)
-    median_dwi = pitn.redun.utils.NibImageTuple(
-        median_dwi_data, dwi.affine, header=dict(dwi.header)
-    )
-    median_dwi_f = save_nib(median_dwi, str(median_out_path))
+    median_dwi = pitn.redun.utils.NibImageTuple(median_dwi_data, dwi.affine)
+    median_dwi_f = save_nib.options(cache=True)(median_dwi, str(median_out_path))
 
-    mask_out_basename = str(out_path / Path(out_file).name)
+    mask_out_basename = pitn.utils.cli_parse.file_basename(out_file)
 
     bet_outputs = pitn.redun.fsl.bet(
         median_dwi_f,
@@ -210,8 +208,6 @@ def bet_mask_median_dwis(
     target_mask_f = File(out_file)
     # Copy the bet output mask to the given output location.
     mask_f = bet_outputs["mask"].copy_to(target_mask_f)
-    # Delete the temporary median dwi.
-    median_dwi_f.remove()
     return mask_f
 
 

@@ -262,7 +262,7 @@ def bet(
     # Run the command.
     cmd_task_outs = script(
         cmd,
-        inputs=[in_file.stage(in_file)],
+        inputs=[in_file.stage(in_file.path)],
         outputs=out_files,
         **script_executor,
     )

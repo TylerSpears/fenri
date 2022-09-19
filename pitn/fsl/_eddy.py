@@ -762,6 +762,30 @@ def parse_s2v_params_f(
 
 
 def estimate_slspec(json_sidecar: dict, n_slices: int) -> Optional[np.ndarray]:
+    """Estimate slspec timing information for FSL eddy.
+
+    This process is highly error-prone, even from experts and with the help of
+    DICOM to Nifti convertors. You can thank MR machine manufacturers. Useful links:
+
+    <https://en.wikibooks.org/wiki/SPM/Slice_Timing>
+    <https://web.archive.org/web/20180718215057/http://dbic.dartmouth.edu/wiki/index.php?title=Slice_Acquisition_Order&oldid=1246>
+    <https://web.archive.org/web/20161123082626/https://nifti.nimh.nih.gov/nifti-1/documentation/faq/#Q20>
+    <https://github.com/rordenlab/dcm2niix>
+    <https://www.nitrc.org/plugins/mwiki/index.php/dcm2nii:MainPage#Slice_timing_correction>
+    <https://crnl.readthedocs.io/stc/index.html>
+    <https://practicalfmri.blogspot.com/2012/07/siemens-slice-ordering.html>
+    <https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/eddy/UsersGuide#A--slspec>
+
+    Parameters
+    ----------
+    json_sidecar : dict
+    n_slices : int
+
+    Returns
+    -------
+    Optional[np.ndarray]
+
+    """
     if "SliceTiming" in json_sidecar.keys():
         slspec = slice_timing2slspec(np.asarray(json_sidecar["SliceTiming"]))
     elif (
@@ -778,24 +802,35 @@ def estimate_slspec(json_sidecar: dict, n_slices: int) -> Optional[np.ndarray]:
         mb_factor = int(round(json_sidecar[mb_k]))
         mb_groups = n_slices // mb_factor
 
-        if mb_groups % 2 == 0:
-            raise NotImplementedError("ERROR: Even-value MB groups not supported")
-
         slspec_rows = list()
-
         slice_idx = np.arange(n_slices)
-        for even_idx in slice_idx[::2]:
-            group = slice_idx[even_idx::mb_groups]
-            if len(group) < mb_factor:
-                break
-            slspec_rows.append(group)
-        for odd_idx in slice_idx[1::2]:
-            group = slice_idx[odd_idx::mb_groups]
-            if len(group) < mb_factor:
-                break
-            slspec_rows.append(group)
 
-        slspec = np.stack(slspec_rows, axis=0)
+        if mb_groups % 2 == 0:
+            for odd_idx in slice_idx[1::2]:
+                group = slice_idx[odd_idx::mb_groups]
+                if len(group) < mb_factor:
+                    break
+                slspec_rows.append(group)
+            for even_idx in slice_idx[::2]:
+                group = slice_idx[even_idx::mb_groups]
+                if len(group) < mb_factor:
+                    break
+                slspec_rows.append(group)
+
+            slspec = np.stack(slspec_rows, axis=0)
+        else:
+            for even_idx in slice_idx[::2]:
+                group = slice_idx[even_idx::mb_groups]
+                if len(group) < mb_factor:
+                    break
+                slspec_rows.append(group)
+            for odd_idx in slice_idx[1::2]:
+                group = slice_idx[odd_idx::mb_groups]
+                if len(group) < mb_factor:
+                    break
+                slspec_rows.append(group)
+
+            slspec = np.stack(slspec_rows, axis=0)
     else:
         # Assume single-band, which still has a slice acqusition order.
         slspec = np.arange(n_slices).reshape(-1, 1)

@@ -194,10 +194,10 @@ def topup_cmd_explicit_in_out_files(
 
     out_base = str(out)
     im_output_suff = FSL_OUTPUT_TYPE_SUFFIX_MAP[fsl_output_type.upper().strip()]
-    out_files["fieldcoef"] = "".join([out_base, "fieldcoef", im_output_suff])
+    out_files["fieldcoef"] = "".join([out_base, "_fieldcoef", im_output_suff])
 
     if estmov:
-        out_files["movpar"] = out_base + "movpar.txt"
+        out_files["movpar"] = out_base + "_movpar.txt"
     if iout is not None:
         if len(Path(iout).suffixes) == 0:
             iout_f = str(iout) + im_output_suff
