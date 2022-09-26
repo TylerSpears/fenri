@@ -17,7 +17,7 @@ if __package__ is not None:
         pitn.fsl._eddy._eddy_unambiguous_input_files,
         pitn.fsl._eddy._eddy_unambiguous_output_files,
     ],
-    config_args=["script_exec_config"],
+    config_args=["auto_select_gpu", "script_exec_config"],
     version="1",
 )
 def eddy(
@@ -104,6 +104,7 @@ def eddy(
     verbose: bool = False,
     fsl_output_type: str = "NIFTI_GZ",
     log_stdout: bool = True,
+    auto_select_gpu: bool = False,
     script_exec_config: Optional[Dict[str, Any]] = None,
 ):
     args = locals()
@@ -121,7 +122,7 @@ def eddy(
     cmd, in_files, out_files = pitn.fsl.eddy_cmd_explicit_in_out_files(**call_kwargs)
 
     for k, v in out_files.items():
-        if isinstance(v, list):
+        if pitn.utils.cli_parse.is_sequence(v):
             new_v = [File(f).stage(f) for f in v]
         else:
             new_v = File(v).stage(v)

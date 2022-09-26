@@ -745,8 +745,9 @@ def vcu_dwi_preproc(
 
         # Create index file that relates DWI index to the acquisition params.
         index_path = eddy_out_path / "index.txt"
-        ap_acqp_idx = 0
-        pa_acqp_idx = num_b0s_per_pe
+        # The index file is 1-indexed, not 0-indexed.
+        ap_acqp_idx = 1
+        pa_acqp_idx = num_b0s_per_pe + 1
         index_acqp = np.asarray(
             [ap_acqp_idx] * nib.load(subj_info.ap.dwi.path).shape[-1]
             + [pa_acqp_idx] * nib.load(subj_info.pa.dwi.path).shape[-1]
@@ -824,16 +825,20 @@ def vcu_dwi_preproc(
             volumes=docker_vols,
             gpus=1,
             memory=16,
-            vcpus=8,
+            vcpus=6,
+            # Task limits must go in the script config, not the script task creator!
+            # Otherwise, the resource is only consumed to make the *task expression*,
+            # but not consumed when actually *running* the script.
+            limits={"gpu": 1},
         )
         # Run eddy.
-        eddy_subj_expr = pitn.redun.fsl.eddy.options(limits={"gpu": 1, "cpu": 8})(
+        eddy_subj_expr = pitn.redun.fsl.eddy(
             imain=subj_outputs.eddy[subj_id].input_dwi,
             bvecs=subj_outputs.eddy[subj_id].input_bvec,
             bvals=subj_outputs.eddy[subj_id].input_bval,
             mask=subj_outputs.bet_topup2eddy[subj_id],
             index=subj_outputs.eddy[subj_id].index,
-            acqp=subj_outputs[subj_id].topup.acqparams,
+            acqp=subj_outputs.topup[subj_id].acqparams,
             slspec=subj_outputs.eddy[subj_id].slspec,
             topup_fieldcoef=subj_outputs.topup[subj_id].fieldcoef,
             topup_movpar=subj_outputs.topup[subj_id].movpar,
@@ -854,11 +859,13 @@ def vcu_dwi_preproc(
             cnr_maps=True,
             fields=True,
             dfields=True,
-            write_predictions=True,
+            # write_predictions=True,
             very_verbose=True,
             log_stdout=True,
             use_cuda=True,
+            auto_select_gpu=True,
             out=str(eddy_out_path / f"{subj_id}_eddy"),
+            script_exec_config=script_exec_config,
         )
         eddy_exprs[subj_id] = eddy_subj_expr
 
@@ -875,7 +882,7 @@ def vcu_dwi_preproc(
 # Set up redun scheduler.
 repo = "pitn"
 redun_conf = redun.cli.setup_config(repo=repo, initialize=True)
-sched = redun.Scheduler(config=redun_conf)
+sched = redun.Scheduler(config=redun_conf, job_status_interval=int(60 * 1))
 sched.load()
 
 eddy_random_seed = 42138

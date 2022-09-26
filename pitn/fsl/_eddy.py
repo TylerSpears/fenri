@@ -319,7 +319,7 @@ def eddy_cmd(
         if is_sequence(v):
             cval = convert_seq_for_params(v)
         # boolean flags are only set by calling them, not assigning a value.
-        if isinstance(v, bool):
+        elif isinstance(v, bool):
             if not v:
                 continue
             else:
@@ -420,6 +420,7 @@ def eddy_cmd_explicit_in_out_files(
     very_verbose: bool = True,
     verbose: bool = False,
     fsl_output_type: str = "NIFTI_GZ",
+    auto_select_gpu: bool = False,
     log_stdout: bool = True,
 ) -> Tuple[str, List[str], Dict[str, Union[List[str], str]]]:
 
@@ -494,6 +495,21 @@ def eddy_cmd_explicit_in_out_files(
     cmd_kwargs["field"] = field_basename
     cmd_kwargs["field_mat"] = field_mat_basename
     cmd = eddy_cmd(**cmd_kwargs)
+
+    # If selected, add env var for auto-selecting GPU with lowest memory usage.
+    if auto_select_gpu:
+        # Randomly sleep between 0.5 and 5.0 seconds to allow other processes to
+        # allocate and start running before grabbing a GPU id.
+        random_sleep = r'sleep $(bc <<< "scale=4; 0.5 + 4.5 * $RANDOM / 32767")'
+        # Select GPU with lowest process utilization. From
+        # <https://stackoverflow.com/questions/39649102/how-do-i-select-which-gpu-to-run-a-job-on#comment123697227_69904259>
+        env_var_select = str(
+            r"CUDA_VISIBLE_DEVICES="
+            r"$(nvidia-smi --query-gpu=memory.free,index --format=csv,nounits,noheader "
+            r"| sort -nr | head -1 | awk '{ print $NF }')"
+        )
+        cmd = " ".join([env_var_select, cmd])
+        cmd = "\n".join([random_sleep, cmd])
     # Add stdout output piping, if needed.
     if log_stdout:
         cmd = append_cmd_stdout_stderr_to_file(
@@ -521,6 +537,23 @@ def eddy_cmd_explicit_in_out_files(
     out_files.update(_eddy_unambiguous_output_files(**cmd_kwargs))
 
     return cmd, in_files, out_files
+
+
+#
+# if auto_select_gpu:
+#     # From
+#     # <https://stackoverflow.com/questions/39649102/how-do-i-select-which-gpu-to-run-a-job-on#comment123697227_69904259>
+#     select_command = str(
+#         r"__GPU_ID="
+#         r"$(nvidia-smi --query-gpu=utilization.gpu,index --format=csv,nounits,noheader "
+#         r"| sort -n | head -1 | awk '{ print $NF }')"
+#     )
+#     prefix_env_vars = [
+#         r'NVIDIA_VISIBLE_DEVICES="$__GPU_ID"',
+#         r'CUDA_VISIBLE_DEVICES="$__GPU_ID"',
+#     ]
+#     cmd = " ".join(prefix_env_vars + [cmd])
+#     cmd = "\n".join([select_command, cmd])
 
 
 def _eddy_unambiguous_input_files(

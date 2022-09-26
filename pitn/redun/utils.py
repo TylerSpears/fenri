@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
+import ast
+import inspect
 import io
+import os
+import pickle
 from collections import namedtuple
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy
 import numpy as np
 import redun
+import redun.hashing
 import redun.value
 from redun import File, task
 
@@ -14,6 +19,283 @@ import pitn
 
 if __package__ is not None:
     redun_namespace = str(__package__)
+
+banner = "=!" * 10
+
+
+class BigNDArrayValue(redun.value.FileCache):
+
+    type: numpy.ndarray
+    type_name = "numpy.ndarray"
+
+    def __init__(self, instance: Any):
+        super().__init__(instance)
+        self._base_path = None
+        self._hash = None
+
+    @property
+    def base_path(self) -> str:
+        if self._base_path is None:
+            from redun.scheduler import get_current_scheduler
+
+            config = get_current_scheduler(required=True).config.get_config_dict()
+            print(config)
+            if "value_store_path" in config["backend"]:
+                self._base_path = "/".join(
+                    [str(config["backend"]["value_store_path"]), "BigNDArray"]
+                )
+            else:
+                self._base_path = "/".join(
+                    [str(config["backend"]["config_dir"]), "BigNDArray"]
+                )
+        os.makedirs(self._base_path, exist_ok=True)
+        return self._base_path
+
+    def _serialize(self) -> bytes:
+        arr = self.instance
+        mem_bytes_file = io.BytesIO()
+        np.save(mem_bytes_file, arr, allow_pickle=False)
+        return mem_bytes_file.getvalue()
+
+    def serialize(self) -> bytes:
+        from redun.file import File
+
+        if self._hash is None:
+            # Serialize data.
+            self._hash = self.get_hash()
+        # Write (possibly large) data to file.
+        filename = os.path.join(self.base_path, self._hash)
+        # If the file already exists, then by the definition of the hash function this
+        # data already exists.
+        if not os.path.exists(filename):
+            File(filename).write(bytes, mode="wb")
+
+        # Only cache filename.
+        return filename.encode("utf8")
+
+    def get_hash(self, data: Optional[bytes] = None) -> str:
+        if self._hash is None:
+            from redun.hashing import hash_bytes
+
+            bytes = self._serialize()
+            self._hash = hash_bytes(bytes)
+        return self._hash
+
+    @classmethod
+    def _deserialize(cls, data: bytes) -> Any:
+        arr_bytes = io.BytesIO(data)
+        arr = np.load(arr_bytes, allow_pickle=False)
+        return arr
+
+    def __getstate__(self) -> dict:
+        return {"base_path": self.base_path, "hash": self._hash}
+
+    def __setstate__(self, data: dict):
+        self._base_path = data["base_path"]
+        self._hash = data["hash"]
+
+
+# class BeyondPickleValue(redun.value.ProxyValue):
+
+#     type: numpy.ndarray
+#     type_name = "numpy.ndarray"
+#     PICKLE_PROTOCOL = 4
+
+#     def __init__(self, instance: Any):
+#         super().__init__(instance)
+#         self._proxy_hash = None
+#         self._instance_hash = None
+#         self._backend_db = None
+
+#     @property
+#     def val(self):
+#         return self.instance
+
+#     def __getstate__(self) -> dict:
+#         print(
+#             banner, f"__getstate__ {type(self.instance)}, {self.instance.shape}", banner
+#         )
+#         return {"instance_hash": self._get_instance_hash()}
+
+#     def __setstate__(self, state: dict) -> None:
+#         self._backend_db = None
+#         self._proxy_hash = None
+#         self._instance_hash = state["instance_hash"]
+#         self.instance, self._backend_db = self._get_instance(
+#             self._instance_hash, self._backend_db
+#         )
+#         self._proxy_hash = self._get_proxy_hash()
+#         print(
+#             banner,
+#             f"__setstate__ state={state}, {type(self.instance)}, {self.instance.shape}",
+#             banner,
+#         )
+
+#     @classmethod
+#     def _stable_instance_hash(cls, instance: Any) -> str:
+#         # This *should* re-create the hash algorithm as done by redun internally
+#         # but without calling the bottleneck serialization (pickle dumps), but with
+#         # our own serialization.
+#         from redun.value import Value
+
+#         instance_hash = Value(instance).get_hash(
+#                 data=cls._beyond_pickle_serialize(instance)
+#          )
+
+#         return instance_hash
+
+#     def _get_instance_hash(self) -> str:
+#         if self._instance_hash is None:
+#             self._instance_hash = self._stable_instance_hash(self.instance)
+
+#         return self._instance_hash
+
+#     @classmethod
+#     def _get_instance(cls, instance_hash: str, backend_db=None) -> Tuple[Any, Any]:
+#         if backend_db is None:
+#             from redun.value import InvalidValueError
+#             from redun.scheduler import get_current_scheduler
+#             from redun.backends.db import RedunBackendDb
+
+#             backend_db = get_current_scheduler(required=True).backend
+#             # The base RedunBackend class does not have the functions we need to
+#             # set/get cache items, so it must be a database backend.
+#             assert isinstance(backend_db, RedunBackendDb)
+#         instance, valid = backend_db.get_value(instance_hash)
+#         if instance is None and not valid:
+#             raise InvalidValueError
+
+#         return instance, backend_db
+
+#     @classmethod
+#     def _beyond_pickle_serialize(cls, obj: Any) -> bytes:
+#         # User defined serialization.
+#         return pickle.dumps(obj, protocol=cls.PICKLE_PROTOCOL)
+
+#     def _record_instance(self) -> str:
+#         from redun.value import Value
+#         if self._backend_db is None:
+#             from redun.scheduler import get_current_scheduler
+#             from redun.backends.db import RedunBackendDb
+
+#             self._backend_db = get_current_scheduler(required=True).backend
+#             # The base RedunBackend class does not have the functions we need to
+#             # set/get cache items, so it must be a database backend.
+#             assert isinstance(self._backend_db, RedunBackendDb)
+
+#         recorded_instance_hash = self._backend_db.record_value(
+#             value=self.instance,
+#             data=self._beyond_pickle_serialize(self.instance),
+#         )
+#         if self._instance_hash is None:
+#             self._instance_hash = recorded_instance_hash
+
+#         if self._instance_hash != recorded_instance_hash:
+#             raise RuntimeError(
+#                 "\n".join(
+#                     [
+#                         f"ERROR: Set instance hash {self._instance_hash}",
+#                         "!=",
+#                         f"calculated {recorded_instance_hash}.",
+#                         "Check _get_instance_hash()"
+#                         + " vs. redun.backends.db.RedunBackendDb.record_value()",
+#                     ]
+#                 )
+#             )
+
+#         return self._instance_hash
+
+#     def _get_proxy_hash(self) -> str:
+#         if self._proxy_hash is None:
+#             from redun.hashing import hash_struct
+
+#             # Including the proxy class' source code allows us to make changes to how
+#             # the class functions without worrying about hash/cache collisions. And the
+#             # `unparse(parse(...))` processing normalizes spacing, removes comments,
+#             # etc.
+#             normalized_source = str(
+#                 ast.unparse(ast.parse(inspect.getsource(self.__class__)))
+#             )
+#             self._proxy_hash = hash_struct(
+#                 [
+#                     f"Value.{type(self).__name__}",
+#                     "instance_hash",
+#                     self._get_instance_hash(),
+#                     "proxy_unparsed_ast",
+#                     normalized_source,
+#                 ]
+#             )
+
+#         return self._proxy_hash
+
+#     def get_hash(self, data: Optional[bytes] = None) -> str:
+#         print(
+#             banner,
+#             "get_hash",
+#             f"data={str(data)}, instance={type(self.instance)} | {self.instance.shape}",
+#             banner,
+#         )
+#         if data is None:
+#             hash = self._get_proxy_hash()
+#         else:
+#             hash = super().get_hash(data)
+
+#         return hash
+
+#     def get_serialization_format(self) -> str:
+#         return f"application/x-python-pickle{self.PICKLE_PROTOCOL}"
+
+#     def serialize(self) -> bytes:
+#         instance_hash = self._record_instance()
+
+#         print(
+#             banner,
+#             "serialize",
+#             f"instance hash={instance_hash}, instance={type(self.instance)} | {self.instance.shape}",
+#             banner,
+#         )
+#         return instance_hash.encode("utf8")
+
+#     @staticmethod
+#     def _beyond_pickle_deserialize(data: bytes) -> Any:
+#         return pickle.loads(data)
+
+#     @classmethod
+#     def deserialize(cls, raw_type: type, data: bytes) -> Any:
+#         # The deserialization has to do double duty for deserializing both the 'pointer'
+#         # instance hash, and the instance data itself.
+#         try:
+#             # `data` is the instance hash string in a bytes object.
+#             instance_hash = data.decode("utf8")
+#             instance, _ = cls._get_instance(instance_hash, None)
+#         except UnicodeDecodeError:
+#             # `data` is the instance itself.
+#             instance = cls._beyond_pickle_deserialize(data)
+#         print(
+#             banner,
+#             "deserialize",
+#             f"data length={len(data)}",
+#             f"instance={instance}",
+#             banner,
+#         )
+#         return instance
+
+#     def preprocess(self, preprocess_args) -> redun.value.Value:
+#         print(
+#             banner,
+#             f"preprocess, preproc args {preprocess_args}, instance {self.instance.shape}",
+#             banner,
+#         )
+#         return self
+
+#     def postprocess(self, postprocess_args) -> redun.value.Value:
+#         print(
+#             banner,
+#             f"postprocess, postproc args {postprocess_args}, instance {self.instance.shape}",
+#             banner,
+#         )
+#         return self
+
 
 NibImageTuple = namedtuple(
     "NibImageTuple",
