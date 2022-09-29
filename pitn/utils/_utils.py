@@ -61,6 +61,12 @@ def union_parent_dirs(*paths, resolve=True) -> Tuple[Path]:
             parent_ps.add(str(p))
         elif p.is_file():
             parent_ps.add(str(p.parent))
+        elif not p.exists():
+            # Check one level up from the non-existent Path, but only one level.
+            if p.parent.exists():
+                parent_ps.add(str(p.parent))
+            else:
+                raise RuntimeError(f"ERROR: Path {p} and {p.parent} do not exist.")
 
     return tuple(parent_ps)
 

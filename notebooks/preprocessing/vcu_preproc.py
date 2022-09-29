@@ -233,22 +233,118 @@ def vcu_dwi_preproc(
         subj_output.denoise_mppca[pe_direct].mask_f = rough_mask_f
         subj_output.denoise_mppca[pe_direct].dwi_f = denoise_dwi_f
         subj_output.denoise_mppca[pe_direct].std_f = denoise_std_f
-        subj_output.denoise_mppca[pe_direct].dwi = nib.load(
-            subj_output.denoise_mppca[pe_direct].dwi_f
-        )
-        subj_output.denoise_mppca[pe_direct].mask = nib.load(
-            subj_output.denoise_mppca[pe_direct].mask_f
-        )
         t1 = time.time()
         print(f"Time taken for MP-PCA {pe_direct}: {t1 - t}")
         t = t1
 
+    # ###### 2. Remove Gibbs ringing artifacts.
+    gibbs_out_path = subj_input.output_path / "gibbs_remove"
+    gibbs_out_path.mkdir(exist_ok=True, parents=True)
+    for pe_direct in ("ap", "pa"):
+        subj_pe = subj_input[pe_direct]
+        # Check if computation should be redone.
+        # Define output files.
+        gibbs_corrected_dwi_f = (
+            gibbs_out_path / f"{subj_id}_{pe_direct}_gibbs-correct_dwi.nii.gz"
+        )
+        rerun = pitn.utils.rerun_indicator_from_mtime(
+            input_files=[
+                subj_output.denoise_mppca[pe_direct].dwi_f,
+                subj_output.denoise_mppca[pe_direct].mask_f,
+                subj_pe.bvec_f,
+                subj_pe.bval_f,
+            ],
+            output_files=[gibbs_corrected_dwi_f],
+        )
+        if rerun:
+            dwi = nib.load(subj_output.denoise_mppca[pe_direct].dwi_f)
+            dwi_degibbsed = dipy.denoise.gibbs.gibbs_removal(
+                dwi.get_fdata(),
+                slice_axis=2,
+                n_points=3,
+                inplace=False,
+                num_processes=4,
+            )
+            mask = nib.load(subj_output.denoise_mppca[pe_direct].mask_f).get_fdata()
+            dwi_degibbsed = dwi_degibbsed * mask[..., None].astype(np.uint8)
+            nib.save(
+                nib.Nifti1Image(dwi_degibbsed, dwi.affine, header=dwi.header),
+                gibbs_corrected_dwi_f,
+            )
+
+        subj_output.gibbs_remove[pe_direct].dwi_f = gibbs_corrected_dwi_f
+        t1 = time.time()
+        print(f"Time taken for Gibbs removal {pe_direct}: {t1 - t}")
+        t = t1
+
+    # ###### 3. Remove $B_1$ magnetic field bias.
+    b1_debias_out_path = subj_input.output_path / "b1_debias"
+    b1_debias_out_path.mkdir(exist_ok=True, parents=True)
+    docker_img = "mrtrix3/mrtrix3:3.0.3"
+    for pe_direct in ("ap", "pa"):
+        subj_pe = subj_input[pe_direct]
+        # Check if computation should be redone.
+        # Define output files.
+        b1_debias_dwi_f = (
+            b1_debias_out_path / f"{subj_id}_{pe_direct}_b1_debias_dwi.nii.gz"
+        )
+        b1_debias_bias_field_f = (
+            b1_debias_out_path / f"{subj_id}_{pe_direct}_b1_bias_field.nii.gz"
+        )
+        rerun = pitn.utils.rerun_indicator_from_mtime(
+            input_files=[
+                subj_output.gibbs_remove[pe_direct].dwi_f,
+                subj_output.denoise_mppca[pe_direct].mask_f,
+                subj_pe.bvec_f,
+                subj_pe.bval_f,
+            ],
+            output_files=[b1_debias_dwi_f, b1_debias_bias_field_f],
+        )
+        if rerun:
+            dwi_f = subj_output.gibbs_remove[pe_direct].dwi_f
+            mask_f = subj_output.denoise_mppca[pe_direct].mask_f
+            bval_f = subj_pe.bval_f
+            bvec_f = subj_pe.bvec_f
+            vols = pitn.utils.union_parent_dirs(
+                b1_debias_dwi_f, b1_debias_bias_field_f, bval_f, bvec_f, dwi_f, mask_f
+            )
+            vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
+            docker_config = dict(volumes=vols)
+            dwi_debias_script = pitn.mrtrix.dwi_bias_correct_cmd(
+                "ants",
+                dwi_f,
+                output=b1_debias_dwi_f,
+                bias=b1_debias_bias_field_f,
+                fslgrad=(bvec_f, bval_f),
+                mask=mask_f,
+                nthreads=4,
+                force=True,
+            )
+            dwi_debias_result = pitn.utils.proc_runner.call_docker_run(
+                img=docker_img, cmd=dwi_debias_script, run_config=docker_config
+            )
+            # Make sure to re-mask the de-biased output, can drastically reduce
+            # file size (up to 2x).
+            mask = nib.load(mask_f).get_fdata()
+            dwi_debiased = nib.load(b1_debias_dwi_f)
+            dwi_debiased_data = dwi_debiased.get_fdata() * mask[..., None].astype(
+                np.uint8
+            )
+            nib.save(
+                nib.Nifti1Image(
+                    dwi_debiased_data, dwi_debiased.affine, header=dwi_debiased.header
+                ),
+                b1_debias_dwi_f,
+            )
+
+        subj_output.b1_debias[pe_direct].dwi_f = b1_debias_dwi_f
+        subj_output.b1_debias[pe_direct].bias_field_f = b1_debias_bias_field_f
+        t1 = time.time()
+        print(f"Time taken for B1 field bias removal {pe_direct}: {t1 - t}")
+        t = t1
+
     # !DEBUG
     return subj_output
-    # ###### 2. Remove Gibbs ringing artifacts.
-
-    # ###### 3. Remove B_1 field bias.
-
     # ###### 4. Check bvec orientations
     bvec_flip_correct_path = subj_input.output_path / "bvec_flip_correct"
     bvec_flip_correct_path.mkdir(exist_ok=True, parents=True)

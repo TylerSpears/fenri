@@ -15,6 +15,7 @@ def dwi_bias_correct_cmd(
     bias: Optional[Path] = None,
     algorithm_options: Optional[Dict[str, Any]] = None,
     nthreads: Optional[int] = None,
+    force: bool = False,
     config: Optional[Dict[str, Any]] = None,
 ) -> str:
 
@@ -45,6 +46,9 @@ def dwi_bias_correct_cmd(
             cmd.append(f"-{k}")
             cmd.append(bvec)
             cmd.append(bval)
+        elif k in {"force"}:
+            if v:
+                cmd.append(f"-{k}")
         else:
             cmd.append(f"-{k}")
             cmd.append(str(v))
