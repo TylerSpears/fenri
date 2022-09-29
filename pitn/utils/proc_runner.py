@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 import atexit
 import datetime
+import multiprocessing
 import os
 import queue
 import shlex
 import signal
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -27,8 +29,14 @@ docker_run_default_config = dict(
     # tty=True,
     # stderr=True,
     privileged=True,
+    stop_signal="SIGINT",
     # stdout=True,
 )
+
+
+def multiline_script2docker_cmd(script: str):
+    wrapped_script = "\n".join([r"""bash -c " """, script, r""" " """])
+    return wrapped_script
 
 
 def call_docker_run(
@@ -59,6 +67,23 @@ def call_docker_run(
 
     # Run container in detached mode.
     container = client.containers.run(img, cmd, detach=True, **run_opts)
+
+    def _sigint_handler(sig, frame):
+        print(f"Signal {sig} caught!")
+        print(f"PID {os.getpid()}, PPID {os.getppid()}")
+        # Stop container first
+        container.stop(timeout=5)
+        # Clean up any other child processes.
+        # terminate all active children
+        active_cprocs = multiprocessing.active_children()
+        for child in active_cprocs:
+            child.terminate()
+        # block until all children have closed
+        for child in active_cprocs:
+            child.join()
+        sys.exit(1)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
 
     tail_logs = list()
     tail_maxsize = 30

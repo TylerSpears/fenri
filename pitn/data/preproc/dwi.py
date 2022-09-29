@@ -11,8 +11,103 @@ import nibabel as nib
 import numpy as np
 import scipy
 import SimpleITK as sitk
+import torchio
 
 import pitn
+
+
+def crop_or_pad_nib(nib_vol, target_shape: tuple, padding_mode=0):
+    vol = nib_vol.get_fdata()
+    if len(nib_vol.shape) == 4:
+        vol = einops.rearrange(vol, "x y z c -> c x y z")
+    else:
+        vol = vol[None, ...]
+    affine = nib_vol.affine
+    header = nib_vol.header
+    # padding_mode is the same as numpy.pad. See
+    # <https://numpy.org/doc/stable/reference/generated/numpy.pad.html>
+    tf = torchio.transforms.CropOrPad(
+        target_shape=target_shape, padding_mode=padding_mode
+    )
+    im = torchio.Image(type=torchio.ScalarImage, tensor=vol, affine=affine)
+    tf_im = tf(im)
+    tf_vol = np.asarray(tf_im.numpy()).astype(vol.dtype)
+    if len(nib_vol.shape) == 4:
+        tf_vol = einops.rearrange(tf_vol, "c x y z -> x y z c")
+    else:
+        tf_vol = tf_vol[0]
+    tf_affine = np.asarray(tf_im.affine)
+    nib_tf_vol = nib_vol.__class__(tf_vol, affine=tf_affine, header=header)
+
+    return nib_tf_vol
+
+
+def apply_torchio_tf_to_nib(tf, nib_vol, torchio_image_type=torchio.ScalarImage):
+    vol = nib_vol.get_fdata()
+    if len(nib_vol.shape) == 4:
+        vol = einops.rearrange(vol, "x y z c -> c x y z")
+    else:
+        vol = vol[None, ...]
+    aff = nib_vol.affine
+    header = nib_vol.header
+
+    im = torchio.Image(type=torchio.ScalarImage, tensor=vol, affine=aff)
+    tf_im = tf(im)
+
+    tf_vol = np.asarray(tf_im.numpy()).astype(vol.dtype)
+    if len(nib_vol.shape) == 4:
+        tf_vol = einops.rearrange(tf_vol, "c x y z -> x y z c")
+    else:
+        tf_vol = tf_vol[0]
+    tf_affine = np.asarray(tf_im.affine)
+    nib_tf_vol = nib_vol.__class__(tf_vol, affine=tf_affine, header=header)
+
+    return nib_tf_vol
+
+
+def transform_translate_nib_fov_to_target(
+    source_nib, target_affine: np.ndarray, padding_mode=0
+):
+    src_aff = source_nib.affine
+    if not np.isclose(src_aff[:-1, :-1], target_affine[:-1, :-1]).all():
+        raise ValueError(
+            "ERROR: Non-translation components of affines must be equal",
+            f"Expected equal affines, got {src_aff} and {target_affine}.",
+        )
+    vox_size = np.asarray(
+        [target_affine[0, 0], target_affine[1, 1], target_affine[2, 2]]
+    )
+    transl_diff = src_aff[:-1, -1] - target_affine[:-1, -1]
+    vox_transl_diff = transl_diff / vox_size
+    assert np.isclose(np.around(vox_transl_diff), vox_transl_diff).all()
+    vox_shift = np.around(vox_transl_diff).astype(int)
+    shift_pos = np.zeros_like(vox_shift) + ((vox_shift > 0) * vox_shift)
+    shift_neg = np.zeros_like(vox_shift) + ((vox_shift < 0) * np.abs(vox_shift))
+    tfs = list()
+    tfs.append(torchio.transforms.Lambda(lambda x: x))
+    if (shift_pos != 0).any():
+        tf_pad = torchio.transforms.Pad(
+            (shift_pos[0], 0, shift_pos[1], 0, shift_pos[2], 0),
+            padding_mode=padding_mode,
+        )
+        tf_crop = torchio.transforms.Crop(
+            (0, shift_pos[0], 0, shift_pos[1], 0, shift_pos[2]),
+        )
+        tfs.append(tf_pad)
+        tfs.append(tf_crop)
+    if (shift_neg != 0).any():
+        tf_pad = torchio.transforms.Pad(
+            (0, shift_neg[0], 0, shift_neg[1], 0, shift_neg[2]),
+            padding_mode=padding_mode,
+        )
+        tf_crop = torchio.transforms.Crop(
+            (shift_neg[0], 0, shift_neg[1], 0, shift_neg[2], 0),
+        )
+        tfs.append(tf_pad)
+        tfs.append(tf_crop)
+    tf = torchio.Compose(tfs)
+
+    return tf
 
 
 def crop_nib_by_mask(nib_vol, mask):
@@ -192,6 +287,7 @@ def top_k_b0s(
 
     # Rigidly register b0s together for a more fair comparison.
     reg_b0s = _b0_quick_rigid_reg(einops.rearrange(b0s, "x y z b -> b x y z"))
+    reg_b0s = einops.rearrange(reg_b0s, "b x y z -> x y z b")
     top_b0s_idx = _least_distort_b0_idx(reg_b0s, num_selections=n_b0s, seed=seed)
     output = dict(
         dwi=b0s[..., top_b0s_idx],
