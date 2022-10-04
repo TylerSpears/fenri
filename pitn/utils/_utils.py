@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import collections
 from pathlib import Path
 from typing import Sequence, Tuple, Union
 
@@ -6,6 +7,57 @@ import nibabel as nib
 import numpy as np
 import torch
 from more_itertools import collapse
+
+
+def flatten(
+    iterable: collections.abc.Iterable,
+    parent_key=False,
+    seperator: str = ".",
+    as_dict: bool = False,
+) -> collections.abc.Iterable:
+
+    result = None
+    if isinstance(iterable, collections.abc.MutableMapping):
+        result = _flatten_dict(iterable, parent_key=parent_key, separator=seperator)
+    elif isinstance(iterable, (list, tuple, set, frozenset, bytearray)):
+        result = _flatten_dict(
+            {"_": iterable}, parent_key=parent_key, separator=seperator
+        )
+        if not as_dict:
+            result = tuple(result.values())
+    else:
+        result = iterable
+
+    return result
+
+
+def _flatten_dict(
+    dictionary: collections.abc.MutableMapping,
+    parent_key=False,
+    separator: str = ".",
+) -> collections.abc.MutableMapping:
+    """
+    Turn a nested dictionary into a flattened dictionary
+    :param dictionary: The dictionary to flatten
+    :param parent_key: The string to prepend to dictionary's keys
+    :param separator: The string used to separate flattened keys
+    :return: A flattened dictionary
+
+    Taken from
+    <https://github.com/ScriptSmith/socialreaper/blob/master/socialreaper/tools.py#L8>
+    """
+
+    items = []
+    for key, value in dictionary.items():
+        new_key = str(parent_key) + separator + key if parent_key else key
+        if isinstance(value, collections.abc.MutableMapping):
+            items.extend(flatten(value, new_key, separator).items())
+        elif isinstance(value, (list, tuple, set, frozenset, bytearray)):
+            for k, v in enumerate(value):
+                items.extend(flatten({str(k): v}, new_key).items())
+        else:
+            items.append((new_key, value))
+    return dict(items)
 
 
 def rerun_indicator_from_mtime(
@@ -52,7 +104,7 @@ def rerun_indicator_from_nibabel(
 
 
 def union_parent_dirs(*paths, resolve=True) -> Tuple[Path]:
-    ps = [Path(str(p)) for p in collapse(paths)]
+    ps = [Path(str(p)) for p in flatten(paths, as_dict=True).values()]
     if resolve:
         ps = [p.resolve() for p in ps]
     parent_ps = set()

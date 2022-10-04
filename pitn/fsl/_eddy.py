@@ -882,6 +882,33 @@ def estimate_slspec(json_sidecar: dict, n_slices: int) -> Optional[np.ndarray]:
     return slspec
 
 
+def sub_select_slspec(
+    slspec: np.ndarray,
+    orig_nslices: int,
+    orig_affine: np.ndarray,
+    subselect_nslices: int,
+    subselect_affine: np.ndarray,
+    affine_z_idx: int = 2,
+):
+    # Only deal with differences in translation, not going to handle scaling or rotation
+    assert np.allclose(orig_affine[:, :-1], subselect_affine[:, :-1])
+    transl_diff = orig_affine[affine_z_idx, -1] - subselect_affine[affine_z_idx, -1]
+    transl_diff = transl_diff / orig_affine[affine_z_idx, affine_z_idx]
+    assert np.allclose(transl_diff, np.around(transl_diff))
+    offset_start = np.abs(np.around(transl_diff)).astype(int)
+    offset_end = (orig_nslices - subselect_nslices) - offset_start
+
+    if offset_start == 0 and offset_end == 0:
+        result = slspec
+    else:
+        result = slspec.copy().astype(float)
+        result[
+            np.where((slspec < offset_start) | (slspec >= (orig_nslices - offset_end)))
+        ] = np.nan
+
+    return result
+
+
 def slice_timing2slspec(slice_timing: np.ndarray) -> np.ndarray:
     groups = list()
     for time_i in np.unique(slice_timing):

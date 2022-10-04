@@ -10,6 +10,7 @@ from ._eddy import (
     parse_post_eddy_shell_align_f,
     parse_s2v_params_f,
     slice_timing2slspec,
+    sub_select_slspec,
 )
 from ._topup import (
     phase_encoding_dirs2acqparams,

@@ -299,15 +299,19 @@ def top_k_b0s(
 
 
 def bet_mask_median_dwis(
-    dwi_data: np.ndarray,
-    dwi_affine: np.ndarray,
-    # out_file: Path,
+    dwi_f: Path,
     docker_img: str,
-    tmp_dir: Path = Path("/tmp/bet_mask_median_dwis"),
+    out_mask_f: Path,
+    tmp_dir: Path = Path("/tmp/bet_mask_median_b0s"),
     docker_config: dict = dict(),
     docker_env: dict = dict(),
     **bet_kwargs,
-) -> np.ndarray:
+) -> Path:
+
+    dwi = nib.load(dwi_f)
+    b0_data = dwi.get_fdata()
+    median_b0_data = np.median(b0_data, axis=-1)
+    median_b0 = dwi.__class__(median_b0_data, dwi.affine)
 
     with tempfile.TemporaryDirectory(dir=tmp_dir) as t_dir:
 
@@ -317,18 +321,13 @@ def bet_mask_median_dwis(
         docker_config["volumes"][str(d)] = pitn.utils.proc_runner.get_docker_mount_obj(
             d, mode="rw"
         )
-
-        median_dwi_data = np.median(dwi_data, axis=-1)
-        # dwi_path = Path(dwi_f.path)
-        median_out_fname = "_tmp_median.nii.gz"
+        median_out_fname = "_tmp_median_b0.nii.gz"
         median_out_path = d / median_out_fname
-        # median_dwi = nib.Nifti1Image(median_dwi_data, dwi.affine, dwi.header)
-        median_dwi = nib.Nifti1Image(median_dwi_data, dwi_affine)
-        nib.save(median_dwi, str(median_out_path))
+        nib.save(median_b0, median_out_path)
 
-        mask_out_basename = pitn.utils.cli_parse.file_basename(median_out_path)
+        mask_out_basename = pitn.utils.cli_parse.file_basename(out_mask_f)
 
-        bet_script = pitn.fsl.bet(
+        bet_script = pitn.fsl.bet_cmd(
             median_out_path,
             out_file_basename=mask_out_basename,
             mask=True,
@@ -337,10 +336,11 @@ def bet_mask_median_dwis(
             **bet_kwargs,
         )
 
+        bet_script = pitn.utils.proc_runner.multiline_script2docker_cmd(bet_script)
         run_bet_result = pitn.utils.proc_runner.call_docker_run(
             img=docker_img, cmd=bet_script, env=docker_env, run_config=docker_config
         )
-        mask_f = pitn.utils.system.get_glob_file_unique(d, "*_mask_*")
-        mask = nib.load(str(mask_f)).get_fdata().astype(np.uint8).copy()
+        mask_f = pitn.utils.system.get_file_glob_unique(d, "*_mask_*")
+        shutil.copyfile(mask_f, out_mask_f)
 
-    return mask
+    return out_mask_f

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import List, Union
 
 from box import Box
 
@@ -22,10 +23,12 @@ docker_run_default_config = dict(
     ipc_mode="host",
     pid_mode="host",
     remove=True,
-    auto_remove=True,
+    auto_remove=False,
+    # init=True,
     security_opt=["seccomp=unconfined"],
     cap_add=["SYS_PTRACE"],
     volumes={"/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}},
+    # stdin_open=True,
     # tty=True,
     # stderr=True,
     privileged=True,
@@ -35,13 +38,18 @@ docker_run_default_config = dict(
 
 
 def multiline_script2docker_cmd(script: str):
-    wrapped_script = "\n".join([r"""bash -c " """, script, r""" " """])
+    # wrapped_script = "\n".join([r"""bash -s << "EOF" """, script, r"""EOF"""])
+    # wrapped_script = ["bash", "-s", "<<", r'"EOF"\n', script, "\nEOF"]
+    # wrapped_script = ["\n".join([r"""bash --login -s << "EOF" """, script, r"""EOF"""])]
+    # Creating a list for the command should prevent other functions from
+    # `shlex.split`-ing the multi-line script.
+    wrapped_script = ["bash", "-c", script]
     return wrapped_script
 
 
 def call_docker_run(
     img: str,
-    cmd: str,
+    cmd: Union[str, List[str]],
     env: dict = dict(),
     run_config: dict = dict(),
 ):
@@ -87,19 +95,25 @@ def call_docker_run(
 
     tail_logs = list()
     tail_maxsize = 30
-    for line in container.logs(stream=True, stdout=True, stderr=True):
-        print(
-            f"Docker {datetime.datetime.now().replace(microsecond=0)} | ",
-            line.decode().strip(),
-        )
-        tail_logs.append(line.decode().strip())
-        if len(tail_logs) > tail_maxsize:
-            tail_logs.pop(0)
-    exit_status = container.wait()["StatusCode"]
+    try:
+        for line in container.logs(stream=True, stdout=True, stderr=True):
+            print(
+                f"Docker {datetime.datetime.now().replace(microsecond=0)} | ",
+                line.decode().strip(),
+            )
+            tail_logs.append(line.decode().strip())
+            if len(tail_logs) > tail_maxsize:
+                tail_logs.pop(0)
+        exit_status = container.wait()["StatusCode"]
+        exc = None
+    except Exception as e:
+        exit_status = 1
+        exc = e
     if exit_status > 0:
         raise docker.errors.ContainerError(
             container,
             exit_status,
+            f"Exception {exc}",
             cmd,
             img,
             "\n".join(tail_logs),

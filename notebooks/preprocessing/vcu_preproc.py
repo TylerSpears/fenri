@@ -37,8 +37,8 @@ import numpy as np
 import pandas as pd
 import skimage
 from box import Box
-from more_itertools import collapse
 
+import docker
 import pitn
 from pitn.data.preproc.dwi import crop_nib_by_mask
 
@@ -563,7 +563,10 @@ def vcu_dwi_preproc(
             subj_input.ap.bval_f,
             subj_input.pa.bval_f,
         ],
-        output_files=[Path(str(f)) for f in collapse(topup_out_files)]
+        output_files=[
+            Path(str(f))
+            for f in pitn.utils.flatten(topup_out_files, as_dict=True).values()
+        ]
         + [topup_input_dwi_f, acqparams_f],
     )
     if rerun:
@@ -664,192 +667,258 @@ def vcu_dwi_preproc(
     subj_output.topup.acqparams_f = acqparams_f
     subj_output.topup.merge_update(topup_out_files)
 
-    # !DEBUG
-    return subj_output
     # ###### 6. Extract mask of unwarped diffusion data.
-    for subj_id, subj_info in subj_inputs.items():
-        output_path = subj_info.output_path
-        bet_out_path = output_path / "bet_topup2eddy"
-        bet_out_path.mkdir(exist_ok=True, parents=True)
+    n_procs = 1
+    docker_img = "tylerspears/fsl-cuda10.2:6.0.5"
+    output_path = subj_input.output_path
+    bet_out_path = output_path / "bet_topup2eddy"
+    bet_out_path.mkdir(exist_ok=True, parents=True)
+    tmp_dir = bet_out_path / "tmp"
+    tmp_dir.mkdir(exist_ok=True)
+    input_dwi_f = subj_output.topup.corrected_im
+    out_mask_f = bet_out_path / f"{subj_id}_bet_topup2eddy_mask.nii.gz"
 
+    rerun = pitn.utils.rerun_indicator_from_mtime(
+        input_files=[input_dwi_f],
+        output_files=[out_mask_f],
+    )
+    if rerun:
         # Set up docker configuration for running bet.
-        docker_vols = {
-            str(bet_out_path),
-            str(Path(subj_outputs.topup[subj_id].corrected_im.path).parent),
-        }
-        docker_vols = list((v, v) for v in tuple(docker_vols))
-        script_exec_config = dict(
-            image="tylerspears/fsl-cuda10.2:6.0.5",
-            executor="docker",
-            volumes=docker_vols,
-            gpus=0,
-            memory=8,
-            vcpus=4,
-        )
+        vols = pitn.utils.union_parent_dirs(input_dwi_f, out_mask_f, tmp_dir)
+        vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
+        docker_config = dict(volumes=vols)
 
-        bet_topup2eddy_mask_expr = pitn.redun.data.preproc.dwi.bet_mask_median_dwis(
-            subj_outputs.topup[subj_id]["corrected_im"],
-            out_file=str(bet_out_path / f"{subj_id}_bet_topup2eddy_mask.nii.gz"),
+        # Finally, run topup.
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["condition"].wait_for(
+                    lambda: shared_resources["cpus"].value >= n_procs
+                )
+                shared_resources["cpus"].value -= n_procs
+                shared_resources["condition"].notify_all()
+
+        topup2eddy_mask_f = pitn.data.preproc.dwi.bet_mask_median_dwis(
+            input_dwi_f,
+            out_mask_f=out_mask_f,
             robust_iters=True,
-            script_exec_config=script_exec_config,
+            tmp_dir=tmp_dir,
+            docker_img=docker_img,
+            docker_config=docker_config,
         )
-        subj_outputs.bet_topup2eddy[subj_id] = bet_topup2eddy_mask_expr
 
-    concrete_bet_topup2eddy = scheduler.run(subj_outputs.bet_topup2eddy.to_dict())
-    subj_outputs.bet_topup2eddy = concrete_bet_topup2eddy
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["cpus"].value += n_procs
+                shared_resources["condition"].notify_all()
+
+        assert topup2eddy_mask_f.exists()
+
+    t1 = time.time()
+    print(f"{subj_id} Time taken for post-topup mask: {t1 - t}", flush=True)
+    t = t1
+    subj_output.bet_topup2eddy.mask_f = out_mask_f
 
     # ###### 7. Run eddy correction
-    eddy_exprs = dict()
-    for subj_id, subj_info in subj_inputs.items():
-        output_path = subj_info.output_path
-        eddy_out_path = output_path / "eddy"
-        eddy_out_path.mkdir(exist_ok=True, parents=True)
+    n_procs = 2
+    docker_img = "tylerspears/fsl-cuda10.2:6.0.5"
+    eddy_out_path = subj_input.output_path / "eddy"
+    eddy_out_path.mkdir(exist_ok=True, parents=True)
+    slspec_path = eddy_out_path / "slspec.txt"
+    index_path = eddy_out_path / "index.txt"
+    ap_pa_basename = f"{subj_id}_ap-pa_pre-topup_dwi"
+    ap_pa_dwi_path = eddy_out_path / (ap_pa_basename + ".nii.gz")
+    ap_pa_bval_path = eddy_out_path / (ap_pa_basename + ".bval")
+    ap_pa_bvec_path = eddy_out_path / (ap_pa_basename + ".bvec")
 
+    eddy_script, _, eddy_out_files = pitn.fsl.eddy_cmd_explicit_in_out_files(
+        imain=ap_pa_dwi_path,
+        bvecs=ap_pa_bvec_path,
+        bvals=ap_pa_bval_path,
+        mask=subj_output.bet_topup2eddy.mask_f,
+        index=index_path,
+        acqp=subj_output.topup.acqparams_f,
+        slspec=slspec_path,
+        topup_fieldcoef=subj_output.topup.fieldcoef,
+        topup_movpar=subj_output.topup.movpar,
+        out=str(eddy_out_path / f"{subj_id}_eddy"),
+        niter=10,
+        fwhm=[10, 8, 4, 2, 1, 0, 0, 0, 0, 0],
+        repol=True,
+        rep_noise=True,
+        ol_type="both",
+        flm="quadratic",
+        slm="linear",
+        mporder=8,
+        s2v_niter=7,
+        s2v_lambda=2,
+        estimate_move_by_susceptibility=True,
+        mbs_niter=10,
+        mbs_lambda=10,
+        initrand=subj_input.eddy_seed,
+        cnr_maps=True,
+        fields=True,
+        dfields=True,
+        very_verbose=True,
+        log_stdout=True,
+        use_cuda=True,
+        auto_select_gpu=False,
+    )
+
+    rerun = pitn.utils.rerun_indicator_from_mtime(
+        input_files=[
+            subj_output.b1_debias.ap.dwi_f,
+            subj_output.b1_debias.pa.dwi_f,
+            subj_output.bvec_flip_correct.ap.bvec_f,
+            subj_output.bvec_flip_correct.pa.bvec_f,
+            subj_input.ap.dwi_f,
+            subj_input.ap.bval_f,
+            subj_input.pa.bval_f,
+            subj_output.bet_topup2eddy.mask_f,
+            subj_output.topup.acqparams_f,
+            subj_output.topup.fieldcoef,
+            subj_output.topup.movpar,
+        ],
+        output_files=list(pitn.utils.flatten(eddy_out_files).values())
+        + [slspec_path, index_path, ap_pa_dwi_path, ap_pa_bval_path, ap_pa_bvec_path],
+    )
+
+    if rerun:
         # Create slspec file.
+        orig_dwi_nib = nib.load(subj_input.ap.dwi_f)
+        cropped_dwi_nib = nib.load(subj_output.b1_debias.ap.dwi_f)
         slspec = pitn.fsl.estimate_slspec(
-            subj_info.ap.json_header_dict,
-            n_slices=nib.load(subj_info.ap.dwi.path).header.get_n_slices(),
+            subj_input.ap.sidecar,
+            n_slices=orig_dwi_nib.shape[2],
         )
-        slspec_path = eddy_out_path / "slspec.txt"
-        if slspec_path.exists():
-            prev_slspec = np.loadtxt(slspec_path)
-            if not np.isclose(slspec, prev_slspec).all():
-                np.savetxt(slspec_path, slspec, fmt="%g")
+        slspec = pitn.fsl.sub_select_slspec(
+            slspec,
+            orig_nslices=orig_dwi_nib.shape[2],
+            orig_affine=orig_dwi_nib.affine,
+            subselect_nslices=cropped_dwi_nib.shape[2],
+            subselect_affine=cropped_dwi_nib.affine,
+        )
+        if np.isnan(slspec).any():
+            slspec_filter = slspec.copy()
+            slspec_filter[np.isnan(slspec)] = -1
+            slspec_str = list()
+            for row in slspec_filter:
+                row_str = list()
+                for val in row:
+                    val = int(val)
+                    if val >= 0:
+                        row_str.append(str(val))
+                    else:
+                        row_str.append(" ")
+                row_str = " ".join(row_str)
+                slspec_str.append(row_str)
+            slspec_str = "\n".join(slspec_str)
+            with open(slspec_path, "w") as f:
+                f.write(slspec_str)
         else:
             np.savetxt(slspec_path, slspec, fmt="%g")
-        slspec_f = File(str(slspec_path))
-        subj_outputs.eddy[subj_id].slspec = slspec_f
 
         # Create index file that relates DWI index to the acquisition params.
-        index_path = eddy_out_path / "index.txt"
         # The index file is 1-indexed, not 0-indexed.
         ap_acqp_idx = 1
         pa_acqp_idx = num_b0s_per_pe + 1
         index_acqp = np.asarray(
-            [ap_acqp_idx] * nib.load(subj_info.ap.dwi.path).shape[-1]
-            + [pa_acqp_idx] * nib.load(subj_info.pa.dwi.path).shape[-1]
+            [ap_acqp_idx] * nib.load(subj_output.b1_debias.ap.dwi_f).shape[-1]
+            + [pa_acqp_idx] * nib.load(subj_output.b1_debias.ap.dwi_f).shape[-1]
         ).reshape(1, -1)
-        if index_path.exists():
-            prev_index_acqp = np.loadtxt(index_path)
-            if not np.isclose(index_acqp, prev_index_acqp).all():
-                np.savetxt(str(index_path), index_acqp, fmt="%g")
-        else:
-            np.savetxt(str(index_path), index_acqp, fmt="%g")
-        index_acqp_f = File(str(index_path))
-        subj_outputs.eddy[subj_id].index = index_acqp_f
+        np.savetxt(index_path, index_acqp, fmt="%g")
 
         # Merge and save both AP and PA DWIs, bvals, and bvecs together.
-        ap_pa_basename = f"{subj_id}_ap_pa_uncorrected_dwi"
-        ap_pa_dwi_path = eddy_out_path / (ap_pa_basename + ".nii.gz")
-        ap_pa_bval_path = eddy_out_path / (ap_pa_basename + ".bval")
-        ap_pa_bvec_path = eddy_out_path / (ap_pa_basename + ".bvec")
-
+        # DWIs
         ap_pa_dwi = nib.Nifti1Image(
             np.concatenate(
                 [
-                    nib.load(subj_info.ap.dwi.path).get_fdata(),
-                    nib.load(subj_info.pa.dwi.path).get_fdata(),
+                    nib.load(subj_output.b1_debias.ap.dwi_f).get_fdata(),
+                    nib.load(subj_output.b1_debias.pa.dwi_f).get_fdata(),
                 ],
                 axis=-1,
             ),
-            affine=nib.load(subj_info.ap.dwi.path).affine,
+            affine=nib.load(subj_output.b1_debias.pa.dwi_f).affine,
+            header=nib.load(subj_output.b1_debias.ap.dwi_f).header,
         )
-        if ap_pa_dwi_path.exists():
-            prev_ap_pa_dwi = nib.load(str(ap_pa_dwi_path)).get_fdata()
-            if not np.isclose(ap_pa_dwi.get_fdata(), prev_ap_pa_dwi).all():
-                nib.save(ap_pa_dwi, str(ap_pa_dwi_path))
-        else:
-            nib.save(ap_pa_dwi, str(ap_pa_dwi_path))
-        ap_pa_dwi_f = File(str(ap_pa_dwi_path))
-        subj_outputs.eddy[subj_id].input_dwi = ap_pa_dwi_f
-
+        # If some z-axis slices were removed from cropping, we must pad them back for
+        # eddy to work with slice2vol motion correction.
+        # if ap_pa_dwi.shape[2] != nib.load(subj_input.ap.dwi_f).shape[2]:
+        #     pass
+        nib.save(ap_pa_dwi, ap_pa_dwi_path)
+        # bvals
         ap_pa_bval = np.concatenate(
-            [np.loadtxt(subj_info.ap.bval.path), np.loadtxt(subj_info.pa.bval.path)],
+            [np.loadtxt(subj_input.ap.bval_f), np.loadtxt(subj_input.pa.bval_f)],
             axis=0,
         )
-        if ap_pa_bval_path.exists():
-            prev_ap_pa_bval = np.loadtxt(str(ap_pa_bval_path))
-            if not np.isclose(ap_pa_bval, prev_ap_pa_bval).all():
-                np.savetxt(str(ap_pa_bval_path), ap_pa_bval)
-        else:
-            np.savetxt(str(ap_pa_bval_path), ap_pa_bval)
-        ap_pa_bval_f = File(str(ap_pa_bval_path))
-        subj_outputs.eddy[subj_id].input_bval = ap_pa_bval_f
-
+        np.savetxt(ap_pa_bval_path, ap_pa_bval)
+        # bvecs
         ap_pa_bvec = np.concatenate(
-            [np.loadtxt(subj_info.ap.bvec.path), np.loadtxt(subj_info.pa.bvec.path)],
+            [np.loadtxt(subj_input.ap.bvec_f), np.loadtxt(subj_input.pa.bvec_f)],
             axis=1,
         )
-        if ap_pa_bvec_path.exists():
-            prev_ap_pa_bvec = np.loadtxt(str(ap_pa_bvec_path))
-            if not np.isclose(ap_pa_bvec, prev_ap_pa_bvec).all():
-                np.savetxt(str(ap_pa_bvec_path), ap_pa_bvec)
-        else:
-            np.savetxt(str(ap_pa_bvec_path), ap_pa_bvec)
-        ap_pa_bvec_f = File(str(ap_pa_bvec_path))
-        subj_outputs.eddy[subj_id].input_bvec = ap_pa_bvec_f
+        np.savetxt(ap_pa_bvec_path, ap_pa_bvec)
 
         # Set up docker configuration for running eddy with cuda.
-        docker_vols = {
-            str(eddy_out_path),
-            str(Path(subj_outputs.topup[subj_id].corrected_im.path).parent),
-            str(Path(subj_outputs.bet_topup2eddy[subj_id].path).parent),
-        }
-        docker_vols = list((v, v) for v in tuple(docker_vols))
-        script_exec_config = dict(
-            image="tylerspears/fsl-cuda10.2:6.0.5",
-            executor="docker",
-            volumes=docker_vols,
-            gpus=1,
-            memory=16,
-            vcpus=6,
-            # Task limits must go in the script config, not the script task creator!
-            # Otherwise, the resource is only consumed to make the *task expression*,
-            # but not consumed when actually *running* the script.
-            limits={"gpu": 1},
+        vols = pitn.utils.union_parent_dirs(
+            eddy_out_path,
+            subj_output.bet_topup2eddy.mask_f,
+            subj_output.topup.acqparams,
+            subj_output.topup.fieldcoef,
+            subj_output.topup.movpar,
         )
-        # Run eddy.
-        eddy_subj_expr = pitn.redun.fsl.eddy(
-            imain=subj_outputs.eddy[subj_id].input_dwi,
-            bvecs=subj_outputs.eddy[subj_id].input_bvec,
-            bvals=subj_outputs.eddy[subj_id].input_bval,
-            mask=subj_outputs.bet_topup2eddy[subj_id],
-            index=subj_outputs.eddy[subj_id].index,
-            acqp=subj_outputs.topup[subj_id].acqparams,
-            slspec=subj_outputs.eddy[subj_id].slspec,
-            topup_fieldcoef=subj_outputs.topup[subj_id].fieldcoef,
-            topup_movpar=subj_outputs.topup[subj_id].movpar,
-            niter=10,
-            fwhm=[10, 8, 4, 2, 1, 0, 0, 0, 0, 0],
-            repol=True,
-            rep_noise=True,
-            ol_type="both",
-            flm="quadratic",
-            slm="linear",
-            mporder=8,
-            s2v_niter=7,
-            s2v_lambda=2,
-            estimate_move_by_susceptibility=True,
-            mbs_niter=10,
-            mbs_lambda=10,
-            initrand=subj_info.eddy_seed,
-            cnr_maps=True,
-            fields=True,
-            dfields=True,
-            # write_predictions=True,
-            very_verbose=True,
-            log_stdout=True,
-            use_cuda=True,
-            auto_select_gpu=True,
-            out=str(eddy_out_path / f"{subj_id}_eddy"),
-            script_exec_config=script_exec_config,
+        vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
+        docker_config = dict(
+            volumes=vols,
+            runtime="nvidia",
         )
-        eddy_exprs[subj_id] = eddy_subj_expr
+        eddy_script = pitn.utils.proc_runner.multiline_script2docker_cmd(eddy_script)
 
-    concrete_eddy = scheduler.run(eddy_exprs)
+        # Finally, run eddy.
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["condition"].wait_for(
+                    lambda: (shared_resources["cpus"].value >= n_procs)
+                    and (not shared_resources["gpus"].empty())
+                )
+                shared_resources["cpus"].value -= n_procs
+                gpu_idx = shared_resources["gpus"].get()
+                shared_resources["condition"].notify_all()
+        else:
+            gpu_idx = "0"
 
-    for subj_id in subj_ids:
-        subj_outputs.eddy[subj_id].merge_update(concrete_eddy[subj_id])
+        # <https://stackoverflow.com/a/71429712/13225248>
+        # docker_config["device_requests"] = [
+        #     docker.types.DeviceRequest(
+        #         device_ids=[str(gpu_idx)], capabilities=[["gpu"]]
+        #     )
+        # ]
+        eddy_result = pitn.utils.proc_runner.call_docker_run(
+            img=docker_img,
+            cmd=eddy_script,
+            run_config=docker_config,
+            env={
+                "NVIDIA_VISIBLE_DEVICES": gpu_idx,
+                "CUDA_VISIBLE_DEVICES": gpu_idx,
+                "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+            },
+        )
+
+        if shared_resources is not None:
+            shared_resources["gpus"].put(gpu_idx)
+            with shared_resources["condition"]:
+                shared_resources["cpus"].value += n_procs
+                shared_resources["condition"].notify_all()
+
+    t1 = time.time()
+    print(f"{subj_id} Time taken for eddy: {t1 - t}", flush=True)
+    t = t1
+
+    subj_output.eddy.input_bval = ap_pa_bval_path
+    subj_output.eddy.input_bvec = ap_pa_bvec_path
+    subj_outputs.eddy.input_dwi = ap_pa_dwi_path
+    subj_outputs.eddy.index = index_path
+    subj_output.eddy.slspec = slspec_path
+    subj_output.eddy.merge_update(eddy_out_files)
 
     # ###### 8. Extract final mask of diffusion data and crop.
 
@@ -919,8 +988,10 @@ if __name__ == "__main__":
                 cpus=manager.Value("i", multiprocessing.cpu_count() - 2),
                 gpus=manager.Queue(2),
             )
-            resources["gpus"].put("0")
-            resources["gpus"].put("1")
+            # resources["gpus"].put("0")
+            # resources["gpus"].put("1")
+            resources["gpus"].put("GPU-ed20d87f-e88e-692f-0b56-548b8a05ddea")
+            resources["gpus"].put("GPU-0636ee40-2eab-9533-1be7-dbbadade95c4")
             sub_count = 0
             # Grab files and process subject data.
             for subj_id, files in subj_files.items():
@@ -944,7 +1015,7 @@ if __name__ == "__main__":
                     k: Path(str(pa_files[k])).resolve() for k in pa_files.keys()
                 }
 
-                subj_outputs = executor.submit(
+                subj_output = executor.submit(
                     vcu_dwi_preproc,
                     subj_id=subj_id,
                     output_dir=str(subj_out_dir),
@@ -959,14 +1030,14 @@ if __name__ == "__main__":
                     eddy_seed=eddy_random_seed,
                     shared_resources=resources,
                 )
-                processed_outputs[subj_id] = subj_outputs
-                # !DEBUG
+                processed_outputs[subj_id] = subj_output
+                # # !DEBUG
                 # sub_count += 1
-                # if sub_count >= 2:
+                # if sub_count >= 1:
                 #     break
             concurrent.futures.wait([v for v in processed_outputs.values()])
             subj_outputs = dict()
             for k, v in processed_outputs.items():
                 subj_outputs[k] = v.result()
 
-    print(processed_outputs)
+    print(subj_outputs)
