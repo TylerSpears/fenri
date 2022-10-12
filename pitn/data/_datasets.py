@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# ! Avoid using these datasets, they're much too complex and fragile!
 import collections
 from multiprocessing.sharedctypes import Value
 from pathlib import Path

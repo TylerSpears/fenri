@@ -1,0 +1,12 @@
+- mri/**
+- label/**
+- touch/**
+- stats/**
+- surf/**
++ *.csv
++ T?w_acpc_dc*
++ brainmask*
++ aparc*
++ wmparc*
++ Diffusion/**
+- *

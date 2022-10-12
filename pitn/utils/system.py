@@ -68,18 +68,20 @@ def get_file_glob_unique(root_path: Path, glob_pattern: str) -> Path:
     glob_pattern = str(glob_pattern)
     files = list(root_path.glob(glob_pattern))
 
-    invalid_num_files = False
     if len(files) == 0:
         files = list(root_path.rglob(glob_pattern))
-        if len(files) != 1:
-            invalid_num_files = True
-    elif len(files) > 1:
-        invalid_num_files = True
 
-    if invalid_num_files:
+    if len(files) > 1:
         raise RuntimeError(
             "ERROR: More than one file matches glob pattern "
             + f"{glob_pattern} under directory {str(root_path)}."
+            + "Expect only one match."
+        )
+    elif len(files) == 0:
+        raise RuntimeError(
+            "ERROR: No files match glob pattern "
+            + f"{glob_pattern} under directory {str(root_path)}; "
+            + "Expect one match."
         )
 
     return files[0]

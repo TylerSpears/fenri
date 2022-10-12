@@ -60,6 +60,7 @@ def vcu_dwi_preproc(
     pa_bvec: Path,
     ap_json_header_dict: dict,
     pa_json_header_dict: dict,
+    t1w: Path,
     eddy_seed: int,
     shared_resources=None,
 ) -> dict:
@@ -88,6 +89,7 @@ def vcu_dwi_preproc(
             bval=None,
             bvec=None,
         ),
+        t1w=t1w,
         eddy_seed=eddy_seed,
         output_path=Path(output_dir).resolve(),
     )
@@ -886,12 +888,6 @@ def vcu_dwi_preproc(
         else:
             gpu_idx = "0"
 
-        # <https://stackoverflow.com/a/71429712/13225248>
-        # docker_config["device_requests"] = [
-        #     docker.types.DeviceRequest(
-        #         device_ids=[str(gpu_idx)], capabilities=[["gpu"]]
-        #     )
-        # ]
         eddy_result = pitn.utils.proc_runner.call_docker_run(
             img=docker_img,
             cmd=eddy_script,
@@ -920,9 +916,140 @@ def vcu_dwi_preproc(
     subj_output.eddy.slspec = slspec_path
     subj_output.eddy.merge_update(eddy_out_files)
 
-    # ###### 8. Extract final mask of diffusion data and crop.
+    # ###### 8. Extract final mask of diffusion data, crop, and perform alignment.
+    n_procs = 2
+    docker_img = "tylerspears/fsl-cuda10.2:6.0.5"
+    postproc_out_path = subj_input.output_path / "postproc"
+    postproc_out_path.mkdir(exist_ok=True, parents=True)
+    postproc_dwi_path = postproc_out_path / f"{subj_id}_postproc_dwi.nii.gz"
+    postproc_mask_path = postproc_out_path / f"{subj_id}_postproc_dwi-mask.nii.gz"
+    postproc_bvec_path = postproc_out_path / f"{subj_id}_postproc.bvec"
+    postproc_bval_path = postproc_out_path / f"{subj_id}_postproc.bval"
+    postproc_skull_strip_t1w_path = (
+        postproc_out_path / f"{subj_id}_postproc_brain-t1w.nii.gz"
+    )
+    postproc_dwi_vox2mni_affine_path = (
+        postproc_out_path / f"{subj_id}_postproc_dwi-vox2mni-frame_affine.txt"
+    )
+    tmp_dir = postproc_out_path / "tmp"
+    tmp_dir.mkdir(exist_ok=True)
 
-    return subj_outputs.to_dict()
+    rerun = pitn.utils.rerun_indicator_from_mtime(
+        input_files=[
+            subj_output.eddy.corrected,
+            subj_output.eddy.input_bval,
+            subj_output.eddy.rotated_bvecs,
+            subj_input.t1w,
+        ],
+        output_files=[
+            postproc_dwi_path,
+            postproc_mask_path,
+            postproc_bvec_path,
+            postproc_bval_path,
+            postproc_skull_strip_t1w_path,
+            postproc_dwi_vox2mni_affine_path,
+        ],
+    )
+
+    if rerun:
+        in_dwi = nib.load(subj_output.eddy.corrected)
+        bvals = np.loadtxt(subj_output.eddy.input_bval)
+        bvecs = np.loadtxt(subj_output.eddy.rotated_bvecs)
+
+        tmp_mask_f = (tmp_dir / "postproc_mask.nii.gz",)
+        tmp_b0s_f = tmp_dir / ""
+        in_b0s_data = in_dwi.get_fdata()[..., bvals <= 50]
+        in_b0s = nib.Nifti1Image(in_b0s_data, affine=in_dwi.affine)
+        in_b0s.set_data_dtype(np.uint8)
+        nib.save(in_b0s, tmp_b0s_f)
+
+        # Start with getting the BET-generated mask.
+        vols = pitn.utils.union_parent_dirs(postproc_mask_path, tmp_dir)
+        vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
+        docker_config = dict(volumes=vols)
+
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["condition"].wait_for(
+                    lambda: shared_resources["cpus"].value >= n_procs
+                )
+                shared_resources["cpus"].value -= n_procs
+                shared_resources["condition"].notify_all()
+
+        tmp_mask_f = pitn.data.preproc.dwi.bet_mask_median_dwis(
+            tmp_b0s_f,
+            out_mask_f=tmp_mask_f,
+            robust_iters=True,
+            tmp_dir=tmp_dir,
+            docker_img=docker_img,
+            docker_config=docker_config,
+        )
+
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["cpus"].value += n_procs
+                shared_resources["condition"].notify_all()
+
+        assert tmp_mask_f.exists()
+
+        # Perform a slight dilation of the mask, to account for any missed voxels.
+        tmp_mask = nib.load(tmp_mask_f)
+        tmp_mask.set_data_dtype(np.uint8)
+        tmp_mask_data = tmp_mask.get_fdata()
+        tmp_mask_data = skimage.morphology.binary_dilation(
+            tmp_mask_data, skimage.morphology.cube(2)
+        )
+        tmp_mask = tmp_mask.__class__(tmp_mask_data.astype(np.uint8), tmp_mask.affine)
+
+        crop_dwi = crop_nib_by_mask(in_dwi, tmp_mask.get_fdata().astype(np.uint8))
+        crop_mask_nib = crop_nib_by_mask(
+            tmp_mask, tmp_mask.get_fdata().astype(np.uint8)
+        )
+
+        # Zero-out everything outside the brain mask.
+        crop_dwi = crop_dwi.__class__(
+            crop_dwi.get_fdata() * crop_mask_nib.get_fdata()[..., None], crop_dwi.affine
+        )
+        postproc_skull_strip_t1w_path = postproc_skull_strip_t1w_path.resolve()
+        postproc_dwi_vox2mni_affine_path = postproc_dwi_vox2mni_affine_path.resolve()
+        # Find the transformation that aligns the DWI voxel coordinates with the
+        # coordinates of a standard template space. This only finds a transform of the
+        # DWI's frame of reference, we do *not* change the DW image itself in any way.
+        # <https://www.fieldtriptoolbox.org/faq/coordsys/#details-on-the-acpc-coordinate-system>
+        mni_align_script = rf"""
+        # Skull-strip the input T1w image
+        bet \
+            {str(subj_input.t1w.resolve())} \
+            {str(postproc_skull_strip_t1w_path)} \
+            -R
+        # Register T1w to template
+         flirt -dof 6 \
+            -cost normmi -searchcost normmi \
+            -interp sinc -sincwidth 7 -sincwindow hanning -verbose 1 \
+            -in {str(postproc_skull_strip_t1w_path)} \
+            -ref MNI152_T1_1mm_brain.nii.gz -out P_
+01_mni-space_brain-T1.nii.gz -omat T1w2MNI_affine.txt
+        # Reslice registered T1w and template to the DWI voxel size and image shape.
+
+        # Register median b0 image to T1w with `epi_reg`
+
+        # postproc_dwi_vox2mni_affine_path,
+        # Discard the images, we only want the rigid transform parameters.
+        """
+
+        crop_dwi.set_data_dtype(np.float32)
+        crop_mask_nib.set_data_dtype(np.uint8)
+        nib.save(crop_dwi, postproc_dwi_path)
+        nib.save(crop_mask_nib, postproc_mask_path)
+        np.savetxt(postproc_bvec_path, bvecs, fmt="%g")
+        np.savetxt(postproc_bval_path, bvals, fmt="%g")
+
+    subj_output.postproc.dwi = postproc_dwi_path
+    subj_output.postproc.mask = postproc_mask_path
+    subj_output.postproc.bval = postproc_bval_path
+    subj_output.postproc.bvec = postproc_bvec_path
+
+    return subj_output.to_dict()
 
 
 if __name__ == "__main__":
@@ -973,6 +1100,11 @@ if __name__ == "__main__":
             subj_files[subj][encode_direct.lower()] = Box(
                 dwi=dwi, bval=bval, bvec=bvec, json=json_info
             )
+        # Grab structural files
+        t1w = pitn.utils.system.get_file_glob_unique(
+            p_dir, "*T1*_[0-9][0-9][0-9]*.nii.gz"
+        )
+        subj_files[subj].t1w = Path(t1w)
 
     eddy_random_seed = 42138
 
@@ -1027,6 +1159,7 @@ if __name__ == "__main__":
                     pa_bval=pa_files["bval"],
                     pa_bvec=pa_files["bvec"],
                     pa_json_header_dict=pa_json_info,
+                    t1w=files.t1w,
                     eddy_seed=eddy_random_seed,
                     shared_resources=resources,
                 )

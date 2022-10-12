@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
+import fractions
 import gzip
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import ants
 import einops
+import monai
 import nibabel as nib
 import numpy as np
 import scipy
@@ -344,3 +346,91 @@ def bet_mask_median_dwis(
         shutil.copyfile(mask_f, out_mask_f)
 
     return out_mask_f
+
+
+def downsample_vol_voxwise(
+    vol,
+    src_affine: np.ndarray,
+    target_vox_size: Tuple[float],
+    interp_mode: str = "area",
+    **zoom_kwargs,
+):
+    """Downsamples different volumes from HCP datasets.
+
+        All volumes are assumed to be channel-first!
+    Parameters
+    ----------
+    vol
+    src_affine : np.ndarray
+    target_vox_size : Tuple[float]
+    interp_mode : str
+        Follows torch.nn.functional.interpolation scheme.
+    """
+
+    target_size = np.asarray(target_vox_size)
+    src_size = monai.data.utils.affine_to_spacing(src_affine)
+    zooms = src_size / target_size
+
+    # Pad each dim to be divisible by the denominator of the ratio src/target to downscale
+    # each dim to more precisely downscale to the target.
+    fracs = tuple(
+        fractions.Fraction.from_float(z).limit_denominator(100) for z in zooms
+    )
+    pad_tf = monai.transforms.DivisiblePad(
+        k=tuple(f.denominator for f in fracs), mode="constant"
+    )
+    zoom_tf = monai.transforms.Zoom(
+        tuple(zooms), mode=interp_mode, keep_size=False, **zoom_kwargs
+    )
+
+    # Downsample volume.
+    if vol.ndim == 3:
+        v = vol[None, ...]
+    else:
+        v = vol
+    try:
+        meta_v = monai.data.MetaTensor(v, affine=src_affine)
+    except TypeError as e:
+        if v.dtype in (np.uint16, np.uint32):
+            v = v.astype(np.int64)
+        else:
+            raise e
+        meta_v = monai.data.MetaTensor(v, affine=src_affine)
+
+    v_p = zoom_tf(pad_tf(meta_v))
+
+    crop_amts = np.asarray(pad_tf.compute_pad_width(vol.shape[1:]))[1:]
+    # Remove as many padded voxels as possible to get back to the original spatial
+    # extent, or close to it.
+    crop_amts = np.floor(crop_amts * zooms[:, None] ** -1).astype(int)
+    crop_tf = monai.transforms.SpatialCrop(
+        roi_start=crop_amts[:, 0],
+        roi_end=np.asarray(v_p.array.shape[1:]) - crop_amts[:, 1],
+    )
+    v_p = crop_tf(v_p)
+    if vol.ndim == 3:
+        v_p = v_p[0]
+    result = (v_p.array.copy(), v_p.affine.cpu().numpy().copy())
+
+    return result
+
+
+if __name__ == "__main__":
+    d = Path("/data/srv/data/pitn/hcp/896778/T1w/Diffusion/data.nii.gz")
+    nib_im = nib.load(d)
+    im = nib_im.get_fdata()
+    im = einops.rearrange(im, "x y z c -> c x y z")
+    aff = nib_im.affine
+    res = downsample_vol_voxwise(im, aff, (2.0, 2.0, 2.0), "area")
+
+    seg = d.parent.parent / "aparc.a2009s+aseg.nii.gz"
+    seg = nib.load(seg)
+    seg_im = seg.get_fdata().astype(np.uint16)
+    seg_im = seg_im[None, ...]
+    res = downsample_vol_voxwise(seg_im, seg.affine, (2.0, 2.0, 2.0), "nearest-exact")
+
+    t1w = d.parent.parent / "T1w_acpc_dc_restore_brain.nii.gz"
+    t1w = nib.load(t1w)
+    t1w_im = t1w.get_fdata()
+    t1w_im = t1w_im[None, ...]
+    res = downsample_vol_voxwise(t1w_im, t1w.affine, (2.0, 2.0, 2.0), "area")
