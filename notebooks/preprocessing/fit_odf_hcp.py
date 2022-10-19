@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import shlex
 import shutil
 import textwrap
 from pathlib import Path
@@ -88,11 +87,126 @@ def mrtrix_fit_fodf(
     return target_fodf_f
 
 
+def postproc_ground_truth(
+    wm_fodf_f: Path,
+    dwi_mask_f: Path,
+    fivett_mask_f: Path,
+    freesurfer_aseg_f: Path,
+    out_fodf_f: Path,
+    out_nodif_mask_f: Path,
+    out_5tt_f: Path,
+    out_freesurfer_aseg_f: Path,
+    sh_coeff_min: float = 1e-8,
+) -> Tuple[Path]:
+
+    wm = nib.load(wm_fodf_f)
+    wm_data = einops.rearrange(wm.get_fdata().astype(np.float32), "x y z c -> c x y z")
+    # Threshold fodfs to remove non-negative and very small spherical harmonic
+    # coefficients.
+    wm_data[wm_data < sh_coeff_min] = 0.0
+
+    ftt_mask = nib.load(fivett_mask_f)
+    ftt_mask.set_data_dtype(np.uint8)
+    fs_labels = nib.load(freesurfer_aseg_f)
+    fs_labels.set_data_dtype(np.int32)
+    dwi_mask = nib.load(dwi_mask_f)
+    dwi_mask.set_data_dtype(np.uint8)
+
+    # Resample transform into DWI space.
+    resample_tf = monai.transforms.ResampleToMatch(mode="nearest", align_corners=True)
+    dst_tensor = monai.data.MetaTensor(
+        wm_data[0][None],
+        affine=wm.affine,
+        meta={monai.utils.misc.ImageMetaKey.FILENAME_OR_OBJ: str(wm_fodf_f)},
+    )
+
+    # Apply resample transform to 5tt and freesurfer segmentation vols.
+    ftt_mask_data = einops.rearrange(
+        ftt_mask.get_fdata().astype(np.uint8), "x y z c -> c x y z"
+    )
+    ftt_tensor = monai.data.MetaTensor(
+        ftt_mask_data,
+        affine=ftt_mask.affine,
+        meta={monai.utils.misc.ImageMetaKey.FILENAME_OR_OBJ: str(fivett_mask_f)},
+    )
+    ftt_tensor = resample_tf(
+        ftt_tensor,
+        img_dst=dst_tensor,
+    )
+
+    fs_label_data = fs_labels.get_fdata().astype(np.int32)[None]
+    fs_tensor = monai.data.MetaTensor(
+        fs_label_data,
+        affine=fs_labels.affine,
+        meta={monai.utils.misc.ImageMetaKey.FILENAME_OR_OBJ: str(freesurfer_aseg_f)},
+    )
+    fs_tensor = resample_tf(
+        fs_tensor,
+        img_dst=dst_tensor,
+    )
+
+    # Build crop by the DWI mask transform.
+    dwi_mask_data = dwi_mask.get_fdata().astype(np.uint8)[None]
+    crop_tf = monai.transforms.CropForeground(
+        select_fn=lambda x: dwi_mask_data > 0, margin=2, k_divisible=2
+    )
+    # All vols need to be cropped.
+    # Start with the fodf volume.
+    wm_tensor = monai.data.MetaTensor(
+        wm_data,
+        affine=wm.affine,
+        meta={monai.utils.misc.ImageMetaKey.FILENAME_OR_OBJ: str(wm_fodf_f)},
+    )
+    wm_tensor = crop_tf(wm_tensor)
+
+    # 5tt map
+    ftt_tensor = crop_tf(ftt_tensor)
+    # Freesurfer labels
+    fs_tensor = crop_tf(fs_tensor)
+
+    # Finally, the DWI mask
+    dwi_mask_tensor = monai.data.MetaTensor(
+        dwi_mask_data,
+        affine=dwi_mask.affine,
+        meta={monai.utils.misc.ImageMetaKey.FILENAME_OR_OBJ: str(dwi_mask_f)},
+    )
+    dwi_mask_tensor = crop_tf(dwi_mask_tensor)
+
+    # Extract and save out processed vols.
+    proc_wm = wm.__class__(
+        einops.rearrange(wm_tensor.array.astype(np.float32), "c x y z -> x y z c"),
+        affine=wm_tensor.affine.cpu().numpy(),
+        header=wm.header,
+    )
+    proc_5tt = ftt_mask.__class__(
+        einops.rearrange(ftt_tensor.array.astype(np.uint8), "c x y z -> x y z c"),
+        affine=ftt_tensor.affine.cpu().numpy(),
+        header=ftt_mask.header,
+    )
+    proc_fs = fs_labels.__class__(
+        fs_tensor.array.astype(np.int32)[0],
+        affine=fs_tensor.affine.cpu().numpy(),
+        header=fs_labels.header,
+    )
+    proc_dwi_mask = dwi_mask.__class__(
+        dwi_mask_tensor.array.astype(np.uint8)[0],
+        affine=dwi_mask_tensor.affine.cpu().numpy(),
+        header=dwi_mask.header,
+    )
+    nib.save(proc_wm, out_fodf_f)
+    nib.save(proc_dwi_mask, out_nodif_mask_f)
+    nib.save(proc_5tt, out_5tt_f)
+    nib.save(proc_fs, out_freesurfer_aseg_f)
+
+    return out_fodf_f, out_nodif_mask_f, out_5tt_f, out_freesurfer_aseg_f
+
+
 if __name__ == "__main__":
 
     hcp_root_dir = Path("/data/srv/data/pitn/hcp")
     output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
-    ids_file = Path("../data/HCP_unique_ids.txt").resolve()
+    ids_file = Path("/home/tas6hh/Projects/pitn/notebooks/data/HCP_unique_ids.txt")
+    # ids_file = Path("../data/HCP_unique_ids.txt").resolve()
 
     with open(ids_file, "r") as f:
         subj_ids = list(map(lambda x: str(x).strip(), f.readlines()))
@@ -110,22 +224,50 @@ if __name__ == "__main__":
         bvec_f = src_dir / "Diffusion" / "bvecs"
         mask_f = src_dir / "Diffusion" / "nodif_brain_mask.nii.gz"
         freesurfer_seg_f = src_dir / "aparc.a2009s+aseg.nii.gz"
-        target_fodf_f = target_dir / "wm_msmt_csd_fod.nii.gz"
+        target_postproc_fodf_f = target_dir / "postproc_wm_msmt_csd_fod.nii.gz"
 
-        if target_fodf_f.exists():
+        # Determine if all processing can be skipped.
+        if target_postproc_fodf_f.exists():
             print(
-                f"====fODF coefficients found in {target_dir} for subject {sid}",
-                "skipping.====\n",
+                "====Processed fODF coefficients found in",
+                f"{target_dir} for subject {sid}",
+                "skipping subject.====\n",
             )
             continue
 
-        out_fodf = mrtrix_fit_fodf(
-            dwi_f,
-            bval_f=bval_f,
-            bvec_f=bvec_f,
-            freesurfer_seg_f=freesurfer_seg_f,
-            target_fodf_f=target_fodf_f,
-            n_threads=19,
+        target_fodf_f = target_dir / "wm_msmt_csd_fod.nii.gz"
+        # Determine if fodf estimation with mrtrix can be skipped.
+        if target_fodf_f.exists():
+            print(
+                f"====fODF coefficients found in {target_dir} for subject {sid},",
+                "skipping fodf estimation.====\n",
+            )
+        else:
+            out_fodf = mrtrix_fit_fodf(
+                dwi_f,
+                bval_f=bval_f,
+                bvec_f=bvec_f,
+                freesurfer_seg_f=freesurfer_seg_f,
+                target_fodf_f=target_fodf_f,
+                n_threads=19,
+            )
+
+        # Post-process the WM fodf and associated label/mask files.
+        fivett_f = target_dir / "5tt_parcellation.nii.gz"
+        (
+            postproc_fodf_f,
+            postproc_dwi_mask_f,
+            postproc_5tt_f,
+            postproc_freesurfer_f,
+        ) = postproc_ground_truth(
+            wm_fodf_f=target_fodf_f,
+            dwi_mask_f=mask_f,
+            fivett_mask_f=fivett_f,
+            freesurfer_aseg_f=freesurfer_seg_f,
+            out_fodf_f=target_postproc_fodf_f,
+            out_5tt_f=target_dir / "postproc_5tt_parcellation.nii.gz",
+            out_nodif_mask_f=target_dir / "postproc_nodif_brain_mask.nii.gz",
+            out_freesurfer_aseg_f=target_dir / ("postproc_" + freesurfer_seg_f.name),
         )
 
         # Save this code to the output directory

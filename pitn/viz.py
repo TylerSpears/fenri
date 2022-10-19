@@ -18,7 +18,6 @@ import pandas as pd
 import seaborn as sns
 import torch
 import torchio
-from addict import Addict
 from box import Box
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
@@ -468,7 +467,7 @@ def collate_locs_and_keys(
     low_res_key: str,
     full_res_mask_key: str = None,
     **extra_keys,
-) -> Addict:
+) -> dict:
 
     # # Return type wrapper
     # MultiKeySample = collections.namedtuple(
