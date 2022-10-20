@@ -468,3 +468,5 @@ dependencies:
   - pytorch=1.12
   - torchvision
   - pytorch-cuda=11.6
+  - gputil
+  - tabulate
