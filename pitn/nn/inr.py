@@ -60,7 +60,26 @@ def linear_weighted_ctx_v(
     encoded_feat_vol: torch.Tensor,
     input_space_extent: torch.Tensor,
     target_space_extent: torch.Tensor,
+    input_meshgrid_indexing: str,
 ):
+
+    # Affine sample assumes Cartesian sampling (`indexing='xy'` in terms of numpy and
+    # pytorch's meshgrid()). If the input is in `'ij'` (matrix-order), then the first
+    # two dims must be swapped.
+    if input_meshgrid_indexing.lower() == "ij":
+        input_space_extent = einops.rearrange(
+            input_space_extent, "b c x y z -> b c y x z"
+        )
+        target_space_extent = einops.rearrange(
+            target_space_extent, "b c x y z -> b c y x z"
+        )
+    elif input_meshgrid_indexing.lower() == "xy":
+        pass
+    else:
+        raise ValueError(
+            f"ERROR: Got indexing of {input_meshgrid_indexing},",
+            "expected one of 'xy' or 'ij'",
+        )
 
     # Normalize the input space grid to [-1, 1]
     input_space_extent = input_space_extent.movedim(1, -1)
