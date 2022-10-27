@@ -60,25 +60,20 @@ def linear_weighted_ctx_v(
     encoded_feat_vol: torch.Tensor,
     input_space_extent: torch.Tensor,
     target_space_extent: torch.Tensor,
-    input_meshgrid_indexing: str,
+    reindex_spatial_extents: bool,
 ):
-
-    # Affine sample assumes Cartesian sampling (`indexing='xy'` in terms of numpy and
-    # pytorch's meshgrid()). If the input is in `'ij'` (matrix-order), then the first
-    # two dims must be swapped.
-    if input_meshgrid_indexing.lower() == "ij":
+    # Affine sampling is given in reverse order (*not* the same as 'xy' indexing, nor
+    # the same as 'ij' indexing). If the input spatial extents are given in left->right
+    # dimension order, i.e. (vol_dim[0], vol_dim[1], vol_dim[2]), then the spatial
+    # extents must be put in right->left order, i.e.,
+    # (vol_dim[2], vol_dim[1], vol_dim[0]). This is not documented anywhere, so far as
+    # I can tell.
+    if reindex_spatial_extents:
         input_space_extent = einops.rearrange(
-            input_space_extent, "b c x y z -> b c y x z"
+            input_space_extent, "b c x y z -> b c z y x"
         )
         target_space_extent = einops.rearrange(
-            target_space_extent, "b c x y z -> b c y x z"
-        )
-    elif input_meshgrid_indexing.lower() == "xy":
-        pass
-    else:
-        raise ValueError(
-            f"ERROR: Got indexing of {input_meshgrid_indexing},",
-            "expected one of 'xy' or 'ij'",
+            target_space_extent, "b c x y z -> b c z y x"
         )
 
     # Normalize the input space grid to [-1, 1]
