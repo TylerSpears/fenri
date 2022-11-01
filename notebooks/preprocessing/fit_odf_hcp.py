@@ -203,10 +203,11 @@ def postproc_ground_truth(
 
 if __name__ == "__main__":
 
-    hcp_root_dir = Path("/data/srv/data/pitn/hcp")
-    output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
+    # hcp_root_dir = Path("/data/srv/data/pitn/hcp")
+    # output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
     ids_file = Path("/home/tas6hh/Projects/pitn/notebooks/data/HCP_unique_ids.txt")
-    # ids_file = Path("../data/HCP_unique_ids.txt").resolve()
+    hcp_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
+    output_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
 
     with open(ids_file, "r") as f:
         subj_ids = list(map(lambda x: str(x).strip(), f.readlines()))
@@ -249,7 +250,7 @@ if __name__ == "__main__":
                 bvec_f=bvec_f,
                 freesurfer_seg_f=freesurfer_seg_f,
                 target_fodf_f=target_fodf_f,
-                n_threads=19,
+                n_threads=17,
             )
 
         # Post-process the WM fodf and associated label/mask files.

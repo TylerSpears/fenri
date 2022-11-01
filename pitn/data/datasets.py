@@ -4,6 +4,7 @@ import functools
 import itertools
 import math
 from pathlib import Path
+from typing import List, Optional
 
 import einops
 import monai
@@ -189,6 +190,22 @@ class HCPfODFINRDataset(monai.data.Dataset):
 
 
 class HCPINRfODFPatchDataset(monai.data.PatchDataset):
+
+    _SAMPLE_KEYS = (
+        "subj_id",
+        "lr_dwi",
+        "lr_mask",
+        "lr_bval",
+        "lr_bvec",
+        "lr_fodf",
+        "lr_vox_size",
+        "lr_patch_extent_acpc",
+        "fodf",
+        "mask",
+        "vox_size",
+        "fr_patch_extent_acpc",
+    )
+
     def __init__(
         self,
         base_dataset,
@@ -204,6 +221,49 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
             samples_per_image=samples_per_image,
             transform=transform,
         )
+
+    def set_select_tf_keys(
+        self,
+        keys: Optional[List[str]] = None,
+        remove_keys: Optional[List[str]] = None,
+        add_keys: Optional[List[str]] = None,
+        select_tf_idx=-1,
+    ):
+        tfs = self.transform
+        if tfs is None:
+            new_tfs = None
+        else:
+            if keys is None and remove_keys is None and add_keys is None:
+                raise ValueError(
+                    "ERROR: One of 'keys', 'remove_keys', 'add_keys' must be set."
+                )
+            elif keys is not None and (remove_keys is not None or add_keys is not None):
+                raise ValueError(
+                    "ERROR: If 'keys' is set, then `remove_keys` and",
+                    "'add_keys' must be None",
+                )
+            idx = select_tf_idx % len(tfs)
+            new_tfs = list()
+            new_tfs.extend(tfs[:idx])
+            if keys is not None:
+                new_select_tf = monai.transforms.SelectItemsd(keys)
+            if remove_keys is not None or add_keys is not None:
+                new_keys = tfs[idx].keys
+                if remove_keys is not None:
+                    new_keys = tuple(
+                        filter(lambda x: x not in tuple(remove_keys)), new_keys
+                    )
+                if add_keys is not None:
+                    # Only add keys that are not already in the set of keys.
+                    new_keys = new_keys + tuple(
+                        filter(lambda x: x not in new_keys), add_keys
+                    )
+                new_select_tf = monai.transforms.SelectItemsd(new_keys)
+
+            new_tfs.append(new_select_tf)
+            new_tfs.extend(tfs[idx + 1 :])
+            new_tfs = monai.transforms.compose(new_tfs)
+        self.transform = new_tfs
 
     @staticmethod
     def default_patch_func(
@@ -256,8 +316,8 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
                 "lr_dwi",
                 "lr_mask",
                 "lr_fodf",
-                # "lr_bval",
-                # "lr_bvec",
+                "lr_bval",
+                "lr_bvec",
                 "fodf",
                 "mask",
                 "lr_patch_extent_acpc",
@@ -266,9 +326,9 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
         )
         feat_tfs.append(select_k_tf)
 
-        # Extract the volume of each voxel in mm^3 from both LR and FR images.
+        # Extract the length of each voxel in mm from both LR and FR images.
         def vox_size_fn(ext):
-            return torch.prod(torch.abs(torch.diff(ext[:2], dim=0)))
+            return torch.abs(torch.diff(ext[:2], dim=0)).flatten()
 
         lr_vox_size_tf = monai.transforms.adaptor(
             vox_size_fn, outputs="lr_vox_size", inputs={"lr_patch_extent_acpc": "ext"}
@@ -313,6 +373,24 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
         )
         feat_tfs.append(to_tensor_tf)
         # ~~Generate features from each DWI and the associated bval and bvec.~~
+
+        select_k_tf = monai.transforms.SelectItemsd(
+            [
+                "subj_id",
+                "lr_dwi",
+                "lr_mask",
+                "lr_fodf",
+                # "lr_bval",
+                # "lr_bvec",
+                "fodf",
+                "mask",
+                "lr_patch_extent_acpc",
+                "fr_patch_extent_acpc",
+                "vox_size",
+                "lr_vox_size",
+            ]
+        )
+        feat_tfs.append(select_k_tf)
 
         return monai.transforms.Compose(feat_tfs)
 
