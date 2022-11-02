@@ -182,8 +182,8 @@ p.aim_uri = "aim://dali.cpe.virginia.edu:53800"
 p.train = dict(
     in_patch_size=(32, 32, 32),
     batch_size=1,
-    samples_per_subj_per_epoch=50,
-    max_epochs=4,
+    samples_per_subj_per_epoch=10,
+    max_epochs=30,
     loss="mse",
 )
 
@@ -272,7 +272,7 @@ with warnings.catch_warnings(record=True) as warn_list:
 
     # #!DEBUG
     pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
-        subj_ids=p.train.subj_ids[:2],
+        subj_ids=p.train.subj_ids[:4],
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         lr_dwi_root_dir=hcp_low_res_data_dir,
@@ -308,7 +308,6 @@ train_dataset = pitn.data.datasets.HCPINRfODFPatchDataset(
 #     samples_per_image=p.train.samples_per_subj_per_epoch,
 #     transform=per_patch_transforms,
 # )
-
 print("=" * 10)
 print("Warnings caught:")
 ws = "\n".join(
