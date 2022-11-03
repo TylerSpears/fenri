@@ -3,15 +3,16 @@
 # jupyter:
 #   jupytext:
 #     cell_metadata_filter: -all
+#     formats: ipynb,py:percent
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.14.0
 #   kernelspec:
-#     display_name: Python [conda env:miniconda-pitn2]
+#     display_name: Python 3.10.5 ('base')
 #     language: python
-#     name: conda-env-miniconda-pitn2-py
+#     name: python3
 # ---
 
 # %% [markdown]
@@ -322,41 +323,6 @@ ws = "\n".join(filter(lambda s: bool(s.strip()), ws.splitlines()))
 print(ws, flush=True)
 print("=" * 10)
 
-
-# %%
-# pre_patch_transforms = monai.transforms.Compose(load_tfs + sample_tfs[:-1])
-# tf_patch_sampler = sample_tfs[-1]
-# per_patch_transforms = monai.transforms.Compose(feat_tfs)
-
-# uncached_dataset = pitn.data.datasets.HCPfODFINRDataset(
-#     subj_ids=p.train.subj_ids,
-#     dwi_root_dir=hcp_full_res_data_dir,
-#     fodf_root_dir=hcp_full_res_fodf_dir,
-#     lr_dwi_root_dir=hcp_low_res_data_dir,
-#     transform=None,
-# )
-
-# with warnings.catch_warnings(record=True) as warn_list:
-#     # cache_dataset = monai.data.CacheDataset(
-#     #     uncached_dataset, transform=pre_patch_transforms, copy_cache=False
-#     # )
-#     #!DEBUG
-#     cache_dataset = monai.data.CacheDataset(
-#         uncached_dataset[:10], transform=pre_patch_transforms, copy_cache=False
-#     )
-# train_dataset = monai.data.PatchDataset(
-#     cache_dataset,
-#     patch_func=tf_patch_sampler,
-#     samples_per_image=p.train.samples_per_subj_per_epoch,
-#     transform=per_patch_transforms,
-# )
-# print("=" * 10)
-# print("Warnings caught:")
-# [
-#     warnings.showwarning(w.message, w.category, w.filename, w.lineno, w.file, w.line)
-#     for w in warn_list
-# ]
-# print("=" * 10)
 
 # %% [markdown]
 # ### Validation & Test Datasets
@@ -1016,8 +982,8 @@ plt.figure(dpi=100)
 plt.plot(losses.step[500:], losses.decoder_grad_norm[500:], label="decoder grad norm")
 plt.legend()
 plt.show()
-
 # %%
+
 
 # %% [markdown]
 # ## Testing & Visualization
