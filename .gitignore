@@ -818,3 +818,7 @@ results/*
 
 # Keep the repo root lib directory.
 !/lib/
+
+# Ignore certain security-related files.
+*.pem
+.cert

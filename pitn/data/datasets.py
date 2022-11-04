@@ -239,10 +239,10 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
         add_keys: Optional[List[str]] = None,
         select_tf_idx=-1,
     ):
-        tfs = self.transform
-        if tfs is None:
+        if self.transform is None:
             new_tfs = None
         else:
+            tfs = self.transform.transforms
             if keys is None and remove_keys is None and add_keys is None:
                 raise ValueError(
                     "ERROR: One of 'keys', 'remove_keys', 'add_keys' must be set."
@@ -261,18 +261,18 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
                 new_keys = tfs[idx].keys
                 if remove_keys is not None:
                     new_keys = tuple(
-                        filter(lambda x: x not in tuple(remove_keys)), new_keys
+                        filter(lambda x: x not in tuple(remove_keys), new_keys)
                     )
                 if add_keys is not None:
                     # Only add keys that are not already in the set of keys.
                     new_keys = new_keys + tuple(
-                        filter(lambda x: x not in new_keys), add_keys
+                        filter(lambda x: x not in new_keys, add_keys)
                     )
                 new_select_tf = monai.transforms.SelectItemsd(new_keys)
 
             new_tfs.append(new_select_tf)
             new_tfs.extend(tfs[idx + 1 :])
-            new_tfs = monai.transforms.compose(new_tfs)
+            new_tfs = monai.transforms.Compose(new_tfs)
         self.transform = new_tfs
 
     @staticmethod
