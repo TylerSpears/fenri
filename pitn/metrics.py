@@ -15,6 +15,25 @@ from pitn._lazy_loader import LazyLoader
 pytorch_msssim = LazyLoader("pytorch_msssim", globals(), "pytorch_msssim")
 
 
+class NormRMSEMetric(torch.nn.Module):
+    def __init__(self, reduction="mean", normalization="min-max"):
+        super().__init__()
+        self.reduction = reduction
+        self.normalization = normalization.lower()
+        assert self.normalization == "min-max"
+
+    def forward(self, y_pred, y):
+        rmse_unreduced = F.mse_loss(y_pred, y, reduction="none")
+        rmse = torch.sqrt(einops.reduce(rmse_unreduced, "b c ... -> b c", "mean"))
+        max_y = einops.reduce(y, "b c ... -> b c", "max")
+        min_y = einops.reduce(y, "b c ... -> b c", "min")
+        minmax = max_y - min_y
+        nrmse = rmse / minmax
+
+        nrmse, notnans = monai.metrics.utils.do_metric_reduction(nrmse, self.reduction)
+        return nrmse
+
+
 @torch.no_grad()
 def psnr_batch_channel_regularized(
     x, y, range_min: torch.Tensor, range_max: torch.Tensor
@@ -49,24 +68,6 @@ def _bc_y_range(y):
     y_min = einops.reduce(y, reduce_str, "min")
     y_max = einops.reduce(y, reduce_str, "max")
     return y_max - y_min
-
-
-# @torch.no_grad()
-# def psnr_y_range(x, y):
-
-#     # Calculate the per-batch-per-channel range.
-#     y_range = _bc_y_range(y)
-
-#     # Calculate squared error then regularize by the per-batch-per-channel range.
-#     regular_mse = (y_range ** 2) / F.mse_loss(x, y, reduction="none")
-#     # Calculate the mean over channels and spatial dims.
-#     regular_mse = einops.reduce(regular_mse, "b .... -> b", "mean")
-#     # Find PSNR for each batch.
-#     psnr = 10 * torch.log10(regular_mse)
-#     # Mean of PSNR values for the whole batch.
-#     psnr = psnr.mean()
-
-#     return psnr
 
 
 @torch.no_grad()
@@ -105,65 +106,6 @@ def ssim_y_range(
     return scores
 
 
-# @torch.no_grad()
-# def ms_ssim_y_range(
-#     x: torch.Tensor,
-#     y: torch.Tensor,
-#     **ms_ssim_kwargs,
-# ) -> torch.Tensor:
-
-#     y_range = _bc_y_range(y)
-
-#     # Pad to have a sufficient volume size given a window size.
-#     window_size = ms_ssim_kwargs.get("win_size", 11)
-#     min_side_len = (window_size - 1) * 2 ** 4
-#     if min(y.shape[2:]) <= min_side_len:
-#         # Monai transformer only takes C x [...] tensors, with no batch size.
-#         batch_size = y.shape[0]
-#         n_channels = y.shape[1]
-#         x = einops.rearrange(x, "b c ... -> (b c) ...")
-#         y = einops.rearrange(y, "b c ... -> (b c) ...")
-#         new_shape = torch.maximum(
-#             torch.as_tensor(
-#                 [
-#                     min_side_len + 1,
-#                 ]
-#             ),
-#             torch.as_tensor(y.shape[2:]),
-#         )
-#         padder = monai.transforms.SpatialPad(
-#             new_shape, method="symmetric", mode="reflect"
-#         )
-#         x = padder(x)
-#         y = padder(y)
-
-#         x = einops.rearrange(x, "(b c) ... -> b c ...", b=batch_size, c=n_channels)
-#         y = einops.rearrange(y, "(b c) ... -> b c ...", b=batch_size, c=n_channels)
-
-#     batch_size = y.shape[0]
-#     n_channels = y.shape[1]
-#     all_scores = list()
-#     # Calculate each batch and channel entry MS-SSIM, as the data_range only takes a
-#     # single scalar.
-#     for i in range(batch_size):
-#         c_scores = list()
-#         for j in range(n_channels):
-#             c_score = pytorch_msssim.ms_ssim(
-#                 x[i, j][None, None],
-#                 y[i, j][None, None],
-#                 data_range=y_range[i, j],
-#                 size_average=True,
-#                 **ms_ssim_kwargs,
-#             )
-#             c_scores.append(c_score)
-#         all_scores.append(torch.stack(c_scores, dim=0))
-
-#     scores = torch.stack(all_scores, dim=0)
-#     scores = scores.mean()
-
-#     return scores
-
-
 @torch.no_grad()
 def _minmax_scale_by_y(x: torch.Tensor, y: torch.Tensor, feature_range) -> tuple:
     y = y.contiguous()
@@ -183,21 +125,6 @@ def _minmax_scale_by_y(x: torch.Tensor, y: torch.Tensor, feature_range) -> tuple
     y_scaled = scale * y + f_min - y_min * scale
 
     return x_scaled, y_scaled
-
-
-# @torch.no_grad()
-# def range_scaled_rmse(
-#     x: torch.Tensor,
-#     y: torch.Tensor,
-#     feature_range: tuple = (0.0, 1.0),
-#     range_based_on: str = "y",
-#     **mse_kwargs,
-# ) -> torch.Tensor:
-#     if range_based_on.casefold() == "x":
-#         x, y = y, x
-
-#     x_scaled, y_scaled = _minmax_scale_by_y(x, y, feature_range)
-#     return torch.sqrt(F.mse_loss(x_scaled, y_scaled, **mse_kwargs))
 
 
 @torch.no_grad()
@@ -351,158 +278,6 @@ def minmax_normalized_dti_root_vec_fro_norm(
     return result
 
 
-# @torch.no_grad()
-# def minmax_norm_rmse(
-#     x: torch.Tensor, y: torch.Tensor, range_based_on: str = "y", **mse_kwargs
-# ) -> torch.Tensor:
-
-#     if range_based_on.casefold() == "x":
-#         x, y = y, x
-
-#     rmse = torch.sqrt(F.mse_loss(x, y, **mse_kwargs))
-
-
-#     data_range = y.max() - y.min()
-#     nrmse = rmse / data_range
-
-#     return nrmse
-
-
-# @torch.no_grad()
-# def range_scaled_psnr(
-#     x: torch.Tensor,
-#     y: torch.Tensor,
-#     feature_range: tuple = (0.0, 1.0),
-#     range_based_on: str = "y",
-#     **mse_kwargs,
-# ) -> torch.Tensor:
-
-#     if range_based_on.casefold() == "x":
-#         x, y = y, x
-
-#     x_scaled, y_scaled = _minmax_scale_by_y(x, y, feature_range)
-#     data_range = abs(feature_range[1] - feature_range[0])
-#     psnr = 20 * torch.log10(
-#         torch.as_tensor(data_range).to(y_scaled)
-#     ) - 10 * torch.log10(F.mse_loss(x_scaled, y_scaled, **mse_kwargs))
-
-#     return psnr
-
-
-# @torch.no_grad()
-# def range_scaled_ssim(
-#     x: torch.Tensor,
-#     y: torch.Tensor,
-#     feature_range: tuple = (0.0, 1.0),
-#     range_based_on: str = "y",
-#     reduction="mean",
-#     **ssim_kwargs,
-# ) -> torch.Tensor:
-
-#     if reduction is None:
-#         reduction = "none"
-#     elif not isinstance(reduction, str):
-#         reduction = str(reduction)
-
-#     if range_based_on.casefold() == "x":
-#         x, y = y, x
-
-#     x_scaled, y_scaled = _minmax_scale_by_y(x, y, feature_range)
-#     x_scaled = x_scaled.detach().cpu().numpy()
-#     y_scaled = y_scaled.detach().cpu().numpy()
-#     # Move channel dimensions to a channel-last format.
-#     x_scaled = einops.rearrange(x_scaled, "b c ... -> b ... c")
-#     y_scaled = einops.rearrange(y_scaled, "b c ... -> b ... c")
-
-#     data_range = abs(feature_range[1] - feature_range[0])
-
-#     batch_scores = list()
-#     batch_size = y.shape[0]
-#     for i in range(batch_size):
-#         score = skimage.metrics.structural_similarity(
-#             x_scaled[i],
-#             y_scaled[i],
-#             multichannel=True,
-#             data_range=data_range,
-#             **ssim_kwargs,
-#         )
-#         batch_scores.append(score)
-
-#     scores = torch.from_numpy(np.stack(batch_scores)).to(y)
-
-#     if reduction.casefold() == "mean":
-#         scores = torch.mean(scores)
-#     elif reduction.casefold() == "sum":
-#         scores = torch.sum(scores)
-#     elif reduction.casefold() == "none":
-#         scores = scores
-#     else:
-#         raise ValueError(f"ERROR: Invalid reduction {reduction}")
-
-#     return scores
-
-
-# @torch.no_grad()
-# def range_scaled_ms_ssim(
-#     x: torch.Tensor,
-#     y: torch.Tensor,
-#     feature_range: tuple = (0.0, 1.0),
-#     range_based_on: str = "y",
-#     reduction: str = "mean",
-#     **ms_ssim_kwargs,
-# ) -> torch.Tensor:
-
-#     if range_based_on.casefold() == "x":
-#         x, y = y, x
-#     x_scaled, y_scaled = _minmax_scale_by_y(x, y, feature_range)
-#     data_range = abs(feature_range[1] - feature_range[0])
-
-#     window_size = ms_ssim_kwargs.get("win_size", 11)
-
-#     min_side_len = (window_size - 1) * 2 ** 4
-#     if min(y.shape[2:]) <= min_side_len:
-#         # Monai transformer only takes C x [...] tensors, with no batch size.
-#         batch_size = x_scaled.shape[0]
-#         n_channels = x_scaled.shape[1]
-#         x_scaled = einops.rearrange(x_scaled, "b c ... -> (b c) ...")
-#         y_scaled = einops.rearrange(y_scaled, "b c ... -> (b c) ...")
-#         new_shape = torch.maximum(
-#             torch.as_tensor(
-#                 [
-#                     min_side_len + 1,
-#                 ]
-#             ),
-#             torch.as_tensor(y.shape[2:]),
-#         )
-#         padder = monai.transforms.SpatialPad(
-#             new_shape, method="symmetric", mode="reflect"
-#         )
-#         x_scaled = padder(x_scaled)
-#         y_scaled = padder(y_scaled)
-
-#         x_scaled = einops.rearrange(
-#             x_scaled, "(b c) ... -> b c ...", b=batch_size, c=n_channels
-#         )
-#         y_scaled = einops.rearrange(
-#             y_scaled, "(b c) ... -> b c ...", b=batch_size, c=n_channels
-#         )
-
-#     scores = pytorch_msssim.ms_ssim(
-#         x_scaled, y_scaled, data_range=data_range, size_average=False, **ms_ssim_kwargs
-#     )
-
-#     if reduction.casefold() == "mean":
-#         scores = torch.mean(scores)
-#     elif reduction.casefold() == "sum":
-#         scores = torch.sum(scores)
-#     elif reduction.casefold() == "none":
-#         scores = scores
-#     else:
-#         raise ValueError(f"ERROR: Invalid reduction {reduction}")
-
-#     return scores
-
-
 @torch.no_grad()
 def fast_fa(dti_lower_triangle, foreground_mask=None):
     batch_size = dti_lower_triangle.shape[0]
@@ -536,14 +311,3 @@ def fast_fa(dti_lower_triangle, foreground_mask=None):
 
     fa = fa.view(batch_size, 1, *spatial_dims)
     return fa
-
-
-# self.ssim_metric = functools.partial(
-#     skimage.metrics.structural_similarity,
-#     win_size=7,
-#     K1=0.01,
-#     K2=0.03,
-#     use_sample_covariance=True,
-#     data_range=psnr_max,
-#     multichannel=True,
-# )

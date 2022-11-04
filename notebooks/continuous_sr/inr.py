@@ -184,8 +184,8 @@ p.train = dict(
     in_patch_size=(32, 32, 32),
     batch_size=3,
     samples_per_subj_per_epoch=15,
-    max_epochs=100,
-    loss="mse",
+    max_epochs=200,
+    # loss="mse",
 )
 
 # Network/model parameters.
@@ -194,9 +194,9 @@ p.encoder = dict(
     # (number of SH orders (l) + 1) * X that is as close to 100 as possible.
     out_channels=16 * 6,
     # out_channels=189,
-    n_res_units=4,
+    n_res_units=3,
     n_dense_units=3,
-    activate_fn="elu",
+    activate_fn="relu",
 )
 p.decoder = dict(
     context_v_features=128,
@@ -245,6 +245,9 @@ p.test.subj_ids = tvt_split[tvt_split.split == "test"].subj_id.tolist()
 assert len(set(p.train.subj_ids) & set(p.test.subj_ids)) == 0
 assert len(set(p.val.subj_ids) & set(p.test.subj_ids)) == 0
 
+# %%
+ppr(p.to_dict())
+
 # %% [markdown]
 # ## Data Loading
 
@@ -263,6 +266,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
+DEBUG_TRAIN_DATA_SUBJS = 6
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -275,7 +279,7 @@ with warnings.catch_warnings(record=True) as warn_list:
 
     # #!DEBUG
     pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
-        subj_ids=p.train.subj_ids[:10],
+        subj_ids=p.train.subj_ids[:DEBUG_TRAIN_DATA_SUBJS],
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         lr_dwi_root_dir=hcp_low_res_data_dir,
@@ -803,7 +807,7 @@ class ContRepDecoder(torch.nn.Module):
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-tmp_res_dir = Path(".") / "tmp_res" / ts
+tmp_res_dir = Path(p.tmp_results_dir) / ts
 tmp_res_dir.mkdir(parents=True)
 
 
@@ -824,20 +828,34 @@ class INRSystem(LightningLite):
     ):
         encoder = INREncoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
         decoder = ContRepDecoder(**decoder_kwargs)
+        recon_decoder = INREncoder(
+            in_channels=encoder.out_channels,
+            interior_channels=96,
+            out_channels=encoder.in_channels,
+            n_res_units=3,
+            n_dense_units=3,
+            activate_fn=encoder_kwargs["activate_fn"],
+        )
 
         # #!DEBUG
         # encoder = DummyINRDecoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
         #!
         print(encoder)
         print(decoder)
+        print(recon_decoder)
 
-        optim = torch.optim.AdamW(
-            itertools.chain(encoder.parameters(), decoder.parameters()), **optim_kwargs
+        optim = torch.optim.Adam(
+            itertools.chain(
+                encoder.parameters(), decoder.parameters(), recon_decoder.parameters()
+            ),
+            **optim_kwargs,
         )
+
         encoder = self.setup(encoder)
         decoder, optim = self.setup(decoder, optim)
-
+        recon_decoder = self.setup(recon_decoder)
         loss_fn = torch.nn.MSELoss(reduction="mean")
+        recon_loss_fn = pitn.metrics.NormRMSEMetric(reduction="mean")
 
         train_dataloader = monai.data.DataLoader(
             train_dataset,
@@ -850,6 +868,7 @@ class INRSystem(LightningLite):
 
         encoder.train()
         decoder.train()
+        recon_decoder.train()
         out_dir = tmp_res_dir
 
         losses = dict(
@@ -862,10 +881,10 @@ class INRSystem(LightningLite):
         step = 0
         train_lr = False
         for epoch in range(epochs):
-            print(f"Epoch {epoch}\n", "=" * 10)
+            print(f"\nEpoch {epoch}\n", "=" * 10)
             if epoch < (epochs // 10):
                 train_dataloader.dataset.set_select_tf_keys(
-                    add_keys=["lr_fodf", "lr_mask"],
+                    # add_keys=["lr_fodf"],
                     remove_keys=["fodf", "mask", "fr_patch_extent_acpc"],
                 )
                 train_lr = True
@@ -873,7 +892,7 @@ class INRSystem(LightningLite):
             elif False:
                 train_dataloader.dataset.set_select_tf_keys(
                     add_keys=["fodf", "mask", "fr_patch_extent_acpc"],
-                    remove_keys=["lr_fodf", "lr_mask"],
+                    # remove_keys=["lr_fodf"],
                 )
                 train_lr = False
 
@@ -881,6 +900,8 @@ class INRSystem(LightningLite):
                 x = batch_dict["lr_dwi"]
                 x_coords = batch_dict["lr_patch_extent_acpc"]
                 x_vox_size = torch.atleast_2d(batch_dict["lr_vox_size"])
+                x_mask = batch_dict["lr_mask"].to(torch.bool)
+
                 if not train_lr:
                     y = batch_dict["fodf"]
                     y_mask = batch_dict["mask"].to(torch.bool)
@@ -899,21 +920,58 @@ class INRSystem(LightningLite):
 
                 optim.zero_grad()
                 ctx_v = encoder(x)
-
+                recon_pred = recon_decoder(ctx_v)
                 pred_fodf = decoder(
                     context_v=ctx_v,
                     context_spatial_extent=x_coords,
                     query_vox_size=y_vox_size,
                     query_coord=y_coords,
                 )
+                if epoch < (epochs // 2):
+                    skip_pred_fodf = True
+                    skip_recon = False
+                else:
+                    skip_pred_fodf = False
+                    skip_recon = False
 
-                y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-                loss = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
+                if not skip_pred_fodf:
+                    y_mask_broad = torch.broadcast_to(y_mask, y.shape)
+                    loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
+                    lambda_recon = 0.005
+                else:
+                    lambda_recon = 1
+                    loss_fodf = torch.as_tensor([0]).to(y)
+
+                if not skip_recon:
+                    recon_y = x
+                    x_mask_broad = torch.broadcast_to(x_mask, recon_y.shape)
+                    loss_recon = recon_loss_fn(
+                        recon_pred * x_mask_broad, recon_y * x_mask_broad
+                    )
+                else:
+                    loss_recon = torch.as_tensor([0]).to(y)
+
+                loss = loss_fodf + (lambda_recon * loss_recon)
 
                 self.backward(loss)
+                torch.nn.utils.clip_grad_norm_(
+                    itertools.chain(
+                        encoder.parameters(),
+                        decoder.parameters(),
+                        recon_decoder.parameters(),
+                    ),
+                    10.0,
+                    error_if_nonfinite=True,
+                )
                 optim.step()
 
-                print(f"| {loss.detach().cpu().item()}", end=" ", flush=True)
+                print(
+                    f"| {loss.detach().cpu().item()}",
+                    f"= {loss_fodf.detach().cpu().item()}",
+                    f"+ {lambda_recon}*{loss_recon.detach().cpu().item()}",
+                    end=" ",
+                    flush=True,
+                )
                 losses["loss"].append(loss.detach().cpu().item())
                 losses["epoch"].append(epoch)
                 losses["step"].append(step)
@@ -962,7 +1020,7 @@ class INRSystem(LightningLite):
                     )
                     fig = plt.figure(dpi=170, figsize=(5, 8))
                     pitn.viz.plot_vol_slices(
-                        x[0, 7].detach(),
+                        x[0, 0].detach(),
                         pred_fodf_patch[0, 0].detach(),
                         y[0, 0].detach(),
                         y_mask[0, 0].detach(),
@@ -978,20 +1036,22 @@ class INRSystem(LightningLite):
                     # return
                     #!
                 step += 1
-            # Save some example predictions after each epoch
-            fig = plt.figure(dpi=150, figsize=(4, 6))
-            pitn.viz.plot_vol_slices(
-                x[0, 7].detach(),
-                pred_fodf[0, 0].detach() * y_mask[0, 0].detach(),
-                y[0, 0].detach(),
-                slice_idx=(0.4, 0.5, 0.5),
-                title=f"Epoch {epoch} Step {step}",
-                vol_labels=["Input", "Pred", "Target"],
-                colorbars="each",
-                fig=fig,
-                cmap="gray",
-            )
-            plt.savefig(Path(out_dir) / f"epoch_{epoch}_sample.png")
+            with mpl.rc_context({"font.size": 6.0}):
+                # Save some example predictions after each epoch
+                fig = plt.figure(dpi=150, figsize=(3, 7))
+                pitn.viz.plot_vol_slices(
+                    x[0, 0].detach(),
+                    pred_fodf[0, 0].detach() * y_mask[0, 0].detach(),
+                    recon_pred[0, 0].detach() * x_mask[0, 0].detach(),
+                    y[0, 0].detach(),
+                    slice_idx=(0.4, 0.5, 0.5),
+                    title=f"Epoch {epoch} Step {step}",
+                    vol_labels=["Input", "Pred", "Rec. Pred", "Target"],
+                    colorbars="each",
+                    fig=fig,
+                    cmap="gray",
+                )
+                plt.savefig(Path(out_dir) / f"epoch_{epoch}_sample.png")
 
         print("=" * 10)
         losses = pd.DataFrame.from_dict(losses)
@@ -1097,8 +1157,9 @@ model_system.run(
     encoder_kwargs=p.encoder.to_dict(),
     decoder_kwargs=p.decoder.to_dict(),
     train_dataset=train_dataset,
+    optim_kwargs={"lr": 1e-3},
     dataloader_kwargs={
-        "num_workers": 10,
+        "num_workers": 15,
         "persistent_workers": True,
         "prefetch_factor": 3,
     },
@@ -1124,17 +1185,17 @@ plt.show()
 
 # %%
 plt.figure(dpi=100)
-plt.plot(losses.step[500:], losses.loss[500:], label="loss")
+plt.plot(losses.step[750:], losses.loss[750:], label="loss")
 plt.legend()
 plt.show()
 
 plt.figure(dpi=100)
-plt.plot(losses.step[500:], losses.encoder_grad_norm[500:], label="encoder grad norm")
+plt.plot(losses.step[750:], losses.encoder_grad_norm[750:], label="encoder grad norm")
 plt.legend()
 plt.show()
 
 plt.figure(dpi=100)
-plt.plot(losses.step[500:], losses.decoder_grad_norm[500:], label="decoder grad norm")
+plt.plot(losses.step[750:], losses.decoder_grad_norm[750:], label="decoder grad norm")
 plt.legend()
 plt.show()
 # %%
