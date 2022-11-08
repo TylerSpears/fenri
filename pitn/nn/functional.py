@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
+import itertools
+
 import einops
 import numpy as np
+import torch.nn.functional as F
 
 
 # Shuffle operation as a function.
@@ -34,5 +37,30 @@ def espcn_shuffle(x, channels):
             r2=downsample_factor,
             r3=downsample_factor,
         )
+
+    return y
+
+
+def unfold_3d(x, kernel, stride=1, **pad_kwargs):
+    if stride != 1:
+        raise NotImplementedError("Stride must be 1")
+    if isinstance(stride, int):
+        stride = (stride,) * 3
+    if isinstance(kernel, int):
+        kernel = (kernel,) * 3
+    # By default, pad by one on each side, but allow user to override this.
+    pad_kwargs = {**{"pad": tuple(itertools.repeat(1, len(kernel) * 2))}, **pad_kwargs}
+
+    # Pad on each side.
+    y = F.pad(x, **pad_kwargs)
+
+    y = (
+        y.unfold(2, kernel[0], stride[0])
+        .unfold(3, kernel[1], stride[1])
+        .unfold(4, kernel[2], stride[2])
+    )
+    y = einops.rearrange(
+        y, "b c xmk ymk zmk k_x k_y k_z -> b c (xmk k_x) (ymk k_y) (zmk k_z)"
+    )
 
     return y

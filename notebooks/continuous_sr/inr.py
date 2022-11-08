@@ -57,6 +57,7 @@ import zipfile
 from pathlib import Path
 from pprint import pprint as ppr
 
+import aim
 import dotenv
 import einops
 
@@ -178,13 +179,18 @@ p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = random.choice(
     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
 )
-p.aim_uri = "aim://dali.cpe.virginia.edu:53800"
+p.aim_logger = dict(
+    repo="aim://dali.cpe.virginia.edu:53800",
+    experiment="PITN_INR",
+    meta_params=dict(run_name=p.experiment_name),
+    tags=("PITN", "INR", "HCP", "super-res", "dMRI"),
+)
 ###############################################
 p.train = dict(
     in_patch_size=(32, 32, 32),
     batch_size=3,
     samples_per_subj_per_epoch=15,
-    max_epochs=200,
+    max_epochs=4,
     # loss="mse",
 )
 
@@ -205,6 +211,8 @@ p.decoder = dict(
     m_encode_num_freqs=24,
     sigma_encode_scale=3.0,
 )
+
+
 # If a config file exists, override the defaults with those values.
 try:
     if "PITN_CONFIG" in os.environ.keys():
@@ -234,11 +242,11 @@ p = _p
 
 # %%
 tvt_split = pd.read_csv(p.train_val_test_split_file)
-p.train.subj_ids = tvt_split[tvt_split.split == "train"].subj_id.tolist()
+p.train.subj_ids = natsorted(tvt_split[tvt_split.split == "train"].subj_id.tolist())
 p.val = dict()
-p.val.subj_ids = tvt_split[tvt_split.split == "val"].subj_id.tolist()
+p.val.subj_ids = natsorted(tvt_split[tvt_split.split == "val"].subj_id.tolist())
 p.test = dict()
-p.test.subj_ids = tvt_split[tvt_split.split == "test"].subj_id.tolist()
+p.test.subj_ids = natsorted(tvt_split[tvt_split.split == "test"].subj_id.tolist())
 
 # Ensure that no test subj ids are in either the training or validation sets.
 # However, we can have overlap between training and validation.
@@ -247,6 +255,20 @@ assert len(set(p.val.subj_ids) & set(p.test.subj_ids)) == 0
 
 # %%
 ppr(p.to_dict())
+
+# %%
+# Select which parameters to store in the aim meta-params.
+p.aim_logger.meta_params.hparams = dict(
+    batch_size=p.train.batch_size,
+    patch_size=p.train.in_patch_size,
+    samples_per_subj_per_epoch=p.train.samples_per_subj_per_epoch,
+    max_epochs=p.train.max_epochs,
+)
+p.aim_logger.meta_params.data = dict(
+    train_subj_ids=p.train.subj_ids,
+    val_subj_ids=p.val.subj_ids,
+    test_subj_ids=p.test.subj_ids,
+)
 
 # %% [markdown]
 # ## Data Loading
@@ -689,63 +711,322 @@ class ContRepDecoder(torch.nn.Module):
                             y=query_coord.shape[3],
                             z=query_coord.shape[4],
                         )
-                        # # Take relative coordinate difference between the current context
-                        # # coord and the query coord.
-                        # rel_context_coord = torch.clamp_min(
-                        #     context_coord - query_coord,
-                        #     (-context_vox_size / 2) + self.TARGET_COORD_EPSILON,
-                        # )
-                        # # Also normalize to [0, 1)
-                        # # Coordinates are located in the center of the voxel. By the way
-                        # # the context vector is being constructed surrounding the query
-                        # # coord, the query coord is always within 1.5 x vox_size of the
-                        # # context (low-res space) coordinate. So, subtract the
-                        # # batch-and-channel-wise minimum, and divide by the known upper
-                        # # bound.
-                        # rel_norm_context_coord = (
-                        #     rel_context_coord
-                        #     - torch.amin(rel_context_coord, dim=(2, 3, 4), keepdim=True)
-                        # ) / (1.5 * context_vox_size)
-                        # assert (rel_norm_context_coord >= 0).all() and (
-                        #     rel_norm_context_coord < 1.0
-                        # ).all()
-                        # encoded_rel_norm_context_coord = self.encode_relative_coord(
-                        #     rel_norm_context_coord
-                        # )
-                        # q_vox_size = query_vox_size[..., None, None, None].expand_as(
-                        #     rel_norm_context_coord
-                        # )
 
-                        # # Perform forward pass of the MLP.
-                        # context_feats = einops.rearrange(
-                        #     context_val, "b c x y z -> (b x y z) c"
-                        # )
-                        # coord_feats = (
-                        #     q_vox_size,
-                        #     context_coord,
-                        #     query_coord,
-                        #     rel_norm_context_coord,
-                        #     encoded_rel_norm_context_coord,
-                        # )
-                        # coord_feats = torch.cat(coord_feats, dim=1)
-                        # spatial_layout = {
-                        #     "b": coord_feats.shape[0],
-                        #     "x": coord_feats.shape[2],
-                        #     "y": coord_feats.shape[3],
-                        #     "z": coord_feats.shape[4],
-                        # }
+                        ret_ctx_coord = True if (i == j == k == 0) else False
+                        sub_grid_pred_ijk = self.sub_grid_forward(
+                            context_val=context_val,
+                            context_coord=context_coord,
+                            query_coord=query_coord,
+                            context_vox_size=context_vox_size,
+                            query_vox_size=query_vox_size,
+                            return_rel_context_coord=ret_ctx_coord,
+                        )
+                        if ret_ctx_coord:
+                            sub_grid_pred_ijk = sub_grid_pred_ijk[0]
+                            rel_norm_context_coord = sub_grid_pred_ijk[1]
+                        else:
+                            rel_norm_context_coord = None
 
-                        # coord_feats = einops.rearrange(
-                        #     coord_feats, "b c x y z -> (b x y z) c"
-                        # )
-                        # x_coord = coord_feats
-                        # sub_grid_pred_ijk = context_feats
-                        # for l in self.internal_res_repr:
-                        #     sub_grid_pred_ijk, x_coord = l(sub_grid_pred_ijk, x_coord)
-                        # sub_grid_pred_ijk = self.lin_post(sub_grid_pred_ijk)
-                        # sub_grid_pred_ijk = einops.rearrange(
-                        #     sub_grid_pred_ijk, "(b x y z) c -> b c x y z", **spatial_layout
-                        # )
+                        sub_window_query_sample_grid.append(sub_grid_pred_ijk)
+
+                        if i == j == k == 0:
+                            # Find the relative coordinate of the query within the
+                            # sub-window.
+                            rel_norm_sub_window_grid_coord = torch.clamp(
+                                (rel_norm_context_coord - 0.5) * 2,
+                                -1 + self.TARGET_COORD_EPSILON,
+                                1 - self.TARGET_COORD_EPSILON,
+                            )
+            sub_window_query_sample_grid = torch.stack(
+                sub_window_query_sample_grid, dim=0
+            )
+            spatial_layout = {
+                "b": sub_window_query_sample_grid.shape[1],
+                "x": sub_window_query_sample_grid.shape[3],
+                "y": sub_window_query_sample_grid.shape[4],
+                "z": sub_window_query_sample_grid.shape[5],
+            }
+            sub_window = einops.rearrange(
+                sub_window_query_sample_grid,
+                "(x_sub y_sub z_sub) b c x y z -> (b x y z) c x_sub y_sub z_sub",
+                x_sub=2,
+                y_sub=2,
+                z_sub=2,
+            )
+            sub_window_grid = einops.rearrange(
+                rel_norm_sub_window_grid_coord, "b dim x y z -> (b x y z) 1 1 1 dim "
+            )
+
+            y = F.grid_sample(
+                sub_window,
+                sub_window_grid,
+                mode="bilinear",
+                align_corners=True,
+                padding_mode="reflection",
+            )
+            y = einops.rearrange(y, "(b x y z) c 1 1 1 -> b c x y z", **spatial_layout)
+
+        return y
+
+
+# %%
+# INR/Decoder model
+class PoorConvContRepDecoder(torch.nn.Module):
+
+    TARGET_COORD_EPSILON = 1e-7
+
+    def __init__(
+        self,
+        context_v_features: int,
+        out_features: int,
+        m_encode_num_freqs: int,
+        sigma_encode_scale: float,
+        in_features=None,
+    ):
+        super().__init__()
+
+        # Determine the number of input features needed for the MLP.
+        # The order for concatenation is
+        # 1) ctx feats over the low-res input space
+        # 2) target voxel shape
+        # 3) absolute coords of this forward pass' prediction target
+        # 4) absolute coords of the high-res target voxel
+        # 5) relative coords between high-res target coords and this forward pass'
+        #    prediction target, normalized by low-res voxel shape
+        # 6) encoding of relative coords
+        self.context_v_features = context_v_features
+        self.ndim = 3
+        self.m_encode_num_freqs = m_encode_num_freqs
+        self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
+        self.n_encode_features = self.ndim * 2 * self.m_encode_num_freqs
+        self.n_coord_features = 4 * self.ndim + self.n_encode_features
+        self.internal_features = self.context_v_features + self.n_coord_features
+
+        self.in_features = in_features
+        self.out_features = out_features
+
+        # "Swish" function, recommended in MeshFreeFlowNet
+        activate_cls = torch.nn.SiLU
+        self.activate_fn = activate_cls(inplace=True)
+        # Optional resizing linear layer, if the input size should be different than
+        # the hidden layer size.
+        if self.in_features is not None:
+            self.lin_pre = torch.nn.Linear(self.in_features, self.context_v_features)
+            self.norm_pre = None
+            # self.norm_pre = torch.nn.LazyBatchNorm1d(affine=True, track_running_stats=True)
+            # self.norm_pre = torch.nn.LazyInstanceNorm3d(affine=False, track_running_stats=False)
+        else:
+            self.lin_pre = None
+            self.norm_pre = None
+        self.norm_pre = None
+
+        # Internal hidden layers are two res MLPs.
+        self.internal_res_repr = torch.nn.ModuleList(
+            [
+                pitn.nn.inr.SkipMLPBlock(
+                    n_context_features=self.context_v_features,
+                    n_coord_features=self.n_coord_features,
+                    n_dense_layers=3,
+                    activate_fn=activate_cls,
+                )
+                for _ in range(2)
+            ]
+        )
+        self.lin_post = torch.nn.Linear(self.context_v_features, self.out_features)
+
+    def encode_relative_coord(self, coords):
+        c = einops.rearrange(coords, "b d x y z -> (b x y z) d")
+        sigma = self.sigma_encode_scale.expand_as(c).to(c)[..., None]
+        encode_pos = pitn.nn.inr.fourier_position_encoding(
+            c, sigma_scale=sigma, m_num_freqs=self.m_encode_num_freqs
+        )
+
+        encode_pos = einops.rearrange(
+            encode_pos,
+            "(b x y z) d -> b d x y z",
+            x=coords.shape[2],
+            y=coords.shape[3],
+            z=coords.shape[4],
+        )
+        return encode_pos
+
+    def sub_grid_forward(
+        self,
+        context_val,
+        context_coord,
+        query_coord,
+        context_vox_size,
+        query_vox_size,
+        return_rel_context_coord=False,
+    ):
+        # Take relative coordinate difference between the current context
+        # coord and the query coord.
+        rel_context_coord = torch.clamp_min(
+            context_coord - query_coord,
+            (-context_vox_size / 2) + self.TARGET_COORD_EPSILON,
+        )
+        # Also normalize to [0, 1)
+        # Coordinates are located in the center of the voxel. By the way
+        # the context vector is being constructed surrounding the query
+        # coord, the query coord is always within 1.5 x vox_size of the
+        # context (low-res space) coordinate. So, subtract the
+        # batch-and-channel-wise minimum, and divide by the known upper
+        # bound.
+        rel_norm_context_coord = (
+            rel_context_coord
+            - torch.amin(rel_context_coord, dim=(2, 3, 4), keepdim=True)
+        ) / (1.5 * context_vox_size)
+        assert (rel_norm_context_coord >= 0).all() and (
+            rel_norm_context_coord < 1.0
+        ).all()
+        encoded_rel_norm_context_coord = self.encode_relative_coord(
+            rel_norm_context_coord
+        )
+        q_vox_size = query_vox_size.expand_as(rel_norm_context_coord)
+
+        # Perform forward pass of the MLP.
+        if self.norm_pre is not None:
+            context_val = self.norm_pre(context_val)
+        context_feats = einops.rearrange(context_val, "b c x y z -> (b x y z) c")
+
+        coord_feats = (
+            q_vox_size,
+            context_coord,
+            query_coord,
+            rel_norm_context_coord,
+            encoded_rel_norm_context_coord,
+        )
+        coord_feats = torch.cat(coord_feats, dim=1)
+        spatial_layout = {
+            "b": coord_feats.shape[0],
+            "x": coord_feats.shape[2],
+            "y": coord_feats.shape[3],
+            "z": coord_feats.shape[4],
+        }
+
+        coord_feats = einops.rearrange(coord_feats, "b c x y z -> (b x y z) c")
+        x_coord = coord_feats
+        sub_grid_pred = context_feats
+
+        if self.lin_pre is not None:
+            sub_grid_pred = self.lin_pre(sub_grid_pred)
+            sub_grid_pred = self.activate_fn(sub_grid_pred)
+
+        for l in self.internal_res_repr:
+            sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
+        sub_grid_pred = self.lin_post(sub_grid_pred)
+        sub_grid_pred = einops.rearrange(
+            sub_grid_pred, "(b x y z) c -> b c x y z", **spatial_layout
+        )
+        if return_rel_context_coord:
+            ret = (sub_grid_pred, rel_context_coord)
+        else:
+            ret = sub_grid_pred
+        return ret
+
+    def equal_space_forward(self, context_v, context_spatial_extent, context_vox_size):
+        return self.sub_grid_forward(
+            context_val=context_v,
+            context_coord=context_spatial_extent,
+            query_coord=context_spatial_extent,
+            context_vox_size=context_vox_size,
+            query_vox_size=context_vox_size,
+        )
+
+    def forward(
+        self,
+        context_v,
+        context_spatial_extent,
+        query_vox_size,
+        query_coord,
+    ) -> torch.Tensor:
+        if query_vox_size.ndim == 2:
+            query_vox_size = query_vox_size[:, :, None, None, None]
+        context_vox_size = torch.abs(
+            context_spatial_extent[..., 1, 1, 1] - context_spatial_extent[..., 0, 0, 0]
+        )
+        context_vox_size = context_vox_size[:, :, None, None, None]
+
+        # If the context space and the query coordinates are equal, then we are actually
+        # just mapping within the same physical space to the same coordinates. So,
+        # linear interpolation would just zero-out all surrounding predicted voxels,
+        # and would be a massive waste of computation.
+        if (
+            (context_spatial_extent.shape == query_coord.shape)
+            and torch.isclose(context_spatial_extent, query_coord).all()
+            and torch.isclose(query_vox_size, context_vox_size).all()
+        ):
+            y = self.equal_space_forward(
+                context_v=context_v,
+                context_spatial_extent=context_spatial_extent,
+                context_vox_size=context_vox_size,
+            )
+        # More commonly, the input space will not equal the output space, and the
+        # prediction will need to be interpolated.
+        else:
+            # Construct a grid of nearest indices in context space by sampling a grid of
+            # *indices* given the coordinates in mm.
+            # The channel dim is just repeated for every
+            # channel, so that doesn't need to be in the idx grid.
+            idx_grid = torch.stack(
+                torch.meshgrid(
+                    *[
+                        torch.arange(0, context_spatial_extent.shape[i])
+                        for i in (0, 2, 3, 4)
+                    ],
+                    indexing="ij",
+                ),
+                dim=1,
+            ).to(context_spatial_extent)
+            # Find the nearest grid point, where the batch+spatial dims are the "channels."
+            nearest_coord_idx = pitn.nn.inr.weighted_ctx_v(
+                idx_grid,
+                # context_spatial_extent,
+                input_space_extent=context_spatial_extent,
+                target_space_extent=query_coord,
+                reindex_spatial_extents=True,
+                sample_mode="nearest",
+            ).to(torch.long)
+            # Expand along channel dimension for raw indexing.
+            # nearest_coord_idx = einops.repeat(
+            #     nearest_coord_idx,
+            #     "b dim x y z -> dim b repeat_c x y z",
+            #     repeat_c=self.context_v_features,
+            # )
+            nearest_coord_idx = einops.rearrange(
+                nearest_coord_idx, "b dim x y z -> dim (b x y z)"
+            )
+            # nearest_coord_idx = tuple(torch.swapdims(nearest_coord_idx, 0, 1)).view(4, batch_size, -1)
+            batch_idx = nearest_coord_idx[0]
+            rel_norm_sub_window_grid_coord: torch.Tensor
+            sub_window_query_sample_grid = list()
+            # Build the low-res representation one sub-window voxel index at a time.
+            for i in (0, 1):
+                # Rebuild indexing tuple for each element of the sub-window
+                x_idx = nearest_coord_idx[1] + i
+                for j in (0, 1):
+                    y_idx = nearest_coord_idx[2] + j
+                    for k in (0, 1):
+                        z_idx = nearest_coord_idx[3] + k
+                        context_val = context_v[batch_idx, :, x_idx, y_idx, z_idx]
+                        context_val = einops.rearrange(
+                            context_val,
+                            "(b x y z) c -> b c x y z",
+                            x=query_coord.shape[2],
+                            y=query_coord.shape[3],
+                            z=query_coord.shape[4],
+                        )
+                        context_coord = context_spatial_extent[
+                            batch_idx, :, x_idx, y_idx, z_idx
+                        ]
+                        context_coord = einops.rearrange(
+                            context_coord,
+                            "(b x y z) c -> b c x y z",
+                            x=query_coord.shape[2],
+                            y=query_coord.shape[3],
+                            z=query_coord.shape[4],
+                        )
+
                         ret_ctx_coord = True if (i == j == k == 0) else False
                         sub_grid_pred_ijk = self.sub_grid_forward(
                             context_val=context_val,
@@ -813,6 +1094,22 @@ tmp_res_dir.mkdir(parents=True)
 
 # %%
 class INRSystem(LightningLite):
+    def setup_logger_run(
+        self, run_kwargs: dict, logger_meta_params: dict, logger_tags: list
+    ):
+        aim_run = aim.Run(
+            system_tracking_interval=None,
+            log_system_params=True,
+            capture_terminal_logs=True,
+            **run_kwargs,
+        )
+        for k, v in logger_meta_params.items():
+            aim_run[k] = v
+        for v in logger_tags:
+            aim_run.add_tag(v)
+
+        return aim_run
+
     def run(
         self,
         epochs: int,
@@ -825,297 +1122,301 @@ class INRSystem(LightningLite):
         optim_kwargs: dict = dict(),
         dataloader_kwargs: dict = dict(),
         stage="train",
+        logger_kwargs: dict = dict(),
+        logger_meta_params: dict = dict(),
+        logger_tags: list = list(),
     ):
-        encoder = INREncoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
-        decoder = ContRepDecoder(**decoder_kwargs)
-        recon_decoder = INREncoder(
-            in_channels=encoder.out_channels,
-            interior_channels=96,
-            out_channels=encoder.in_channels,
-            n_res_units=3,
-            n_dense_units=3,
-            activate_fn=encoder_kwargs["activate_fn"],
+
+        self.aim_run = self.setup_logger_run(
+            logger_kwargs, logger_meta_params, logger_tags
         )
+        try:
+            encoder = INREncoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
+            decoder = ContRepDecoder(**decoder_kwargs)
+            recon_decoder = INREncoder(
+                in_channels=encoder.out_channels,
+                interior_channels=64,
+                # out_channels=encoder.in_channels,
+                out_channels=1,
+                n_res_units=2,
+                n_dense_units=2,
+                activate_fn=encoder_kwargs["activate_fn"],
+            )
 
-        # #!DEBUG
-        # encoder = DummyINRDecoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
-        #!
-        print(encoder)
-        print(decoder)
-        print(recon_decoder)
+            # #!DEBUG
+            # encoder = DummyINRDecoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
+            #!
+            self.print(encoder)
+            self.print(decoder)
+            self.print(recon_decoder)
 
-        optim = torch.optim.Adam(
-            itertools.chain(
-                encoder.parameters(), decoder.parameters(), recon_decoder.parameters()
-            ),
-            **optim_kwargs,
-        )
+            optim_encoder = torch.optim.AdamW(encoder.parameters(), lr=1e-3)
+            encoder, optim_encoder = self.setup(encoder, optim_encoder)
+            optim_decoder = torch.optim.AdamW(decoder.parameters(), lr=5e-4)
+            decoder, optim_decoder = self.setup(decoder, optim_decoder)
+            optim_recon_decoder = torch.optim.AdamW(recon_decoder.parameters(), lr=1e-4)
+            recon_decoder, optim_recon_decoder = self.setup(
+                recon_decoder, optim_recon_decoder
+            )
+            loss_fn = torch.nn.MSELoss(reduction="mean")
+            # recon_loss_fn = pitn.metrics.NormRMSEMetric(reduction="mean")
+            recon_loss_fn = torch.nn.MSELoss(reduction="mean")
 
-        encoder = self.setup(encoder)
-        decoder, optim = self.setup(decoder, optim)
-        recon_decoder = self.setup(recon_decoder)
-        loss_fn = torch.nn.MSELoss(reduction="mean")
-        recon_loss_fn = pitn.metrics.NormRMSEMetric(reduction="mean")
+            train_dataloader = monai.data.DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                pin_memory=True,
+                **dataloader_kwargs,
+            )
+            train_dataloader = self.setup_dataloaders(train_dataloader)
 
-        train_dataloader = monai.data.DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            pin_memory=True,
-            **dataloader_kwargs,
-        )
-        train_dataloader = self.setup_dataloaders(train_dataloader)
+            encoder.train()
+            decoder.train()
+            recon_decoder.train()
+            out_dir = tmp_res_dir
 
-        encoder.train()
-        decoder.train()
-        recon_decoder.train()
-        out_dir = tmp_res_dir
+            losses = dict(
+                loss=list(),
+                epoch=list(),
+                step=list(),
+                encoder_grad_norm=list(),
+                decoder_grad_norm=list(),
+                recon_decoder_grad_norm=list(),
+            )
+            step = 0
+            train_lr = False
+            for epoch in range(epochs):
+                self.print(f"\nEpoch {epoch}\n", "=" * 10)
+                if epoch <= (epochs // 10):
+                    if not train_lr:
+                        train_dataloader.dataset.set_select_tf_keys(
+                            # add_keys=["lr_fodf"],
+                            remove_keys=["fodf", "mask", "fr_patch_extent_acpc"],
+                        )
+                    train_lr = True
+                # elif epoch == (epochs // 10):
+                elif False:
+                    if train_lr:
+                        train_dataloader.dataset.set_select_tf_keys(
+                            add_keys=["fodf", "mask", "fr_patch_extent_acpc"],
+                            # remove_keys=["lr_fodf"],
+                        )
+                    train_lr = False
 
-        losses = dict(
-            loss=list(),
-            epoch=list(),
-            step=list(),
-            encoder_grad_norm=list(),
-            decoder_grad_norm=list(),
-        )
-        step = 0
-        train_lr = False
-        for epoch in range(epochs):
-            print(f"\nEpoch {epoch}\n", "=" * 10)
-            if epoch < (epochs // 10):
-                train_dataloader.dataset.set_select_tf_keys(
-                    # add_keys=["lr_fodf"],
-                    remove_keys=["fodf", "mask", "fr_patch_extent_acpc"],
-                )
-                train_lr = True
-            # elif epoch == (epochs // 10):
-            elif False:
-                train_dataloader.dataset.set_select_tf_keys(
-                    add_keys=["fodf", "mask", "fr_patch_extent_acpc"],
-                    # remove_keys=["lr_fodf"],
-                )
-                train_lr = False
+                for batch_dict in train_dataloader:
 
-            for batch_dict in train_dataloader:
-                x = batch_dict["lr_dwi"]
-                x_coords = batch_dict["lr_patch_extent_acpc"]
-                x_vox_size = torch.atleast_2d(batch_dict["lr_vox_size"])
-                x_mask = batch_dict["lr_mask"].to(torch.bool)
+                    x = batch_dict["lr_dwi"]
+                    x_coords = batch_dict["lr_patch_extent_acpc"]
+                    x_vox_size = torch.atleast_2d(batch_dict["lr_vox_size"])
+                    x_mask = batch_dict["lr_mask"].to(torch.bool)
 
-                if not train_lr:
-                    y = batch_dict["fodf"]
-                    y_mask = batch_dict["mask"].to(torch.bool)
-                    y_coords = batch_dict["fr_patch_extent_acpc"]
-                    y_vox_size = torch.atleast_2d(batch_dict["vox_size"])
-                else:
-                    y = batch_dict["lr_fodf"]
-                    y_mask = batch_dict["lr_mask"].to(torch.bool)
-                    y_coords = x_coords
-                    y_vox_size = x_vox_size
-                # print(y.shape)
-                # print(y_mask.shape)
-                # print(x.shape)
-                # print(x_coords.shape)
-                # print(y_coords.shape)
+                    if not train_lr:
+                        y = batch_dict["fodf"]
+                        y_mask = batch_dict["mask"].to(torch.bool)
+                        y_coords = batch_dict["fr_patch_extent_acpc"]
+                        y_vox_size = torch.atleast_2d(batch_dict["vox_size"])
+                    else:
+                        y = batch_dict["lr_fodf"]
+                        y_mask = batch_dict["lr_mask"].to(torch.bool)
+                        y_coords = x_coords
+                        y_vox_size = x_vox_size
 
-                optim.zero_grad()
-                ctx_v = encoder(x)
-                recon_pred = recon_decoder(ctx_v)
-                pred_fodf = decoder(
-                    context_v=ctx_v,
-                    context_spatial_extent=x_coords,
-                    query_vox_size=y_vox_size,
-                    query_coord=y_coords,
-                )
-                if epoch < (epochs // 2):
-                    skip_pred_fodf = True
-                    skip_recon = False
-                else:
-                    skip_pred_fodf = False
-                    skip_recon = False
+                    optim_encoder.zero_grad()
+                    optim_decoder.zero_grad()
+                    optim_recon_decoder.zero_grad()
 
-                if not skip_pred_fodf:
-                    y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-                    loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
-                    lambda_recon = 0.005
-                else:
-                    lambda_recon = 1
-                    loss_fodf = torch.as_tensor([0]).to(y)
+                    ctx_v = encoder(x)
 
-                if not skip_recon:
-                    recon_y = x
-                    x_mask_broad = torch.broadcast_to(x_mask, recon_y.shape)
-                    loss_recon = recon_loss_fn(
-                        recon_pred * x_mask_broad, recon_y * x_mask_broad
+                    if epoch < (epochs // 3):
+                        lambda_pred_fodf = 0.0
+                        lambda_recon = 1.0
+                    else:
+                        lambda_pred_fodf = 1.0
+                        lambda_recon = 0.0
+
+                    if lambda_pred_fodf != 0:
+                        pred_fodf = decoder(
+                            context_v=ctx_v,
+                            context_spatial_extent=x_coords,
+                            query_vox_size=y_vox_size,
+                            query_coord=y_coords,
+                        )
+                        y_mask_broad = torch.broadcast_to(y_mask, y.shape)
+                        loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
+                    else:
+                        with torch.no_grad():
+                            pred_fodf = decoder(
+                                context_v=ctx_v,
+                                context_spatial_extent=x_coords,
+                                query_vox_size=y_vox_size,
+                                query_coord=y_coords,
+                            )
+                        loss_fodf = torch.as_tensor([0]).to(y)
+
+                    if lambda_recon != 0:
+                        recon_pred = recon_decoder(ctx_v)
+                        recon_y = x[:, 0][:, None]
+                        x_mask_broad = torch.broadcast_to(x_mask, recon_y.shape)
+                        loss_recon = recon_loss_fn(
+                            recon_pred[x_mask_broad], recon_y[x_mask_broad]
+                        )
+                        # loss_recon = recon_loss_fn(
+                        #     recon_pred * x_mask_broad, recon_y * x_mask_broad
+                        # )
+                    else:
+                        with torch.no_grad():
+                            recon_pred = recon_decoder(ctx_v)
+                        loss_recon = torch.as_tensor([0]).to(y)
+
+                    loss = (lambda_pred_fodf * loss_fodf) + (lambda_recon * loss_recon)
+
+                    self.backward(loss)
+                    torch.nn.utils.clip_grad_norm_(
+                        itertools.chain(
+                            encoder.parameters(),
+                            decoder.parameters(),
+                            recon_decoder.parameters(),
+                        ),
+                        5.0,
+                        error_if_nonfinite=True,
                     )
-                else:
-                    loss_recon = torch.as_tensor([0]).to(y)
+                    optim_encoder.step()
+                    optim_decoder.step()
+                    optim_recon_decoder.step()
 
-                loss = loss_fodf + (lambda_recon * loss_recon)
-
-                self.backward(loss)
-                torch.nn.utils.clip_grad_norm_(
-                    itertools.chain(
-                        encoder.parameters(),
-                        decoder.parameters(),
-                        recon_decoder.parameters(),
-                    ),
-                    10.0,
-                    error_if_nonfinite=True,
-                )
-                optim.step()
-
-                print(
-                    f"| {loss.detach().cpu().item()}",
-                    f"= {loss_fodf.detach().cpu().item()}",
-                    f"+ {lambda_recon}*{loss_recon.detach().cpu().item()}",
-                    end=" ",
-                    flush=True,
-                )
-                losses["loss"].append(loss.detach().cpu().item())
-                losses["epoch"].append(epoch)
-                losses["step"].append(step)
-                losses["encoder_grad_norm"].append(self._calc_grad_norm(encoder))
-                losses["decoder_grad_norm"].append(self._calc_grad_norm(decoder))
-
-                if False:
-                    print("Overfitting to batch")
-                    # plt.imshow(x[0, 7, :, 0].detach().cpu().numpy(), cmap="gray")
-                    # plt.colorbar()
-                    # plt.show()
-
-                    # plt.imshow(y[0, 0, :, 0].detach().cpu().numpy(), cmap="gray")
-                    # plt.colorbar()
-                    # plt.show()
-                    # plt.imshow(y_mask[0, 0, :, 0].detach().cpu().numpy(), cmap="gray")
-                    # plt.colorbar()
-                    # plt.show()
-
-                    # fig = plt.figure(dpi=170, figsize=(5, 8))
-                    # pitn.viz.plot_vol_slices(
-                    #     x_coords[0].detach(),
-                    #     y_coords[0].detach(),
-                    #     slice_idx=(0.4, 0.5, 0.5),
-                    #     title=f"Epoch {epoch} Step {step}",
-                    #     vol_labels=["Source Coord", "Target Coord"],
-                    #     channel_labels=["X", "Y", "Z"],
-                    #     colorbars="each",
-                    #     fig=fig,
-                    #     cmap="gray",
-                    # )
-                    # plt.show()
-
-                    encoder, decoder, optim = self._overfit_batch(
-                        repeats=10,
-                        encoder=encoder,
-                        decoder=decoder,
-                        optim=optim,
-                        loss_fn=loss_fn,
-                        x=x,
-                        y=y,
-                        x_coords=x_coords,
-                        y_coords=y_coords,
-                        y_mask=y_mask,
-                        y_vox_size=y_vox_size,
+                    encoder_grad_norm = self._calc_grad_norm(encoder)
+                    recon_decoder_grad_norm = self._calc_grad_norm(recon_decoder)
+                    decoder_grad_norm = self._calc_grad_norm(decoder)
+                    self.aim_run.track(
+                        {
+                            "loss": loss.detach().cpu().item(),
+                            "loss_pred_fodf": loss_fodf.detach().cpu().item(),
+                            "loss_recon": loss_recon.detach().cpu().item(),
+                            "grad_norm_encoder": encoder_grad_norm,
+                            "grad_norm_decoder": decoder_grad_norm,
+                            "grad_norm_recon_decoder": recon_decoder_grad_norm,
+                        },
+                        context={
+                            "subset": "train",
+                        },
+                        step=step,
+                        epoch=epoch,
                     )
-                    fig = plt.figure(dpi=170, figsize=(5, 8))
+                    self.print(
+                        f"| {loss.detach().cpu().item()}",
+                        f"= {loss_fodf.detach().cpu().item()}",
+                        f"+ {lambda_recon}*{loss_recon.detach().cpu().item()}",
+                        end=" ",
+                        flush=True,
+                    )
+                    losses["loss"].append(loss.detach().cpu().item())
+                    losses["epoch"].append(epoch)
+                    losses["step"].append(step)
+                    losses["encoder_grad_norm"].append(self._calc_grad_norm(encoder))
+                    losses["recon_decoder_grad_norm"].append(
+                        self._calc_grad_norm(recon_decoder)
+                    )
+                    losses["decoder_grad_norm"].append(self._calc_grad_norm(decoder))
+
+                    step += 1
+
+                with mpl.rc_context({"font.size": 4.0}):
+                    # Save some example predictions after each epoch
+                    fig = plt.figure(dpi=180, figsize=(3, 7))
                     pitn.viz.plot_vol_slices(
                         x[0, 0].detach(),
-                        pred_fodf_patch[0, 0].detach(),
+                        pred_fodf[0, 0].detach() * y_mask[0, 0].detach(),
+                        recon_pred[0, 0].detach() * x_mask[0, 0].detach(),
                         y[0, 0].detach(),
-                        y_mask[0, 0].detach(),
                         slice_idx=(0.4, 0.5, 0.5),
-                        title=f"epoch {epoch} step {step}",
-                        vol_labels=["input", "pred", "target", "target mask"],
+                        title=f"Epoch {epoch} Step {step}",
+                        vol_labels=["Input", "Pred", "Recon\nPred", "Target"],
                         colorbars="each",
                         fig=fig,
                         cmap="gray",
                     )
-                    plt.savefig(Path(out_dir) / f"overfit_epoch_{epoch}.png")
-                    # #!DEBUG
-                    # return
-                    #!
-                step += 1
-            with mpl.rc_context({"font.size": 6.0}):
-                # Save some example predictions after each epoch
-                fig = plt.figure(dpi=150, figsize=(3, 7))
-                pitn.viz.plot_vol_slices(
-                    x[0, 0].detach(),
-                    pred_fodf[0, 0].detach() * y_mask[0, 0].detach(),
-                    recon_pred[0, 0].detach() * x_mask[0, 0].detach(),
-                    y[0, 0].detach(),
-                    slice_idx=(0.4, 0.5, 0.5),
-                    title=f"Epoch {epoch} Step {step}",
-                    vol_labels=["Input", "Pred", "Rec. Pred", "Target"],
-                    colorbars="each",
-                    fig=fig,
-                    cmap="gray",
-                )
-                plt.savefig(Path(out_dir) / f"epoch_{epoch}_sample.png")
+                    # plt.savefig(Path(out_dir) / f"epoch_{epoch}_sample.png")
+                    self.aim_run.track(
+                        aim.Image(fig, optimize=True, quality=100, format="png"),
+                        name="train_sample",
+                        epoch=epoch,
+                        step=step,
+                        context={"subset": "train"},
+                    )
+        except Exception as e:
+            self.aim_run.add_tag("failed")
+            self.aim_run.close()
+            raise e
 
-        print("=" * 10)
+        self.aim_run.report_successful_finish()
+        self.aim_run.close()
+
+        self.print("=" * 10)
         losses = pd.DataFrame.from_dict(losses)
         losses.to_csv(Path(out_dir) / "train_losses.csv")
-        losses.plot()
 
-    def _overfit_batch(
-        self,
-        repeats: int,
-        encoder,
-        decoder,
-        optim,
-        loss_fn,
-        x,
-        y,
-        x_coords,
-        y_coords,
-        y_mask,
-        y_vox_size,
-    ):
-        optim.zero_grad()
-        vectorized_y_coords = einops.rearrange(y_coords, "b c x y z -> (b x y z) c")
-        vectorized_y_vox_size = einops.rearrange(
-            y_vox_size.expand(*y.shape[2:], -1, -1),
-            "x y z b c -> (b x y z) c",
-        )
-        y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-        for i in range(repeats):
-            optim.zero_grad()
-            ctx_v = encoder(x)
-            ctx_v = pitn.nn.inr.linear_weighted_ctx_v(
-                ctx_v,
-                input_space_extent=x_coords,
-                target_space_extent=y_coords,
-                reindex_spatial_extents=True,
-            )
-            ctx_v = einops.rearrange(ctx_v, "b c x y z -> (b x y z) c")
+        # Sync all pytorch-lightning processes.
+        self.barrier()
 
-            pred_fodf = decoder(
-                query_coord=vectorized_y_coords,
-                context_v=ctx_v,
-                vox_size=vectorized_y_vox_size,
-            )
-            pred_fodf_patch = einops.rearrange(
-                pred_fodf,
-                "(b x y z) c -> b c x y z",
-                b=y.shape[0],
-                c=y.shape[1],
-                x=y.shape[2],
-                y=y.shape[3],
-                z=y.shape[4],
-            )
+    #     def _overfit_batch(
+    #         self,
+    #         repeats: int,
+    #         encoder,
+    #         decoder,
+    #         optim,
+    #         loss_fn,
+    #         x,
+    #         y,
+    #         x_coords,
+    #         y_coords,
+    #         y_mask,
+    #         y_vox_size,
+    #     ):
+    #         optim.zero_grad()
+    #         vectorized_y_coords = einops.rearrange(y_coords, "b c x y z -> (b x y z) c")
+    #         vectorized_y_vox_size = einops.rearrange(
+    #             y_vox_size.expand(*y.shape[2:], -1, -1),
+    #             "x y z b c -> (b x y z) c",
+    #         )
+    #         y_mask_broad = torch.broadcast_to(y_mask, y.shape)
+    #         for i in range(repeats):
+    #             optim.zero_grad()
+    #             ctx_v = encoder(x)
+    #             ctx_v = pitn.nn.inr.linear_weighted_ctx_v(
+    #                 ctx_v,
+    #                 input_space_extent=x_coords,
+    #                 target_space_extent=y_coords,
+    #                 reindex_spatial_extents=True,
+    #             )
+    #             ctx_v = einops.rearrange(ctx_v, "b c x y z -> (b x y z) c")
 
-            loss = loss_fn(pred_fodf_patch[y_mask_broad], y[y_mask_broad])
-            self.backward(loss)
-            optim.step()
-            if i % (repeats // 10) == 0:
-                print(
-                    f"Overfit step {i} out of {repeats} loss {loss.detach().cpu().item()}",
-                    end=" ",
-                )
-        if repeats > 0:
-            optim.zero_grad()
-        return encoder, decoder, optim
+    #             pred_fodf = decoder(
+    #                 query_coord=vectorized_y_coords,
+    #                 context_v=ctx_v,
+    #                 vox_size=vectorized_y_vox_size,
+    #             )
+    #             pred_fodf_patch = einops.rearrange(
+    #                 pred_fodf,
+    #                 "(b x y z) c -> b c x y z",
+    #                 b=y.shape[0],
+    #                 c=y.shape[1],
+    #                 x=y.shape[2],
+    #                 y=y.shape[3],
+    #                 z=y.shape[4],
+    #             )
+
+    #             loss = loss_fn(pred_fodf_patch[y_mask_broad], y[y_mask_broad])
+    #             self.backward(loss)
+    #             optim.step()
+    #             if i % (repeats // 10) == 0:
+    #                 print(
+    #                     f"Overfit step {i} out of {repeats} loss {loss.detach().cpu().item()}",
+    #                     end=" ",
+    #                 )
+    #         if repeats > 0:
+    #             optim.zero_grad()
+    #         return encoder, decoder, optim
 
     @staticmethod
     def _calc_grad_norm(model, norm_type=2):
@@ -1150,19 +1451,24 @@ else:
     in_channels = p.encoder.in_channels
 
 model_system.run(
-    p.train.max_epochs,
-    p.train.batch_size,
+    epochs=p.train.max_epochs,
+    batch_size=p.train.batch_size,
     in_channels=in_channels,
     pred_channels=p.decoder.out_features,
     encoder_kwargs=p.encoder.to_dict(),
     decoder_kwargs=p.decoder.to_dict(),
     train_dataset=train_dataset,
-    optim_kwargs={"lr": 1e-3},
+    # optim_kwargs={"lr": 1e-3},
     dataloader_kwargs={
-        "num_workers": 15,
+        "num_workers": 8,
         "persistent_workers": True,
         "prefetch_factor": 3,
     },
+    logger_kwargs={
+        k: p.aim_logger[k] for k in set(p.aim_logger.keys()) - {"meta_params", "tags"}
+    },
+    logger_meta_params=p.aim_logger.meta_params.to_dict(),
+    logger_tags=p.aim_logger.tags,
 )
 
 # %%
@@ -1183,6 +1489,15 @@ plt.plot(losses.step[50:], losses.decoder_grad_norm[50:], label="decoder grad no
 plt.legend()
 plt.show()
 
+plt.figure(dpi=100)
+plt.plot(
+    losses.step[50:],
+    losses.recon_decoder_grad_norm[50:],
+    label="recon decoder grad norm",
+)
+plt.legend()
+plt.show()
+
 # %%
 plt.figure(dpi=100)
 plt.plot(losses.step[750:], losses.loss[750:], label="loss")
@@ -1196,6 +1511,15 @@ plt.show()
 
 plt.figure(dpi=100)
 plt.plot(losses.step[750:], losses.decoder_grad_norm[750:], label="decoder grad norm")
+plt.legend()
+plt.show()
+
+plt.figure(dpi=100)
+plt.plot(
+    losses.step[750:],
+    losses.recon_decoder_grad_norm[750:],
+    label="recon decoder grad norm",
+)
 plt.legend()
 plt.show()
 # %%
