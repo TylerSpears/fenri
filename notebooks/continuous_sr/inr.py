@@ -189,7 +189,7 @@ p.aim_logger = dict(
 p.train = dict(
     in_patch_size=(32, 32, 32),
     batch_size=3,
-    samples_per_subj_per_epoch=15,
+    samples_per_subj_per_epoch=30,
     max_epochs=4,
     # loss="mse",
 )
@@ -1349,7 +1349,6 @@ class INRSystem(LightningLite):
             self.aim_run.close()
             raise e
 
-        self.aim_run.report_successful_finish()
         self.aim_run.close()
 
         self.print("=" * 10)

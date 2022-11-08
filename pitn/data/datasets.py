@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import collections
+import copy
 import functools
 import itertools
 import math
+from functools import partial
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, Hashable, List, Mapping, Optional, Sequence, Union
 
 import einops
 import monai
@@ -281,9 +283,10 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
         w_key="lr_sampling_mask",
         **sample_tf_kwargs,
     ):
-        return monai.transforms.RandWeightedCropd(
-            keys=keys, w_key=w_key, **sample_tf_kwargs
-        )
+        return _EfficientRandWeightedCropd(keys=keys, w_key=w_key, **sample_tf_kwargs)
+        # return monai.transforms.RandWeightedCropd(
+        #     keys=keys, w_key=w_key, **sample_tf_kwargs
+        # )
 
     @staticmethod
     def default_feature_tf(patch_size: tuple):
@@ -420,6 +423,92 @@ class HCPINRfODFPatchDataset(monai.data.PatchDataset):
         feat_tfs.append(select_k_tf)
 
         return monai.transforms.Compose(feat_tfs)
+
+
+class _CallablePromisesList(collections.UserList):
+    """Utility class that calls a callable when using indexing/using __getitem__.
+
+    Used for lazily accessing items in a (potentially large) list of (potentially
+    large) objects/containers.
+    """
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            ret = list()
+            for i in idx:
+                ret.append(self.data[i]() if callable(self.data[i]) else self.data[i])
+        else:
+            ret = self.data[idx]() if callable(self.data[idx]) else self.data[idx]
+        return ret
+
+
+class _EfficientRandWeightedCropd(monai.transforms.RandWeightedCropd):
+    """Efficient replacement for monai RandWeightedCropd.
+
+    Functionality should be equivalent, while computation time should scale linearly
+    with the number of samples requested (rather than quadratically). Memory
+    requirements should be equal or better.
+    """
+
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._spatial_size = self.cropper.spatial_size
+
+        self._num_output_samples = self.cropper.num_samples
+        del self.cropper
+        self.cropper = monai.transforms.RandWeightedCrop(
+            self._spatial_size, num_samples=1
+        )
+
+    @staticmethod
+    def _crop_promise(
+        data,
+        cropper,
+        keys,
+        weight_map,
+        cropper_random_state,
+        nontransform_addon_data_dict,
+    ):
+        ret_dict = dict()
+        # Initialize the random state that should correspond to this given selection.
+        cropper.set_random_state(cropper_random_state)
+        for key in keys:
+            ret_dict[key] = list(
+                cropper(data[key], weight_map=weight_map, randomize=False)
+            )[0]
+        return {**nontransform_addon_data_dict, **ret_dict}
+
+    def __call__(self, data: Mapping[Hashable, torch.Tensor]) -> _CallablePromisesList:
+        ret = _CallablePromisesList()
+        nontransformed_data = dict()
+        # deep copy all the unmodified data
+        for key in set(data.keys()).difference(set(self.keys)):
+            nontransformed_data[key] = copy.deepcopy(data[key])
+
+        self.randomize(weight_map=data[self.w_key])
+        keys_to_sample = list(self.key_iterator(data))
+        # Create a new callable "promise" for each output sample, with a designated
+        # random state for the cropper object.
+        for _ in range(self._num_output_samples):
+            # Set a new random state for the cropper.
+            self.cropper.randomize(weight_map=data[self.w_key])
+            cropper_random_state = copy.deepcopy(self.cropper.R)
+            promise_callable = partial(
+                self._crop_promise,
+                data=data,
+                cropper=copy.copy(self.cropper),
+                keys=keys_to_sample,
+                weight_map=data[self.w_key],
+                nontransform_addon_data_dict=nontransformed_data,
+                cropper_random_state=cropper_random_state,
+            )
+            ret.append(promise_callable)
+        # Return lazily-computed cropped samples.
+        return ret
 
 
 # Save the affine as its own field.
