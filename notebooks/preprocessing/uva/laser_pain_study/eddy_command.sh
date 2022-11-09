@@ -2,19 +2,24 @@
 
 set -eou pipefail
 
-SUBJ_ID="sub-001"
-SESSION_ID="ses-002"
-DATA_DIR="/mnt/storage/data/pitn/uva/liu_laser_pain_study/dry-run/$SUBJ_ID/$SESSION_ID"
-OUT_DIR="/srv/tmp/data/pitn/uva/liu_laser_pain_study/derivatives"
+SUBJ_ID="sub-004"
+SESSION_ID="ses-001"
+DATA_DIR="/data/srv/data/pitn/uva/liu_laser_pain_study/dry-run/$SUBJ_ID/$SESSION_ID"
+OUT_DIR="/home/tas6hh/Projects/_sandbox/liu_laser_pain_study"
 TOPUP_DIR="$OUT_DIR/$SUBJ_ID/topup"
 EDDY_DIR="$OUT_DIR/$SUBJ_ID/eddy"
+mkdir --parents "$TOPUP_DIR"
+mkdir --parents "$EDDY_DIR"
+
+mkdir --parents "$OUT_DIR/$SUBJ_ID/code"
+cp ./*.sh ./*.py "$OUT_DIR/$SUBJ_ID/code"
 
 # Reciprocal of 'BandwidthPerPixelPhaseEncode'
 TOTAL_READOUT_TIME=0.0965997
 # AP_BASENAME=$(basename "$(/usr/bin/find $TOPUP_DIR -maxdepth 1 -type f -iname '*dmri*AP*.nii.gz')")
-AP_BASENAME="DRY-RUN_002_20211209081012_3_dMRI_SMS_98-directions_AP"
+AP_BASENAME="_dMRI_SMS_98-directions_AP_20220105112818_8"
 # PA_BASENAME=$(basename "$(/usr/bin/find $TOPUP_DIR -maxdepth 1 -type f -iname '*dmri*PA*.nii.gz')")
-PA_BASENAME="DRY-RUN_002_20211209081012_4_dMRI_SMS_98-directions_PA"
+PA_BASENAME="_dMRI_SMS_98-directions_PA_20220105112818_9"
 
 # b-value threshold to be considered a "b0."
 B0_THRESH=100
@@ -38,10 +43,9 @@ echo "Extracting b0s from AP"
 # write acquisitions
 n_ap_b0s=$(docker run \
     --rm \
-    --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-    --volume /mnt/storage/data:/mnt/storage/data \
-    --volume /srv/tmp:/srv/tmp \
-    tylerspears/fsl:cuda10.2 \
+    --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+    --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+    tylerspears/fsl-cuda10.2:6.0.5 \
     fslnvols "$TOPUP_DIR/${B0_BASENAME}_AP.nii.gz")
 
 for ((i = 0; i < n_ap_b0s; i++)); do
@@ -61,10 +65,9 @@ echo "Extracting b0s from PA"
 # write acquisitions
 n_pa_b0s=$(docker run \
     --rm \
-    --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-    --volume /mnt/storage/data:/mnt/storage/data \
-    --volume /srv/tmp:/srv/tmp \
-    tylerspears/fsl:cuda10.2 \
+    --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+    --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+    tylerspears/fsl-cuda10.2:6.0.5 \
     fslnvols "$TOPUP_DIR/${B0_BASENAME}_PA.nii.gz")
 for ((i = 0; i < n_pa_b0s; i++)); do
     echo "0 -1 0 $TOTAL_READOUT_TIME" >>"$TOPUP_DIR/acqparams.txt"
@@ -74,28 +77,26 @@ done
 echo "Merging AP-PA b0 volumes."
 docker run \
     --rm -it \
-    --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-    --volume /mnt/storage/data:/mnt/storage/data \
-    --volume /srv/tmp:/srv/tmp \
-    tylerspears/fsl:cuda10.2 \
+    --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+    --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+    tylerspears/fsl-cuda10.2:6.0.5 \
     fslmerge \
     -t \
-    "$TOPUP_DIR/${B0_BASENAME}_AP-PA.nii" \
+    "$TOPUP_DIR/${B0_BASENAME}_AP-PA.nii.gz" \
     "$TOPUP_DIR/${B0_BASENAME}_AP.nii.gz" \
     "$TOPUP_DIR/${B0_BASENAME}_PA.nii.gz"
 
 ### Apply topup
 # only run topup if one of the output files isn't present.
-if [ ! -s "$TOPUP_DIR/${B0_BASENAME}_topup_fieldcoef.nii" ] || [ ! -s "$TOPUP_DIR/${B0_BASENAME}_topup_movpar.txt" ]; then
+if [ ! -s "$TOPUP_DIR/${B0_BASENAME}_topup_fieldcoef.nii.gz" ] || [ ! -s "$TOPUP_DIR/${B0_BASENAME}_topup_movpar.txt" ]; then
     echo "Running topup"
 
     # Apply topup
     docker run \
         --rm --gpus=all --ipc=host -it \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         topup \
         --imain="$TOPUP_DIR/${B0_BASENAME}_AP-PA" \
         --datain="$TOPUP_DIR/acqparams.txt" \
@@ -109,27 +110,25 @@ fi
 ### Extract the brain mask
 # Only run BET if the mask doesn't exist, or the topup output is more recent than the
 # generated mask.
-if [ ! -s "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii" ] || [ "$TOPUP_DIR/${B0_BASENAME}_topup_corrected.nii" -nt "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii" ]; then
+if [ ! -s "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii.gz" ] || [ "$TOPUP_DIR/${B0_BASENAME}_topup_corrected.nii.gz" -nt "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii.gz" ]; then
     echo "Computing mean b0 volume."
     # Generate binary mask of mean b0 images from topup correction.
     docker run \
         --rm -it \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         fslmaths \
-        "$TOPUP_DIR/${B0_BASENAME}_topup_corrected.nii" \
+        "$TOPUP_DIR/${B0_BASENAME}_topup_corrected.nii.gz" \
         -Tmean \
         "$EDDY_DIR/${B0_BASENAME}_topup_corrected_mean.nii.gz"
 
     echo "Running BET"
     docker run \
         --rm --gpus=all --ipc=host -it \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         bet \
         "$EDDY_DIR/${B0_BASENAME}_topup_corrected_mean.nii.gz" \
         "$EDDY_DIR/${B0_BASENAME}_bet" -R \
@@ -142,13 +141,12 @@ fi
 COMBINE_BASENAME="${SUBJ_ID}_${SESSION_ID}_AP-PA_DWI"
 docker run \
     --rm -it \
-    --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-    --volume /mnt/storage/data:/mnt/storage/data \
-    --volume /srv/tmp:/srv/tmp \
-    tylerspears/fsl:cuda10.2 \
+    --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+    --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+    tylerspears/fsl-cuda10.2:6.0.5 \
     fslmerge \
     -t \
-    "$EDDY_DIR/$COMBINE_BASENAME.nii" \
+    "$EDDY_DIR/$COMBINE_BASENAME.nii.gz" \
     "$DATA_DIR/$AP_BASENAME.nii.gz" \
     "$DATA_DIR/$PA_BASENAME.nii.gz"
 
@@ -163,10 +161,9 @@ touch "$EDDY_DIR/eddy_index.txt"
 n_ap_dwis=$(
     docker run \
         --rm \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         fslnvols "$DATA_DIR/$AP_BASENAME.nii.gz" \
 )
 for ((i = 0; i < n_ap_dwis; i++)); do
@@ -176,10 +173,9 @@ done
 n_pa_dwis=$(
     docker run \
         --rm \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         fslnvols "$DATA_DIR/$PA_BASENAME.nii.gz" \
 )
 # Make sure the index corresponds to the acquisition parameter *after* all the
@@ -193,18 +189,17 @@ done
 ./calculate_slspec.py "$DATA_DIR/${AP_BASENAME}.json" "$EDDY_DIR/eddy_slspec.txt"
 
 # Run eddy
-if [ "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii" -nt "$EDDY_DIR/eddy_full_run.nii" ]; then
+if [ "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii.gz" -nt "$EDDY_DIR/eddy_full_run.nii.gz" ]; then
     echo "Running eddy"
 
     docker run \
         --rm --gpus=all -it --ipc=host \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         eddy_cuda \
-        --imain="$EDDY_DIR/$COMBINE_BASENAME.nii" \
-        --mask="$EDDY_DIR/${B0_BASENAME}_bet_mask.nii" \
+        --imain="$EDDY_DIR/$COMBINE_BASENAME.nii.gz" \
+        --mask="$EDDY_DIR/${B0_BASENAME}_bet_mask.nii.gz" \
         --acqp="$TOPUP_DIR/acqparams.txt" \
         --index="$EDDY_DIR/eddy_index.txt" \
         --bvecs="$EDDY_DIR/$COMBINE_BASENAME.bvec" \
@@ -232,13 +227,12 @@ if [ "$EDDY_DIR/${B0_BASENAME}_bet_mask.nii" -nt "$EDDY_DIR/eddy_full_run.nii" ]
     echo "Running eddy quality check"
     docker run \
         --rm \
-        --volume /home/tas6hh/Projects/pitn/:/home/tas6hh/Projects/pitn \
-        --volume /mnt/storage/data:/mnt/storage/data \
-        --volume /srv/tmp:/srv/tmp \
-        tylerspears/fsl:cuda10.2 \
+        --volume /home/tas6hh/Projects/_sandbox:/home/tas6hh/Projects/_sandbox \
+        --volume /data/srv/data/pitn/uva/liu_laser_pain_study:/data/srv/data/pitn/uva/liu_laser_pain_study \
+        tylerspears/fsl-cuda10.2:6.0.5 \
         eddy_quad \
         "$EDDY_DIR/eddy_full_run" \
-        --mask="$EDDY_DIR/${B0_BASENAME}_bet_mask.nii" \
+        --mask="$EDDY_DIR/${B0_BASENAME}_bet_mask.nii.gz" \
         -par="$TOPUP_DIR/acqparams.txt" \
         -idx="$EDDY_DIR/eddy_index.txt" \
         --bvals="$EDDY_DIR/$COMBINE_BASENAME.bval" \
