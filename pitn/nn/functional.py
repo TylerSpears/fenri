@@ -41,7 +41,7 @@ def espcn_shuffle(x, channels):
     return y
 
 
-def unfold_3d(x, kernel, stride=1, **pad_kwargs):
+def unfold_3d(x, kernel, stride=1, reshape_output: bool = False, **pad_kwargs):
     if stride != 1:
         raise NotImplementedError("Stride must be 1")
     if isinstance(stride, int):
@@ -58,9 +58,10 @@ def unfold_3d(x, kernel, stride=1, **pad_kwargs):
         y.unfold(2, kernel[0], stride[0])
         .unfold(3, kernel[1], stride[1])
         .unfold(4, kernel[2], stride[2])
-    )
-    y = einops.rearrange(
-        y, "b c xmk ymk zmk k_x k_y k_z -> b c (xmk k_x) (ymk k_y) (zmk k_z)"
-    )
+    ).contiguous()
+    if reshape_output:
+        y = einops.rearrange(
+            y, "b c xmk ymk zmk k_x k_y k_z -> b (c k_x k_y k_z) (xmk ymk zmk)"
+        )
 
     return y

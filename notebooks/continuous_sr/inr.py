@@ -190,22 +190,22 @@ p.train = dict(
     in_patch_size=(32, 32, 32),
     batch_size=3,
     samples_per_subj_per_epoch=30,
-    max_epochs=4,
+    max_epochs=80,
     # loss="mse",
 )
 
 # Network/model parameters.
 p.encoder = dict(
-    interior_channels=100,
+    interior_channels=80,
     # (number of SH orders (l) + 1) * X that is as close to 100 as possible.
-    out_channels=16 * 6,
+    out_channels=32,
     # out_channels=189,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
 )
 p.decoder = dict(
-    context_v_features=128,
+    context_v_features=28,
     in_features=p.encoder.out_channels,
     out_features=45,
     m_encode_num_freqs=24,
@@ -288,7 +288,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 6
+DEBUG_TRAIN_DATA_SUBJS = 4
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -318,7 +318,7 @@ with warnings.catch_warnings(record=True) as warn_list:
             // 4
         ),
         copy_cache=False,
-        num_workers=10,
+        num_workers=4,
     )
 
 train_dataset = pitn.data.datasets.HCPINRfODFPatchDataset(
@@ -359,7 +359,7 @@ print("=" * 10)
 # %%
 
 # %% [markdown]
-# ## Model
+# ## Models
 
 # %%
 # Encoding model
@@ -787,14 +787,14 @@ class PoorConvContRepDecoder(torch.nn.Module):
 
         # Determine the number of input features needed for the MLP.
         # The order for concatenation is
-        # 1) ctx feats over the low-res input space
+        # 1) ctx feats over the low-res input space, unfolded over a 3x3x3 window
         # 2) target voxel shape
         # 3) absolute coords of this forward pass' prediction target
         # 4) absolute coords of the high-res target voxel
         # 5) relative coords between high-res target coords and this forward pass'
         #    prediction target, normalized by low-res voxel shape
         # 6) encoding of relative coords
-        self.context_v_features = context_v_features
+        self.context_v_features = context_v_features * 3 * 3 * 3
         self.ndim = 3
         self.m_encode_num_freqs = m_encode_num_freqs
         self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
@@ -802,7 +802,7 @@ class PoorConvContRepDecoder(torch.nn.Module):
         self.n_coord_features = 4 * self.ndim + self.n_encode_features
         self.internal_features = self.context_v_features + self.n_coord_features
 
-        self.in_features = in_features
+        self.in_features = in_features * 3 * 3 * 3
         self.out_features = out_features
 
         # "Swish" function, recommended in MeshFreeFlowNet
@@ -946,6 +946,20 @@ class PoorConvContRepDecoder(torch.nn.Module):
             context_spatial_extent[..., 1, 1, 1] - context_spatial_extent[..., 0, 0, 0]
         )
         context_vox_size = context_vox_size[:, :, None, None, None]
+
+        # Unfold the context vector to include all 3x3x3 neighbors via concatenation of
+        # feature vectors into a new, larger feature space.
+        context_v = pitn.nn.functional.unfold_3d(
+            context_v,
+            kernel=3,
+            stride=1,
+            reshape_output=False,
+            pad=(1,) * 6,
+            mode="reflect",
+        )
+        context_v = einops.rearrange(
+            context_v, "b c xmk ymk zmk k_x k_y k_z -> b (k_x k_y k_z c) xmk ymk zmk"
+        )
 
         # If the context space and the query coordinates are equal, then we are actually
         # just mapping within the same physical space to the same coordinates. So,
@@ -1132,7 +1146,8 @@ class INRSystem(LightningLite):
         )
         try:
             encoder = INREncoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
-            decoder = ContRepDecoder(**decoder_kwargs)
+            # decoder = ContRepDecoder(**decoder_kwargs)
+            decoder = PoorConvContRepDecoder(**decoder_kwargs)
             recon_decoder = INREncoder(
                 in_channels=encoder.out_channels,
                 interior_channels=64,
@@ -1228,7 +1243,7 @@ class INRSystem(LightningLite):
 
                     ctx_v = encoder(x)
 
-                    if epoch < (epochs // 3):
+                    if epoch < (epochs // 4):
                         lambda_pred_fodf = 0.0
                         lambda_recon = 1.0
                     else:
@@ -1358,65 +1373,6 @@ class INRSystem(LightningLite):
         # Sync all pytorch-lightning processes.
         self.barrier()
 
-    #     def _overfit_batch(
-    #         self,
-    #         repeats: int,
-    #         encoder,
-    #         decoder,
-    #         optim,
-    #         loss_fn,
-    #         x,
-    #         y,
-    #         x_coords,
-    #         y_coords,
-    #         y_mask,
-    #         y_vox_size,
-    #     ):
-    #         optim.zero_grad()
-    #         vectorized_y_coords = einops.rearrange(y_coords, "b c x y z -> (b x y z) c")
-    #         vectorized_y_vox_size = einops.rearrange(
-    #             y_vox_size.expand(*y.shape[2:], -1, -1),
-    #             "x y z b c -> (b x y z) c",
-    #         )
-    #         y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-    #         for i in range(repeats):
-    #             optim.zero_grad()
-    #             ctx_v = encoder(x)
-    #             ctx_v = pitn.nn.inr.linear_weighted_ctx_v(
-    #                 ctx_v,
-    #                 input_space_extent=x_coords,
-    #                 target_space_extent=y_coords,
-    #                 reindex_spatial_extents=True,
-    #             )
-    #             ctx_v = einops.rearrange(ctx_v, "b c x y z -> (b x y z) c")
-
-    #             pred_fodf = decoder(
-    #                 query_coord=vectorized_y_coords,
-    #                 context_v=ctx_v,
-    #                 vox_size=vectorized_y_vox_size,
-    #             )
-    #             pred_fodf_patch = einops.rearrange(
-    #                 pred_fodf,
-    #                 "(b x y z) c -> b c x y z",
-    #                 b=y.shape[0],
-    #                 c=y.shape[1],
-    #                 x=y.shape[2],
-    #                 y=y.shape[3],
-    #                 z=y.shape[4],
-    #             )
-
-    #             loss = loss_fn(pred_fodf_patch[y_mask_broad], y[y_mask_broad])
-    #             self.backward(loss)
-    #             optim.step()
-    #             if i % (repeats // 10) == 0:
-    #                 print(
-    #                     f"Overfit step {i} out of {repeats} loss {loss.detach().cpu().item()}",
-    #                     end=" ",
-    #                 )
-    #         if repeats > 0:
-    #             optim.zero_grad()
-    #         return encoder, decoder, optim
-
     @staticmethod
     def _calc_grad_norm(model, norm_type=2):
         # https://discuss.pytorch.org/t/check-the-norm-of-gradients/27961/5
@@ -1459,7 +1415,7 @@ model_system.run(
     train_dataset=train_dataset,
     # optim_kwargs={"lr": 1e-3},
     dataloader_kwargs={
-        "num_workers": 8,
+        "num_workers": 17,
         "persistent_workers": True,
         "prefetch_factor": 3,
     },
