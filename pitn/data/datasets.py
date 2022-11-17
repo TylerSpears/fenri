@@ -577,21 +577,27 @@ def _crop_fr_patch(
     lr_vox_size = d[lr_vox_size_key]
     vox_size = d[vox_size_key]
     # Assume vox sizes are isotropic.
-    max_patch_len = (
-        torch.floor(lr_patch_extent_acpc.shape[0] * lr_vox_size[0] / vox_size[0]) - 4
+    EPSILON_SPACE = 1e-6
+    patch_len = torch.floor(
+        ((lr_vox_size[0] * (lr_patch_extent_acpc.shape[0] - 4)) / vox_size[0])
+        - EPSILON_SPACE
     )
-    max_patch_len = max_patch_len.to(torch.int).cpu().item()
+    # patch_len = torch.floor(
+    #     ((lr_patch_extent_acpc.shape[0] * lr_vox_size[0]) - (2 * 2 * lr_vox_size[0]))
+    #     / vox_size[0]
+    # )
+    patch_len = patch_len.to(torch.int).cpu().item()
     patch_center_vox_idx = (
         torch.round(torch.quantile(lr_patch_extent_in_fr_vox, q=0.5, dim=0))
         .to(torch.int)
         .cpu()
     )
-    l_bound = patch_center_vox_idx - math.floor(max_patch_len / 2)
-    u_bound = patch_center_vox_idx + math.ceil(max_patch_len / 2)
+    l_bound = patch_center_vox_idx - math.floor(patch_len / 2)
+    u_bound = patch_center_vox_idx + math.ceil(patch_len / 2)
 
     # patch_center_vox_idx = torch.quantile(lr_patch_extent_in_fr_vox, q=0.5, dim=0)
-    # l_bound = patch_center_vox_idx - (max_patch_len / 2)
-    # u_bound = patch_center_vox_idx + (max_patch_len / 2)
+    # l_bound = patch_center_vox_idx - (patch_len / 2)
+    # u_bound = patch_center_vox_idx + (patch_len / 2)
     # l_bound = torch.round(l_bound).to(torch.int)
     # u_bound = torch.round(u_bound).to(torch.int)
     # Calculate the spatial coordinates of the patch's voxel indices.
@@ -655,7 +661,7 @@ def _crop_fr_patch(
         roi_start=l_bound.tolist(),
         roi_end=u_bound.tolist(),
         # roi_center=patch_center_vox_idx.tolist(),
-        # roi_size=(max_patch_len,) * 3,
+        # roi_size=(patch_len,) * 3,
         # roi_start=roi_start, roi_end=roi_end
     )
     tfs.append(cropper)
@@ -666,6 +672,8 @@ def _crop_fr_patch(
     # Store the cropped vols into the data dict with the (possibly) new keys.
     for old_v in cropped.keys():
         d[vols_to_crop_key_map[old_v]] = cropped[old_v]
+        if (torch.as_tensor(cropped[old_v].shape[1:]).to(torch.int) != patch_len).any():
+            raise RuntimeError()
 
     fr_patch_extent_acpc = (
         affine_vox2acpc[:3, :3] @ patch_extent_vox.T.to(affine_vox2acpc)

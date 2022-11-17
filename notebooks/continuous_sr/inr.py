@@ -172,7 +172,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "sr_debug"
+p.experiment_name = "dev_lr-sr_mse_distr"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -187,9 +187,9 @@ p.aim_logger = dict(
 )
 ###############################################
 p.train = dict(
-    in_patch_size=(32, 32, 32),
-    batch_size=3,
-    samples_per_subj_per_epoch=30,
+    in_patch_size=(24, 24, 24),
+    batch_size=2,
+    samples_per_subj_per_epoch=25,
     max_epochs=80,
     # loss="mse",
 )
@@ -197,15 +197,13 @@ p.train = dict(
 # Network/model parameters.
 p.encoder = dict(
     interior_channels=80,
-    # (number of SH orders (l) + 1) * X that is as close to 100 as possible.
     out_channels=32,
-    # out_channels=189,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
 )
 p.decoder = dict(
-    context_v_features=28,
+    context_v_features=16,
     in_features=p.encoder.out_channels,
     out_features=45,
     m_encode_num_freqs=24,
@@ -288,7 +286,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 4
+DEBUG_TRAIN_DATA_SUBJS = 12
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -721,11 +719,13 @@ class ContRepDecoder(torch.nn.Module):
                             query_vox_size=query_vox_size,
                             return_rel_context_coord=ret_ctx_coord,
                         )
+                        # If the relative context coordinate was returned, then we
+                        # need to unpack the output tuple.
                         if ret_ctx_coord:
-                            sub_grid_pred_ijk = sub_grid_pred_ijk[0]
-                            rel_norm_context_coord = sub_grid_pred_ijk[1]
-                        else:
-                            rel_norm_context_coord = None
+                            (
+                                sub_grid_pred_ijk,
+                                rel_norm_context_coord,
+                            ) = sub_grid_pred_ijk
 
                         sub_window_query_sample_grid.append(sub_grid_pred_ijk)
 
@@ -1050,11 +1050,13 @@ class PoorConvContRepDecoder(torch.nn.Module):
                             query_vox_size=query_vox_size,
                             return_rel_context_coord=ret_ctx_coord,
                         )
+                        # If the relative context coordinate was returned, then we
+                        # need to unpack the output tuple.
                         if ret_ctx_coord:
-                            sub_grid_pred_ijk = sub_grid_pred_ijk[0]
-                            rel_norm_context_coord = sub_grid_pred_ijk[1]
-                        else:
-                            rel_norm_context_coord = None
+                            (
+                                sub_grid_pred_ijk,
+                                rel_norm_context_coord,
+                            ) = sub_grid_pred_ijk
 
                         sub_window_query_sample_grid.append(sub_grid_pred_ijk)
 
@@ -1190,7 +1192,18 @@ class INRSystem(LightningLite):
             decoder.train()
             recon_decoder.train()
             out_dir = tmp_res_dir
-
+            sh_coeff_labels = {
+                "idx": list(range(0, 45)),
+                "l": np.concatenate(
+                    list(
+                        map(
+                            lambda x: np.array([x] * (2 * x + 1)),
+                            range(0, 9, 2),
+                        )
+                    ),
+                    dtype=int,
+                ).flatten(),
+            }
             losses = dict(
                 loss=list(),
                 epoch=list(),
@@ -1203,20 +1216,20 @@ class INRSystem(LightningLite):
             train_lr = False
             for epoch in range(epochs):
                 self.print(f"\nEpoch {epoch}\n", "=" * 10)
-                if epoch <= (epochs // 10):
-                    if not train_lr:
-                        train_dataloader.dataset.set_select_tf_keys(
-                            # add_keys=["lr_fodf"],
-                            remove_keys=["fodf", "mask", "fr_patch_extent_acpc"],
-                        )
+                if epoch <= (epochs // 5):
+                    # if True:  #!DEBUG
+                    # if not train_lr:
+                    #     train_dataloader.dataset.set_select_tf_keys(
+                    #         # add_keys=["lr_fodf"],
+                    #         remove_keys=["fodf", "mask", "fr_patch_extent_acpc"],
+                    #     )
                     train_lr = True
-                # elif epoch == (epochs // 10):
-                elif False:
-                    if train_lr:
-                        train_dataloader.dataset.set_select_tf_keys(
-                            add_keys=["fodf", "mask", "fr_patch_extent_acpc"],
-                            # remove_keys=["lr_fodf"],
-                        )
+                else:
+                    # if train_lr:
+                    #     train_dataloader.dataset.set_select_tf_keys(
+                    #         add_keys=["fodf", "mask", "fr_patch_extent_acpc"],
+                    #         # remove_keys=["lr_fodf"],
+                    #     )
                     train_lr = False
 
                 for batch_dict in train_dataloader:
@@ -1243,7 +1256,8 @@ class INRSystem(LightningLite):
 
                     ctx_v = encoder(x)
 
-                    if epoch < (epochs // 4):
+                    # if epoch < (epochs // 10):
+                    if False:
                         lambda_pred_fodf = 0.0
                         lambda_recon = 1.0
                     else:
@@ -1251,13 +1265,13 @@ class INRSystem(LightningLite):
                         lambda_recon = 0.0
 
                     if lambda_pred_fodf != 0:
+                        y_mask_broad = torch.broadcast_to(y_mask, y.shape)
                         pred_fodf = decoder(
                             context_v=ctx_v,
                             context_spatial_extent=x_coords,
                             query_vox_size=y_vox_size,
                             query_coord=y_coords,
                         )
-                        y_mask_broad = torch.broadcast_to(y_mask, y.shape)
                         loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
                     else:
                         with torch.no_grad():
@@ -1287,15 +1301,12 @@ class INRSystem(LightningLite):
                     loss = (lambda_pred_fodf * loss_fodf) + (lambda_recon * loss_recon)
 
                     self.backward(loss)
-                    torch.nn.utils.clip_grad_norm_(
-                        itertools.chain(
-                            encoder.parameters(),
-                            decoder.parameters(),
-                            recon_decoder.parameters(),
-                        ),
-                        5.0,
-                        error_if_nonfinite=True,
-                    )
+                    for model in (encoder, decoder, recon_decoder):
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(),
+                            5.0,
+                            error_if_nonfinite=True,
+                        )
                     optim_encoder.step()
                     optim_decoder.step()
                     optim_recon_decoder.step()
@@ -1320,19 +1331,17 @@ class INRSystem(LightningLite):
                     )
                     self.print(
                         f"| {loss.detach().cpu().item()}",
-                        f"= {loss_fodf.detach().cpu().item()}",
-                        f"+ {lambda_recon}*{loss_recon.detach().cpu().item()}",
+                        f"= {lambda_pred_fodf} x {loss_fodf.detach().cpu().item()}",
+                        f"+ {lambda_recon} x {loss_recon.detach().cpu().item()}",
                         end=" ",
                         flush=True,
                     )
                     losses["loss"].append(loss.detach().cpu().item())
                     losses["epoch"].append(epoch)
                     losses["step"].append(step)
-                    losses["encoder_grad_norm"].append(self._calc_grad_norm(encoder))
-                    losses["recon_decoder_grad_norm"].append(
-                        self._calc_grad_norm(recon_decoder)
-                    )
-                    losses["decoder_grad_norm"].append(self._calc_grad_norm(decoder))
+                    losses["encoder_grad_norm"].append(encoder_grad_norm)
+                    losses["recon_decoder_grad_norm"].append(recon_decoder_grad_norm)
+                    losses["decoder_grad_norm"].append(decoder_grad_norm)
 
                     step += 1
 
@@ -1359,6 +1368,54 @@ class INRSystem(LightningLite):
                         step=step,
                         context={"subset": "train"},
                     )
+                    plt.close(fig)
+                # Track distribution of MSE loss over channels/SH coefficients.
+                with torch.no_grad():
+                    error_fodf = F.mse_loss(pred_fodf, y, reduction="none")
+                    error_fodf = einops.rearrange(
+                        error_fodf, "b sh_idx x y z -> b x y z sh_idx"
+                    )
+                    error_fodf = error_fodf[
+                        y_mask[:, 0, ..., None].broadcast_to(error_fodf.shape)
+                    ]
+                    error_fodf = einops.rearrange(
+                        error_fodf, "(elem sh_idx) -> elem sh_idx", sh_idx=45
+                    )
+                    error_fodf = error_fodf.flatten()
+
+                error_fodf = error_fodf.detach().cpu().numpy()
+                error_df = pd.DataFrame.from_dict(
+                    {
+                        "MSE": error_fodf,
+                        "SH_idx": np.tile(
+                            sh_coeff_labels["idx"], error_fodf.shape[0] // 45
+                        ),
+                        "L Order": np.tile(
+                            sh_coeff_labels["l"], error_fodf.shape[0] // 45
+                        ),
+                    }
+                )
+                with mpl.rc_context({"font.size": 6.0}):
+                    fig = plt.figure(dpi=180, figsize=(7, 2))
+                    # sns.barplot(data=error_df, x="SH_idx", y="MSE", hue="l", ci='sd', errwidth=0.5, capsize=0.75)
+                    sns.boxplot(
+                        data=error_df,
+                        x="SH_idx",
+                        y="MSE",
+                        hue="L Order",
+                        linewidth=0.8,
+                        showfliers=False,
+                        width=0.85,
+                        dodge=False,
+                    )
+                    self.aim_run.track(
+                        aim.Image(fig, caption="MSE Over SH idx", optimize=True),
+                        name="MSE Over SH idx",
+                        epoch=epoch,
+                        step=step,
+                    )
+                    plt.close(fig)
+
         except Exception as e:
             self.aim_run.add_tag("failed")
             self.aim_run.close()
