@@ -172,7 +172,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "dev_lr-sr_mse_distr"
+p.experiment_name = "dev_sr_slim-poor-conv-decoder"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -190,7 +190,7 @@ p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=2,
     samples_per_subj_per_epoch=25,
-    max_epochs=80,
+    max_epochs=40,
     # loss="mse",
 )
 
@@ -203,7 +203,7 @@ p.encoder = dict(
     activate_fn="relu",
 )
 p.decoder = dict(
-    context_v_features=16,
+    context_v_features=20,
     in_features=p.encoder.out_channels,
     out_features=45,
     m_encode_num_freqs=24,
@@ -286,7 +286,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 12
+DEBUG_TRAIN_DATA_SUBJS = 14
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -770,8 +770,338 @@ class ContRepDecoder(torch.nn.Module):
 
 
 # %%
+# # INR/Decoder model
+# class PoorConvContRepDecoder(torch.nn.Module):
+
+#     TARGET_COORD_EPSILON = 1e-7
+
+#     def __init__(
+#         self,
+#         context_v_features: int,
+#         out_features: int,
+#         m_encode_num_freqs: int,
+#         sigma_encode_scale: float,
+#         in_features=None,
+#     ):
+#         super().__init__()
+
+#         # Determine the number of input features needed for the MLP.
+#         # The order for concatenation is
+#         # 1) ctx feats over the low-res input space, unfolded over a 3x3x3 window
+#         # 2) target voxel shape
+#         # 3) absolute coords of this forward pass' prediction target
+#         # 4) absolute coords of the high-res target voxel
+#         # 5) relative coords between high-res target coords and this forward pass'
+#         #    prediction target, normalized by low-res voxel shape
+#         # 6) encoding of relative coords
+#         self.context_v_features = context_v_features * 3 * 3 * 3
+#         self.ndim = 3
+#         self.m_encode_num_freqs = m_encode_num_freqs
+#         self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
+#         self.n_encode_features = self.ndim * 2 * self.m_encode_num_freqs
+#         self.n_coord_features = 4 * self.ndim + self.n_encode_features
+#         self.internal_features = self.context_v_features + self.n_coord_features
+
+#         self.in_features = in_features * 3 * 3 * 3
+#         self.out_features = out_features
+
+#         # "Swish" function, recommended in MeshFreeFlowNet
+#         activate_cls = torch.nn.SiLU
+#         self.activate_fn = activate_cls(inplace=True)
+#         # Optional resizing linear layer, if the input size should be different than
+#         # the hidden layer size.
+#         if self.in_features is not None:
+#             self.lin_pre = torch.nn.Linear(self.in_features, self.context_v_features)
+#             self.norm_pre = None
+#             # self.norm_pre = torch.nn.LazyBatchNorm1d(affine=True, track_running_stats=True)
+#             # self.norm_pre = torch.nn.LazyInstanceNorm3d(affine=False, track_running_stats=False)
+#         else:
+#             self.lin_pre = None
+#             self.norm_pre = None
+#         self.norm_pre = None
+
+#         # Internal hidden layers are two res MLPs.
+#         self.internal_res_repr = torch.nn.ModuleList(
+#             [
+#                 pitn.nn.inr.SkipMLPBlock(
+#                     n_context_features=self.context_v_features,
+#                     n_coord_features=self.n_coord_features,
+#                     n_dense_layers=3,
+#                     activate_fn=activate_cls,
+#                 )
+#                 for _ in range(2)
+#             ]
+#         )
+#         self.lin_post = torch.nn.Linear(self.context_v_features, self.out_features)
+
+#     def encode_relative_coord(self, coords):
+#         c = einops.rearrange(coords, "b d x y z -> (b x y z) d")
+#         sigma = self.sigma_encode_scale.expand_as(c).to(c)[..., None]
+#         encode_pos = pitn.nn.inr.fourier_position_encoding(
+#             c, sigma_scale=sigma, m_num_freqs=self.m_encode_num_freqs
+#         )
+
+#         encode_pos = einops.rearrange(
+#             encode_pos,
+#             "(b x y z) d -> b d x y z",
+#             x=coords.shape[2],
+#             y=coords.shape[3],
+#             z=coords.shape[4],
+#         )
+#         return encode_pos
+
+#     def sub_grid_forward(
+#         self,
+#         context_val,
+#         context_coord,
+#         query_coord,
+#         context_vox_size,
+#         query_vox_size,
+#         return_rel_context_coord=False,
+#     ):
+#         # Take relative coordinate difference between the current context
+#         # coord and the query coord.
+#         rel_context_coord = torch.clamp_min(
+#             context_coord - query_coord,
+#             (-context_vox_size / 2) + self.TARGET_COORD_EPSILON,
+#         )
+#         # Also normalize to [0, 1)
+#         # Coordinates are located in the center of the voxel. By the way
+#         # the context vector is being constructed surrounding the query
+#         # coord, the query coord is always within 1.5 x vox_size of the
+#         # context (low-res space) coordinate. So, subtract the
+#         # batch-and-channel-wise minimum, and divide by the known upper
+#         # bound.
+#         rel_norm_context_coord = (
+#             rel_context_coord
+#             - torch.amin(rel_context_coord, dim=(2, 3, 4), keepdim=True)
+#         ) / (1.5 * context_vox_size)
+#         assert (rel_norm_context_coord >= 0).all() and (
+#             rel_norm_context_coord < 1.0
+#         ).all()
+#         encoded_rel_norm_context_coord = self.encode_relative_coord(
+#             rel_norm_context_coord
+#         )
+#         q_vox_size = query_vox_size.expand_as(rel_norm_context_coord)
+
+#         # Perform forward pass of the MLP.
+#         if self.norm_pre is not None:
+#             context_val = self.norm_pre(context_val)
+#         context_feats = einops.rearrange(context_val, "b c x y z -> (b x y z) c")
+
+#         coord_feats = (
+#             q_vox_size,
+#             context_coord,
+#             query_coord,
+#             rel_norm_context_coord,
+#             encoded_rel_norm_context_coord,
+#         )
+#         coord_feats = torch.cat(coord_feats, dim=1)
+#         spatial_layout = {
+#             "b": coord_feats.shape[0],
+#             "x": coord_feats.shape[2],
+#             "y": coord_feats.shape[3],
+#             "z": coord_feats.shape[4],
+#         }
+
+#         coord_feats = einops.rearrange(coord_feats, "b c x y z -> (b x y z) c")
+#         x_coord = coord_feats
+#         sub_grid_pred = context_feats
+
+#         if self.lin_pre is not None:
+#             sub_grid_pred = self.lin_pre(sub_grid_pred)
+#             sub_grid_pred = self.activate_fn(sub_grid_pred)
+
+#         for l in self.internal_res_repr:
+#             sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
+#         sub_grid_pred = self.lin_post(sub_grid_pred)
+#         sub_grid_pred = einops.rearrange(
+#             sub_grid_pred, "(b x y z) c -> b c x y z", **spatial_layout
+#         )
+#         if return_rel_context_coord:
+#             ret = (sub_grid_pred, rel_context_coord)
+#         else:
+#             ret = sub_grid_pred
+#         return ret
+
+#     def equal_space_forward(self, context_v, context_spatial_extent, context_vox_size):
+#         return self.sub_grid_forward(
+#             context_val=context_v,
+#             context_coord=context_spatial_extent,
+#             query_coord=context_spatial_extent,
+#             context_vox_size=context_vox_size,
+#             query_vox_size=context_vox_size,
+#         )
+
+#     def forward(
+#         self,
+#         context_v,
+#         context_spatial_extent,
+#         query_vox_size,
+#         query_coord,
+#     ) -> torch.Tensor:
+#         if query_vox_size.ndim == 2:
+#             query_vox_size = query_vox_size[:, :, None, None, None]
+#         context_vox_size = torch.abs(
+#             context_spatial_extent[..., 1, 1, 1] - context_spatial_extent[..., 0, 0, 0]
+#         )
+#         context_vox_size = context_vox_size[:, :, None, None, None]
+
+#         # Unfold the context vector to include all 3x3x3 neighbors via concatenation of
+#         # feature vectors into a new, larger feature space.
+#         context_v = pitn.nn.functional.unfold_3d(
+#             context_v,
+#             kernel=3,
+#             stride=1,
+#             reshape_output=False,
+#             pad=(1,) * 6,
+#             mode="reflect",
+#         )
+#         context_v = einops.rearrange(
+#             context_v, "b c xmk ymk zmk k_x k_y k_z -> b (k_x k_y k_z c) xmk ymk zmk"
+#         )
+
+#         # If the context space and the query coordinates are equal, then we are actually
+#         # just mapping within the same physical space to the same coordinates. So,
+#         # linear interpolation would just zero-out all surrounding predicted voxels,
+#         # and would be a massive waste of computation.
+#         if (
+#             (context_spatial_extent.shape == query_coord.shape)
+#             and torch.isclose(context_spatial_extent, query_coord).all()
+#             and torch.isclose(query_vox_size, context_vox_size).all()
+#         ):
+#             y = self.equal_space_forward(
+#                 context_v=context_v,
+#                 context_spatial_extent=context_spatial_extent,
+#                 context_vox_size=context_vox_size,
+#             )
+#         # More commonly, the input space will not equal the output space, and the
+#         # prediction will need to be interpolated.
+#         else:
+#             # Construct a grid of nearest indices in context space by sampling a grid of
+#             # *indices* given the coordinates in mm.
+#             # The channel dim is just repeated for every
+#             # channel, so that doesn't need to be in the idx grid.
+#             idx_grid = torch.stack(
+#                 torch.meshgrid(
+#                     *[
+#                         torch.arange(0, context_spatial_extent.shape[i])
+#                         for i in (0, 2, 3, 4)
+#                     ],
+#                     indexing="ij",
+#                 ),
+#                 dim=1,
+#             ).to(context_spatial_extent)
+#             # Find the nearest grid point, where the batch+spatial dims are the "channels."
+#             nearest_coord_idx = pitn.nn.inr.weighted_ctx_v(
+#                 idx_grid,
+#                 # context_spatial_extent,
+#                 input_space_extent=context_spatial_extent,
+#                 target_space_extent=query_coord,
+#                 reindex_spatial_extents=True,
+#                 sample_mode="nearest",
+#             ).to(torch.long)
+#             # Expand along channel dimension for raw indexing.
+#             # nearest_coord_idx = einops.repeat(
+#             #     nearest_coord_idx,
+#             #     "b dim x y z -> dim b repeat_c x y z",
+#             #     repeat_c=self.context_v_features,
+#             # )
+#             nearest_coord_idx = einops.rearrange(
+#                 nearest_coord_idx, "b dim x y z -> dim (b x y z)"
+#             )
+#             # nearest_coord_idx = tuple(torch.swapdims(nearest_coord_idx, 0, 1)).view(4, batch_size, -1)
+#             batch_idx = nearest_coord_idx[0]
+#             rel_norm_sub_window_grid_coord: torch.Tensor
+#             sub_window_query_sample_grid = list()
+#             # Build the low-res representation one sub-window voxel index at a time.
+#             for i in (0, 1):
+#                 # Rebuild indexing tuple for each element of the sub-window
+#                 x_idx = nearest_coord_idx[1] + i
+#                 for j in (0, 1):
+#                     y_idx = nearest_coord_idx[2] + j
+#                     for k in (0, 1):
+#                         z_idx = nearest_coord_idx[3] + k
+#                         context_val = context_v[batch_idx, :, x_idx, y_idx, z_idx]
+#                         context_val = einops.rearrange(
+#                             context_val,
+#                             "(b x y z) c -> b c x y z",
+#                             x=query_coord.shape[2],
+#                             y=query_coord.shape[3],
+#                             z=query_coord.shape[4],
+#                         )
+#                         context_coord = context_spatial_extent[
+#                             batch_idx, :, x_idx, y_idx, z_idx
+#                         ]
+#                         context_coord = einops.rearrange(
+#                             context_coord,
+#                             "(b x y z) c -> b c x y z",
+#                             x=query_coord.shape[2],
+#                             y=query_coord.shape[3],
+#                             z=query_coord.shape[4],
+#                         )
+
+#                         ret_ctx_coord = True if (i == j == k == 0) else False
+#                         sub_grid_pred_ijk = self.sub_grid_forward(
+#                             context_val=context_val,
+#                             context_coord=context_coord,
+#                             query_coord=query_coord,
+#                             context_vox_size=context_vox_size,
+#                             query_vox_size=query_vox_size,
+#                             return_rel_context_coord=ret_ctx_coord,
+#                         )
+#                         # If the relative context coordinate was returned, then we
+#                         # need to unpack the output tuple.
+#                         if ret_ctx_coord:
+#                             (
+#                                 sub_grid_pred_ijk,
+#                                 rel_norm_context_coord,
+#                             ) = sub_grid_pred_ijk
+
+#                         sub_window_query_sample_grid.append(sub_grid_pred_ijk)
+
+#                         if i == j == k == 0:
+#                             # Find the relative coordinate of the query within the
+#                             # sub-window.
+#                             rel_norm_sub_window_grid_coord = torch.clamp(
+#                                 (rel_norm_context_coord - 0.5) * 2,
+#                                 -1 + self.TARGET_COORD_EPSILON,
+#                                 1 - self.TARGET_COORD_EPSILON,
+#                             )
+#             sub_window_query_sample_grid = torch.stack(
+#                 sub_window_query_sample_grid, dim=0
+#             )
+#             spatial_layout = {
+#                 "b": sub_window_query_sample_grid.shape[1],
+#                 "x": sub_window_query_sample_grid.shape[3],
+#                 "y": sub_window_query_sample_grid.shape[4],
+#                 "z": sub_window_query_sample_grid.shape[5],
+#             }
+#             sub_window = einops.rearrange(
+#                 sub_window_query_sample_grid,
+#                 "(x_sub y_sub z_sub) b c x y z -> (b x y z) c x_sub y_sub z_sub",
+#                 x_sub=2,
+#                 y_sub=2,
+#                 z_sub=2,
+#             )
+#             sub_window_grid = einops.rearrange(
+#                 rel_norm_sub_window_grid_coord, "b dim x y z -> (b x y z) 1 1 1 dim "
+#             )
+
+#             y = F.grid_sample(
+#                 sub_window,
+#                 sub_window_grid,
+#                 mode="bilinear",
+#                 align_corners=True,
+#                 padding_mode="reflection",
+#             )
+#             y = einops.rearrange(y, "(b x y z) c 1 1 1 -> b c x y z", **spatial_layout)
+
+#         return y
+
+
 # INR/Decoder model
-class PoorConvContRepDecoder(torch.nn.Module):
+class SlimPoorConvContRepDecoder(torch.nn.Module):
 
     TARGET_COORD_EPSILON = 1e-7
 
@@ -788,18 +1118,18 @@ class PoorConvContRepDecoder(torch.nn.Module):
         # Determine the number of input features needed for the MLP.
         # The order for concatenation is
         # 1) ctx feats over the low-res input space, unfolded over a 3x3x3 window
-        # 2) target voxel shape
+        # ~~2) target voxel shape~~
         # 3) absolute coords of this forward pass' prediction target
         # 4) absolute coords of the high-res target voxel
-        # 5) relative coords between high-res target coords and this forward pass'
-        #    prediction target, normalized by low-res voxel shape
+        # ~~5) relative coords between high-res target coords and this forward pass'
+        #    prediction target, normalized by low-res voxel shape~~
         # 6) encoding of relative coords
         self.context_v_features = context_v_features * 3 * 3 * 3
         self.ndim = 3
         self.m_encode_num_freqs = m_encode_num_freqs
         self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
         self.n_encode_features = self.ndim * 2 * self.m_encode_num_freqs
-        self.n_coord_features = 4 * self.ndim + self.n_encode_features
+        self.n_coord_features = 2 * self.ndim + self.n_encode_features
         self.internal_features = self.context_v_features + self.n_coord_features
 
         self.in_features = in_features * 3 * 3 * 3
@@ -890,10 +1220,10 @@ class PoorConvContRepDecoder(torch.nn.Module):
         context_feats = einops.rearrange(context_val, "b c x y z -> (b x y z) c")
 
         coord_feats = (
-            q_vox_size,
+            # q_vox_size,
             context_coord,
             query_coord,
-            rel_norm_context_coord,
+            # rel_norm_context_coord,
             encoded_rel_norm_context_coord,
         )
         coord_feats = torch.cat(coord_feats, dim=1)
@@ -1149,11 +1479,10 @@ class INRSystem(LightningLite):
         try:
             encoder = INREncoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
             # decoder = ContRepDecoder(**decoder_kwargs)
-            decoder = PoorConvContRepDecoder(**decoder_kwargs)
+            decoder = SlimPoorConvContRepDecoder(**decoder_kwargs)
             recon_decoder = INREncoder(
                 in_channels=encoder.out_channels,
                 interior_channels=64,
-                # out_channels=encoder.in_channels,
                 out_channels=1,
                 n_res_units=2,
                 n_dense_units=2,
@@ -1216,7 +1545,8 @@ class INRSystem(LightningLite):
             train_lr = False
             for epoch in range(epochs):
                 self.print(f"\nEpoch {epoch}\n", "=" * 10)
-                if epoch <= (epochs // 5):
+                if epoch <= (epochs // 20):
+                    # if epoch <= (epochs // 5):
                     # if True:  #!DEBUG
                     # if not train_lr:
                     #     train_dataloader.dataset.set_select_tf_keys(
@@ -1256,8 +1586,8 @@ class INRSystem(LightningLite):
 
                     ctx_v = encoder(x)
 
-                    # if epoch < (epochs // 10):
-                    if False:
+                    if epoch <= (epochs // 20):
+                        # if False: #DEBUG: disable reconstruction pre-training
                         lambda_pred_fodf = 0.0
                         lambda_recon = 1.0
                     else:
@@ -1347,7 +1677,7 @@ class INRSystem(LightningLite):
 
                 with mpl.rc_context({"font.size": 4.0}):
                     # Save some example predictions after each epoch
-                    fig = plt.figure(dpi=180, figsize=(3, 7))
+                    fig = plt.figure(dpi=200, figsize=(2, 7))
                     pitn.viz.plot_vol_slices(
                         x[0, 0].detach(),
                         pred_fodf[0, 0].detach() * y_mask[0, 0].detach(),
@@ -1359,6 +1689,7 @@ class INRSystem(LightningLite):
                         colorbars="each",
                         fig=fig,
                         cmap="gray",
+                        interpolation="antialiased",
                     )
                     # plt.savefig(Path(out_dir) / f"epoch_{epoch}_sample.png")
                     self.aim_run.track(
@@ -1396,7 +1727,7 @@ class INRSystem(LightningLite):
                     }
                 )
                 with mpl.rc_context({"font.size": 6.0}):
-                    fig = plt.figure(dpi=180, figsize=(7, 2))
+                    fig = plt.figure(dpi=130, figsize=(6, 2))
                     # sns.barplot(data=error_df, x="SH_idx", y="MSE", hue="l", ci='sd', errwidth=0.5, capsize=0.75)
                     sns.boxplot(
                         data=error_df,
@@ -1417,7 +1748,7 @@ class INRSystem(LightningLite):
                     plt.close(fig)
 
         except Exception as e:
-            self.aim_run.add_tag("failed")
+            self.aim_run.add_tag("FAILED")
             self.aim_run.close()
             raise e
 
@@ -1461,27 +1792,32 @@ if "in_channels" not in p.encoder:
     in_channels = int(train_dataset[0]["lr_dwi"].shape[0])
 else:
     in_channels = p.encoder.in_channels
-
-model_system.run(
-    epochs=p.train.max_epochs,
-    batch_size=p.train.batch_size,
-    in_channels=in_channels,
-    pred_channels=p.decoder.out_features,
-    encoder_kwargs=p.encoder.to_dict(),
-    decoder_kwargs=p.decoder.to_dict(),
-    train_dataset=train_dataset,
-    # optim_kwargs={"lr": 1e-3},
-    dataloader_kwargs={
-        "num_workers": 17,
-        "persistent_workers": True,
-        "prefetch_factor": 3,
-    },
-    logger_kwargs={
-        k: p.aim_logger[k] for k in set(p.aim_logger.keys()) - {"meta_params", "tags"}
-    },
-    logger_meta_params=p.aim_logger.meta_params.to_dict(),
-    logger_tags=p.aim_logger.tags,
-)
+try:
+    model_system.run(
+        epochs=p.train.max_epochs,
+        batch_size=p.train.batch_size,
+        in_channels=in_channels,
+        pred_channels=p.decoder.out_features,
+        encoder_kwargs=p.encoder.to_dict(),
+        decoder_kwargs=p.decoder.to_dict(),
+        train_dataset=train_dataset,
+        # optim_kwargs={"lr": 1e-3},
+        dataloader_kwargs={
+            "num_workers": 17,
+            "persistent_workers": True,
+            "prefetch_factor": 3,
+        },
+        logger_kwargs={
+            k: p.aim_logger[k]
+            for k in set(p.aim_logger.keys()) - {"meta_params", "tags"}
+        },
+        logger_meta_params=p.aim_logger.meta_params.to_dict(),
+        logger_tags=p.aim_logger.tags,
+    )
+except KeyboardInterrupt as e:
+    model_system.aim_run.add_tag("STOPPED")
+    model_system.aim_run.close()
+    raise e
 
 # %%
 losses = pd.read_csv(tmp_res_dir / "train_losses.csv")
