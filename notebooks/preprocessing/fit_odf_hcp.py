@@ -101,9 +101,6 @@ def postproc_ground_truth(
 
     wm = nib.load(wm_fodf_f)
     wm_data = einops.rearrange(wm.get_fdata().astype(np.float32), "x y z c -> c x y z")
-    # Threshold fodfs to remove non-negative and very small spherical harmonic
-    # coefficients.
-    wm_data[wm_data < sh_coeff_min] = 0.0
 
     ftt_mask = nib.load(fivett_mask_f)
     ftt_mask.set_data_dtype(np.uint8)
@@ -203,11 +200,11 @@ def postproc_ground_truth(
 
 if __name__ == "__main__":
 
-    # hcp_root_dir = Path("/data/srv/data/pitn/hcp")
-    # output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
+    hcp_root_dir = Path("/data/srv/data/pitn/hcp")
+    output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
     ids_file = Path("/home/tas6hh/Projects/pitn/notebooks/data/HCP_unique_ids.txt")
-    hcp_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
-    output_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
+    # hcp_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
+    # output_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
 
     with open(ids_file, "r") as f:
         subj_ids = list(map(lambda x: str(x).strip(), f.readlines()))
@@ -227,14 +224,15 @@ if __name__ == "__main__":
         freesurfer_seg_f = src_dir / "aparc.a2009s+aseg.nii.gz"
         target_postproc_fodf_f = target_dir / "postproc_wm_msmt_csd_fod.nii.gz"
 
+        #!Override
         # Determine if all processing can be skipped.
-        if target_postproc_fodf_f.exists():
-            print(
-                "====Processed fODF coefficients found in",
-                f"{target_dir} for subject {sid}",
-                "skipping subject.====\n",
-            )
-            continue
+        # if target_postproc_fodf_f.exists():
+        #     print(
+        #         "====Processed fODF coefficients found in",
+        #         f"{target_dir} for subject {sid}",
+        #         "skipping subject.====\n",
+        #     )
+        #     continue
 
         target_fodf_f = target_dir / "wm_msmt_csd_fod.nii.gz"
         # Determine if fodf estimation with mrtrix can be skipped.

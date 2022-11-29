@@ -180,13 +180,22 @@ def linear_weighted_ctx_v(
     target_space_extent = target_space_extent.movedim(1, -1)
     l_bound = torch.amin(input_space_extent, dim=(1, 2, 3), keepdim=True)
     u_bound = torch.amax(input_space_extent, dim=(1, 2, 3), keepdim=True)
-    norm_in_space = (input_space_extent - l_bound) / (0.5 * (u_bound - l_bound))
-    norm_in_space = norm_in_space - 1
 
-    norm_target_space_aligned = (target_space_extent - l_bound) / (
-        0.5 * (u_bound - l_bound)
+    scale = (1 - -1) / (u_bound - l_bound)
+    # norm_in_space = (scale * input_space_extent) + -1 - (l_bound * scale)
+
+    # norm_in_space = (input_space_extent - l_bound) / (0.5 * (u_bound - l_bound))
+    # norm_in_space = norm_in_space - 1
+    norm_target_space_aligned = (
+        (scale * target_space_extent)
+        + -1
+        - (torch.amin(target_space_extent, dim=(1, 2, 3), keepdim=True) * scale)
     )
-    norm_target_space_aligned = norm_target_space_aligned - 1
+
+    # norm_target_space_aligned = (target_space_extent - l_bound) / (
+    #     0.5 * (u_bound - l_bound)
+    # )
+    # norm_target_space_aligned = norm_target_space_aligned - 1
     # Assert/assume that all target coordinates are bounded by the input spatial extent.
     assert (norm_target_space_aligned >= -1).all() and (
         norm_target_space_aligned <= 1
@@ -210,10 +219,32 @@ def weighted_ctx_v(
     target_space_extent: torch.Tensor,
     reindex_spatial_extents: bool,
     sample_mode="bilinear",
+    align_corners=True,
 ):
     # See
     # <https://pytorch.org/docs/stable/generated/torch.nn.functional.grid_sample.html>
     # for sample_mode options.
+
+    # Normalize the input space grid to [-1, 1]
+    input_space_extent = input_space_extent.movedim(1, -1)
+    target_space_extent = target_space_extent.movedim(1, -1)
+    l_bound = torch.amin(input_space_extent, dim=(1, 2, 3), keepdim=True)
+    u_bound = torch.amax(input_space_extent, dim=(1, 2, 3), keepdim=True)
+
+    scale = (1 - -1) / (u_bound - l_bound)
+    norm_target_space_aligned = (scale * target_space_extent) + -1 - (scale * l_bound)
+
+    # norm_in_space = (input_space_extent - l_bound) / (0.5 * (u_bound - l_bound))
+    # norm_in_space = norm_in_space - 1
+
+    # norm_target_space_aligned = (target_space_extent - l_bound) / (
+    #     0.5 * (u_bound - l_bound)
+    # )
+    # norm_target_space_aligned = norm_target_space_aligned - 1
+    # Assert/assume that all target coordinates are bounded by the input spatial extent.
+    assert (norm_target_space_aligned >= -1).all() and (
+        norm_target_space_aligned <= 1
+    ).all()
 
     # Affine sampling is given in reverse order (*not* the same as 'xy' indexing, nor
     # the same as 'ij' indexing). If the input spatial extents are given in left->right
@@ -222,38 +253,18 @@ def weighted_ctx_v(
     # (vol_dim[2], vol_dim[1], vol_dim[0]). This is not documented anywhere, so far as
     # I can tell.
     if reindex_spatial_extents:
-        input_space_extent = einops.rearrange(
-            input_space_extent, "b c x y z -> b c z y x"
-        )
-        target_space_extent = einops.rearrange(
-            target_space_extent, "b c x y z -> b c z y x"
-        )
-
-    # Normalize the input space grid to [-1, 1]
-    input_space_extent = input_space_extent.movedim(1, -1)
-    target_space_extent = target_space_extent.movedim(1, -1)
-    l_bound = torch.amin(input_space_extent, dim=(1, 2, 3), keepdim=True)
-    u_bound = torch.amax(input_space_extent, dim=(1, 2, 3), keepdim=True)
-    norm_in_space = (input_space_extent - l_bound) / (0.5 * (u_bound - l_bound))
-    norm_in_space = norm_in_space - 1
-
-    norm_target_space_aligned = (target_space_extent - l_bound) / (
-        0.5 * (u_bound - l_bound)
-    )
-    norm_target_space_aligned = norm_target_space_aligned - 1
-    # Assert/assume that all target coordinates are bounded by the input spatial extent.
-    assert (norm_target_space_aligned >= -1).all() and (
-        norm_target_space_aligned <= 1
-    ).all()
+        # norm_target_space_aligned = einops.rearrange(
+        #     norm_target_space_aligned, "b i j k dim -> b k j i dim"
+        # )
+        encoded_feat_vol = einops.rearrange(encoded_feat_vol, "b c i j k -> b c k j i")
 
     # Resample the encoded volumetric features according to the normalized to
     # the within-patch coordinates in [-1, 1].
     weighted_feat_vol = F.grid_sample(
         encoded_feat_vol,
         grid=norm_target_space_aligned,
-        # The interpolation is labelled as bilinear, but this is actually trilinear.
         mode=sample_mode,
-        align_corners=True,
+        align_corners=align_corners,
     )
     return weighted_feat_vol
 

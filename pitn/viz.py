@@ -13,12 +13,14 @@ import dipy.segment.mask
 import einops
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import mpl_toolkits
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
 import torchio
 from box import Box
+from mpl_toolkits.axes_grid1 import ImageGrid
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 from pitn._lazy_loader import LazyLoader
@@ -466,6 +468,72 @@ def make_grid(
         grid.sub_(vmin).div_(max(vmax - vmin, 1e-5))
 
     return grid
+
+
+def plot_fodf_coeff_slices(
+    *fodf_vols,
+    fig,
+    rect=111,
+    vol_slice_idx_as_proportions=(0.5, 0.5, 0.5),
+    fodf_coeff_idx=(0, 3, 10, 21, 36),
+    fodf_vol_labels=None,
+    imshow_kwargs: dict = dict(),
+    image_grid_kwargs: dict = dict(),
+):
+    vols = list()
+    for v in fodf_vols:
+        v = v.detach().cpu()
+        if v.ndim == 5 and int(v.shape[0]) == 1:
+            v = v[0]
+        v = v.numpy()
+        vols.append(v)
+    n_vols = len(vols)
+    if fodf_vol_labels is None:
+        vol_labels = list(itertools.repeat(None, n_vols))
+    else:
+        vol_labels = list(fodf_vol_labels)
+    # n_fod_coeffs = int(vols[0].shape[0])
+    n_slices = len(list(filter(lambda x: x is not None, vol_slice_idx_as_proportions)))
+    n_fod_coeffs_to_plot = len(fodf_coeff_idx)
+    image_grid_kwargs = {
+        "fig": fig,
+        "rect": rect,
+        "nrows_ncols": (n_fod_coeffs_to_plot, n_vols * n_slices),
+        "label_mode": "1",
+        "cbar_mode": "edge",
+        "cbar_location": "right",
+        "cbar_size": "9%",
+    } | image_grid_kwargs
+
+    imshow_kwargs = {"cmap": "gray", "interpolation": "antialiased"} | imshow_kwargs
+
+    grid = ImageGrid(**image_grid_kwargs)
+
+    row_order_grid_idx = 0
+    for i_fodf_coeff_idx, fodf_coeff_idx in enumerate(fodf_coeff_idx):
+        for j_vol, vol in enumerate(vols):
+            vol_label = vol_labels[j_vol]
+            for k_slice, slice_idx_prop in enumerate(vol_slice_idx_as_proportions):
+                if slice_idx_prop is None:
+                    continue
+                shape = tuple(vol.shape[1:])
+                vol_slice_idx = round(shape[k_slice] * slice_idx_prop)
+                slicer = [slice(None), slice(None), slice(None)]
+                slicer[k_slice] = vol_slice_idx
+                slicer = [fodf_coeff_idx] + slicer
+                slicer = tuple(slicer)
+                im = vol[slicer]
+
+                ax = grid[row_order_grid_idx]
+                ax.imshow(im, **imshow_kwargs)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                if vol_label is not None and i_fodf_coeff_idx == 0:
+                    ax.set_title(vol_label)
+
+                row_order_grid_idx += 1
+
+    return fig, grid
 
 
 def plot_dti_box_row(
