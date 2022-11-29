@@ -131,10 +131,20 @@ if torch.cuda.is_available():
     torch.cuda.set_device(device)
     print("CUDA Current Device ", torch.cuda.current_device())
     print("CUDA Device properties: ", torch.cuda.get_device_properties(device))
+    # The flag below controls whether to allow TF32 on matmul. This flag defaults to False
+    # in PyTorch 1.12 and later.
+    torch.backends.cuda.matmul.allow_tf32 = True
+    # See
+    # <https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices>
+    # for details.
+
     # Activate cudnn benchmarking to optimize convolution algorithm speed.
     if torch.backends.cudnn.enabled:
         torch.backends.cudnn.benchmark = True
         print("CuDNN convolution optimization enabled.")
+        # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
+        torch.backends.cudnn.allow_tf32 = True
+
 else:
     device = torch.device("cpu")
 # keep device as the cpu
@@ -173,7 +183,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "dev_sr_slim-poor-conv-decoder"
+p.experiment_name = "dev_fodf-fix_grid-sample-fix"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -190,8 +200,8 @@ p.aim_logger = dict(
 p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=2,
-    samples_per_subj_per_epoch=15,
-    max_epochs=15,
+    samples_per_subj_per_epoch=100,
+    max_epochs=75,
     # loss="mse",
 )
 
@@ -287,7 +297,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 4
+DEBUG_TRAIN_DATA_SUBJS = 12
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -353,7 +363,7 @@ print("=" * 10)
 with warnings.catch_warnings(record=True) as warn_list:
 
     #!DEBUG
-    DEBUG_VAL_SUBJS = 3
+    DEBUG_VAL_SUBJS = 2
     # Validation dataset.
     val_paths_dataset = pitn.data.datasets.HCPfODFINRDataset(
         subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],
@@ -1251,11 +1261,11 @@ class INRSystem(LightningLite):
             self.print(decoder)
             self.print(recon_decoder)
 
-            optim_encoder = torch.optim.AdamW(encoder.parameters(), lr=5e-4)
+            optim_encoder = torch.optim.AdamW(encoder.parameters(), lr=1e-3)
             encoder, optim_encoder = self.setup(encoder, optim_encoder)
-            optim_decoder = torch.optim.AdamW(decoder.parameters(), lr=1e-4)
+            optim_decoder = torch.optim.AdamW(decoder.parameters(), lr=1e-3)
             decoder, optim_decoder = self.setup(decoder, optim_decoder)
-            optim_recon_decoder = torch.optim.AdamW(recon_decoder.parameters(), lr=1e-4)
+            optim_recon_decoder = torch.optim.AdamW(recon_decoder.parameters(), lr=1e-3)
             recon_decoder, optim_recon_decoder = self.setup(
                 recon_decoder, optim_recon_decoder
             )
@@ -1271,7 +1281,11 @@ class INRSystem(LightningLite):
                 **dataloader_kwargs,
             )
             val_dataloader = monai.data.DataLoader(
-                val_dataset, batch_size=1, shuffle=True, pin_memory=True
+                val_dataset,
+                batch_size=1,
+                shuffle=True,
+                pin_memory=True,
+                num_workers=0,
             )
             train_dataloader, val_dataloader = self.setup_dataloaders(
                 train_dataloader, val_dataloader
@@ -1303,9 +1317,11 @@ class INRSystem(LightningLite):
                 recon_decoder_grad_norm=list(),
             )
             step = 0
-            train_b0_recon_epoch_proportion = 0.05
-            train_lr_epoch_proportion = 0.09
+            train_b0_recon_epoch_proportion = -1.00
+            train_lr_epoch_proportion = -1.00
             train_lr = False
+            lambda_pred_fodf = 1.0
+            lambda_recon = 0.0
             for epoch in range(epochs):
                 self.print(f"\nEpoch {epoch}\n", "=" * 10)
                 if epoch <= math.floor(epochs * train_lr_epoch_proportion):
@@ -1316,18 +1332,20 @@ class INRSystem(LightningLite):
                     #         # add_keys=["lr_fodf"],
                     #         remove_keys=["fodf", "mask", "fr_patch_extent_acpc"],
                     #     )
-                    train_lr = True
+                    if not train_lr:
+                        train_lr = True
                 else:
                     # if train_lr:
                     #     train_dataloader.dataset.set_select_tf_keys(
                     #         add_keys=["fodf", "mask", "fr_patch_extent_acpc"],
                     #         # remove_keys=["lr_fodf"],
                     #     )
-                    print(
-                        "Switching to LR -> super-res training",
-                        f"Epoch {epoch}, step {step}",
-                    )
-                    train_lr = False
+                    if train_lr:
+                        print(
+                            "Switching to LR -> super-res training",
+                            f"Epoch {epoch}, step {step}",
+                        )
+                        train_lr = False
 
                 for batch_dict in train_dataloader:
 
@@ -1450,6 +1468,7 @@ class INRSystem(LightningLite):
                 optim_encoder.zero_grad(set_to_none=True)
                 optim_decoder.zero_grad(set_to_none=True)
                 optim_recon_decoder.zero_grad(set_to_none=True)
+                self.print("\n==Validation==", flush=True)
                 self.aim_run, val_viz_subj_id = self.validate_stage(
                     encoder,
                     decoder,
@@ -1575,6 +1594,8 @@ class INRSystem(LightningLite):
             val_metrics = {"mse": list()}
             for batch_dict in val_dataloader:
                 subj_id = batch_dict["subj_id"]
+                if len(subj_id) == 1:
+                    subj_id = subj_id[0]
                 if val_viz_subj_id is None:
                     val_viz_subj_id = subj_id
                 x = batch_dict["lr_dwi"]
@@ -1596,7 +1617,7 @@ class INRSystem(LightningLite):
                 # window inference method on the encoded volume.
                 pred_fodf = monai.inferers.sliding_window_inference(
                     y_coords,
-                    roi_size=(24, 24, 24),
+                    roi_size=(16, 16, 16),
                     sw_batch_size=y_coords.shape[0],
                     predictor=lambda q: decoder(
                         query_coord=q,
@@ -1616,7 +1637,7 @@ class INRSystem(LightningLite):
                 # If visualization subj_id is in this batch, create the visual and log it.
                 if subj_id == val_viz_subj_id:
                     with mpl.rc_context({"font.size": 6.0}):
-                        fig = plt.figure(dpi=190, figsize=(6, 4))
+                        fig = plt.figure(dpi=175, figsize=(7, 5))
                         fig, _ = pitn.viz.plot_fodf_coeff_slices(
                             pred_fodf,
                             y,
@@ -1627,12 +1648,12 @@ class INRSystem(LightningLite):
                         aim_run.track(
                             aim.Image(
                                 fig,
-                                caption=f"Val Subj {subj_id}",
+                                caption=f"Val Subj {subj_id}, MSE = {val_metrics['mse'][-1]}",
                                 optimize=True,
                                 quality=100,
                                 format="png",
                             ),
-                            name="SH Whole-Volume",
+                            name="sh_whole_volume",
                             context={"subset": "val"},
                             epoch=epoch,
                             step=step,
@@ -1709,64 +1730,3 @@ except KeyboardInterrupt as e:
     model_system.aim_run.add_tag("STOPPED")
     model_system.aim_run.close()
     raise e
-
-# %%
-losses = pd.read_csv(tmp_res_dir / "train_losses.csv")
-
-plt.figure(dpi=100)
-plt.plot(losses.step[50:], losses.loss[50:], label="loss")
-plt.legend()
-plt.show()
-
-plt.figure(dpi=100)
-plt.plot(losses.step[50:], losses.encoder_grad_norm[50:], label="encoder grad norm")
-plt.legend()
-plt.show()
-
-plt.figure(dpi=100)
-plt.plot(losses.step[50:], losses.decoder_grad_norm[50:], label="decoder grad norm")
-plt.legend()
-plt.show()
-
-plt.figure(dpi=100)
-plt.plot(
-    losses.step[50:],
-    losses.recon_decoder_grad_norm[50:],
-    label="recon decoder grad norm",
-)
-plt.legend()
-plt.show()
-
-# %%
-plt.figure(dpi=100)
-plt.plot(losses.step[750:], losses.loss[750:], label="loss")
-plt.legend()
-plt.show()
-
-plt.figure(dpi=100)
-plt.plot(losses.step[750:], losses.encoder_grad_norm[750:], label="encoder grad norm")
-plt.legend()
-plt.show()
-
-plt.figure(dpi=100)
-plt.plot(losses.step[750:], losses.decoder_grad_norm[750:], label="decoder grad norm")
-plt.legend()
-plt.show()
-
-plt.figure(dpi=100)
-plt.plot(
-    losses.step[750:],
-    losses.recon_decoder_grad_norm[750:],
-    label="recon decoder grad norm",
-)
-plt.legend()
-plt.show()
-# %%
-
-
-# %% [markdown]
-# ## Testing & Visualization
-
-# %%
-
-# %%
