@@ -3,6 +3,7 @@
 # jupyter:
 #   jupytext:
 #     cell_metadata_filter: -all
+#     comment_magics: true
 #     formats: ipynb,py:percent
 #     text_representation:
 #       extension: .py
@@ -308,7 +309,7 @@ with warnings.catch_warnings(record=True) as warn_list:
     #     transform=None,
     # )
 
-    # #!DEBUG
+    # #! DEBUG
     pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
         subj_ids=p.train.subj_ids[:DEBUG_TRAIN_DATA_SUBJS],
         dwi_root_dir=hcp_full_res_data_dir,
@@ -362,7 +363,7 @@ print("=" * 10)
 # %%
 with warnings.catch_warnings(record=True) as warn_list:
 
-    #!DEBUG
+    # #!DEBUG
     DEBUG_VAL_SUBJS = 2
     # Validation dataset.
     val_paths_dataset = pitn.data.datasets.HCPfODFINRDataset(
