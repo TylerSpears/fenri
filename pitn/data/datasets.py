@@ -706,10 +706,12 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
         "lr_bvec",
         "lr_vox_size",
         "lr_extent_acpc",
+        "affine_lrvox2acpc",
         "fodf",
         "mask",
         "vox_size",
         "extent_acpc",
+        "affine_vox2acpc",
     )
 
     def __init__(self, base_dataset, transform=None):
@@ -790,6 +792,7 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "lr_dwi",
                 "lr_fodf",
                 "lr_mask",
+                "affine_lrvox2acpc",
                 # "lr_bval",
                 # "lr_bvec",
                 "lr_extent_acpc",
@@ -797,27 +800,11 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "fodf",
                 "mask",
                 "extent_acpc",
+                "affine_vox2acpc",
                 "vox_size",
             ]
         )
         feat_tfs.append(select_k_tf)
-
-        # # These coordinates will be re-indexed later to match what is expected by `grid_sample()`.
-        # vox_physical_coords_tf = monai.transforms.Lambdad(
-        #     [
-        #         "lr_extent_acpc",
-        #         "extent_acpc",
-        #     ],
-        #     lambda c: einops.rearrange(
-        #         torch.cartesian_prod(*c.T),
-        #         "(p1 p2 p3) d -> d p1 p2 p3",
-        #         p1=c.shape[0],
-        #         p2=c.shape[0],
-        #         p3=c.shape[0],
-        #     ).to(torch.float32),
-        #     overwrite=True,
-        # )
-        # feat_tfs.append(vox_physical_coords_tf)
 
         # Convert all MetaTensors to regular Tensors.
         to_tensor_tf = monai.transforms.ToTensord(
@@ -827,10 +814,12 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "lr_mask",
                 "lr_extent_acpc",
                 "lr_vox_size",
+                "affine_lrvox2acpc",
                 "fodf",
                 "mask",
                 "extent_acpc",
                 "vox_size",
+                "affine_vox2acpc",
             ],
             track_meta=False,
         )
@@ -845,11 +834,13 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "lr_mask",
                 "lr_extent_acpc",
                 "lr_vox_size",
+                "affine_lrvox2acpc",
                 # "lr_bval",
                 # "lr_bvec",
                 "fodf",
                 "mask",
                 "extent_acpc",
+                "affine_vox2acpc",
                 "vox_size",
             ]
         )
