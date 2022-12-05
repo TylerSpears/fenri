@@ -183,7 +183,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "dev_no-333-window_deeper-encoder"
+p.experiment_name = "dev_fixed-inr-ensemble"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -201,7 +201,7 @@ p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=4,
     samples_per_subj_per_epoch=40,
-    max_epochs=200,
+    max_epochs=175,
     # loss="mse",
 )
 
@@ -530,343 +530,6 @@ class INREncoder(torch.nn.Module):
         return y
 
 
-# INR/Decoder model
-class LitePoorConvContRepDecoder(torch.nn.Module):
-
-    TARGET_COORD_EPSILON = 1e-7
-
-    def __init__(
-        self,
-        context_v_features: int,
-        out_features: int,
-        m_encode_num_freqs: int,
-        sigma_encode_scale: float,
-        in_features=None,
-    ):
-        super().__init__()
-
-        # Determine the number of input features needed for the MLP.
-        # The order for concatenation is
-        # 1) ctx feats over the low-res input space, unfolded over a 3x3x3 window
-        # ~~2) target voxel shape~~
-        # 3) absolute coords of this forward pass' prediction target
-        # 4) absolute coords of the high-res target voxel
-        # ~~5) relative coords between high-res target coords and this forward pass'
-        #    prediction target, normalized by low-res voxel shape~~
-        # 6) encoding of relative coords
-        self.context_v_features = context_v_features * 3 * 3 * 3
-        self.ndim = 3
-        self.m_encode_num_freqs = m_encode_num_freqs
-        self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
-        self.n_encode_features = self.ndim * 2 * self.m_encode_num_freqs
-        self.n_coord_features = 2 * self.ndim + self.n_encode_features
-        self.internal_features = self.context_v_features + self.n_coord_features
-
-        self.in_features = in_features * 3 * 3 * 3
-        self.out_features = out_features
-
-        # "Swish" function, recommended in MeshFreeFlowNet
-        activate_cls = torch.nn.SiLU
-        self.activate_fn = activate_cls(inplace=True)
-        # Optional resizing linear layer, if the input size should be different than
-        # the hidden layer size.
-        if self.in_features is not None:
-            self.lin_pre = torch.nn.Linear(self.in_features, self.context_v_features)
-            self.norm_pre = None
-        else:
-            self.lin_pre = None
-            self.norm_pre = None
-        self.norm_pre = None
-
-        # Internal hidden layers are two res MLPs.
-        self.internal_res_repr = torch.nn.ModuleList(
-            [
-                pitn.nn.inr.SkipMLPBlock(
-                    n_context_features=self.context_v_features,
-                    n_coord_features=self.n_coord_features,
-                    n_dense_layers=3,
-                    activate_fn=activate_cls,
-                )
-                for _ in range(2)
-            ]
-        )
-        self.lin_post = torch.nn.Linear(self.context_v_features, self.out_features)
-
-    def encode_relative_coord(self, coords):
-        c = einops.rearrange(coords, "b d x y z -> (b x y z) d")
-        sigma = self.sigma_encode_scale.expand_as(c).to(c)[..., None]
-        encode_pos = pitn.nn.inr.fourier_position_encoding(
-            c, sigma_scale=sigma, m_num_freqs=self.m_encode_num_freqs
-        )
-
-        encode_pos = einops.rearrange(
-            encode_pos,
-            "(b x y z) d -> b d x y z",
-            x=coords.shape[2],
-            y=coords.shape[3],
-            z=coords.shape[4],
-        )
-        return encode_pos
-
-    def sub_grid_forward(
-        self,
-        context_val,
-        context_coord,
-        query_coord,
-        context_vox_size,
-        query_vox_size,
-        return_rel_context_coord=False,
-    ):
-        # Take relative coordinate difference between the current context
-        # coord and the query coord.
-        # rel_context_coord = context_coord - query_coord + self.TARGET_COORD_EPSILON
-        rel_context_coord = torch.clamp_min(
-            context_coord - query_coord,
-            (-context_vox_size / 2) + self.TARGET_COORD_EPSILON,
-        )
-        # Also normalize to [0, 1)
-        # Coordinates are located in the center of the voxel. By the way
-        # the context vector is being constructed surrounding the query
-        # coord, the query coord is always within 1.5 x vox_size of the
-        # context (low-res space) coordinate. So, subtract the
-        # batch-and-channel-wise minimum, and divide by the known upper
-        # bound.
-        rel_norm_context_coord = (
-            rel_context_coord
-            - torch.amin(rel_context_coord, dim=(2, 3, 4), keepdim=True)
-        ) / (1.5 * context_vox_size)
-        assert (rel_norm_context_coord >= 0).all() and (
-            rel_norm_context_coord < 1.0
-        ).all()
-        encoded_rel_norm_context_coord = self.encode_relative_coord(
-            rel_norm_context_coord
-        )
-
-        # Perform forward pass of the MLP.
-        if self.norm_pre is not None:
-            context_val = self.norm_pre(context_val)
-        context_feats = einops.rearrange(context_val, "b c x y z -> (b x y z) c")
-
-        # q_vox_size = query_vox_size.expand_as(rel_norm_context_coord)
-        coord_feats = (
-            # q_vox_size,
-            context_coord,
-            query_coord,
-            # rel_norm_context_coord,
-            encoded_rel_norm_context_coord,
-        )
-        coord_feats = torch.cat(coord_feats, dim=1)
-        spatial_layout = {
-            "b": coord_feats.shape[0],
-            "x": coord_feats.shape[2],
-            "y": coord_feats.shape[3],
-            "z": coord_feats.shape[4],
-        }
-
-        coord_feats = einops.rearrange(coord_feats, "b c x y z -> (b x y z) c")
-        x_coord = coord_feats
-        sub_grid_pred = context_feats
-
-        if self.lin_pre is not None:
-            sub_grid_pred = self.lin_pre(sub_grid_pred)
-            sub_grid_pred = self.activate_fn(sub_grid_pred)
-
-        for l in self.internal_res_repr:
-            sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
-        sub_grid_pred = self.lin_post(sub_grid_pred)
-        sub_grid_pred = einops.rearrange(
-            sub_grid_pred, "(b x y z) c -> b c x y z", **spatial_layout
-        )
-        if return_rel_context_coord:
-            ret = (sub_grid_pred, rel_context_coord)
-        else:
-            ret = sub_grid_pred
-        return ret
-
-    def equal_space_forward(self, context_v, context_spatial_extent, context_vox_size):
-        return self.sub_grid_forward(
-            context_val=context_v,
-            context_coord=context_spatial_extent,
-            query_coord=context_spatial_extent,
-            context_vox_size=context_vox_size,
-            query_vox_size=context_vox_size,
-        )
-
-    def forward(
-        self,
-        context_v,
-        context_spatial_extent,
-        query_vox_size,
-        query_coord,
-    ) -> torch.Tensor:
-        if query_vox_size.ndim == 2:
-            query_vox_size = query_vox_size[:, :, None, None, None]
-        context_vox_size = torch.abs(
-            context_spatial_extent[..., 1, 1, 1] - context_spatial_extent[..., 0, 0, 0]
-        )
-        context_vox_size = context_vox_size[:, :, None, None, None]
-
-        # Unfold the context vector to include all 3x3x3 neighbors via concatenation of
-        # feature vectors into a new, larger feature space.
-        context_v = pitn.nn.functional.unfold_3d(
-            context_v,
-            kernel=3,
-            stride=1,
-            reshape_output=False,
-            pad=(1,) * 6,
-            mode="reflect",
-        )
-        context_v = einops.rearrange(
-            context_v, "b c xmk ymk zmk k_x k_y k_z -> b (k_x k_y k_z c) xmk ymk zmk"
-        )
-
-        # If the context space and the query coordinates are equal, then we are actually
-        # just mapping within the same physical space to the same coordinates. So,
-        # linear interpolation would just zero-out all surrounding predicted voxels,
-        # and would be a massive waste of computation.
-        if (
-            (context_spatial_extent.shape == query_coord.shape)
-            and torch.isclose(context_spatial_extent, query_coord).all()
-            and torch.isclose(query_vox_size, context_vox_size).all()
-        ):
-            y = self.equal_space_forward(
-                context_v=context_v,
-                context_spatial_extent=context_spatial_extent,
-                context_vox_size=context_vox_size,
-            )
-        # More commonly, the input space will not equal the output space, and the
-        # prediction will need to be interpolated.
-        else:
-            batch_size = query_coord.shape[0]
-            # Construct a grid of nearest indices in context space by sampling a grid of
-            # *indices* given the coordinates in mm.
-            # The channel dim is just repeated for every
-            # channel, so that doesn't need to be in the idx grid.
-            nearest_coord_idx = torch.stack(
-                torch.meshgrid(
-                    *[
-                        torch.arange(0, context_spatial_extent.shape[i])
-                        for i in (0, 2, 3, 4)
-                    ],
-                    indexing="ij",
-                ),
-                dim=1,
-            ).to(context_spatial_extent)
-
-            # Find the nearest grid point, where the batch+spatial dims are the
-            # "channels."
-            nearest_coord_idx = pitn.nn.inr.weighted_ctx_v(
-                encoded_feat_vol=nearest_coord_idx,
-                input_space_extent=context_spatial_extent,
-                target_space_extent=query_coord,
-                reindex_spatial_extents=True,
-                sample_mode="nearest",
-            ).to(torch.long)
-            # Expand along channel dimension for raw indexing.
-            nearest_coord_idx = einops.rearrange(
-                nearest_coord_idx, "b dim i j k -> dim (b i j k)"
-            )
-            batch_idx = nearest_coord_idx[0]
-
-            # Find sum of distances to normalize the distance-weighted weight vector for
-            # in-place 'linear interpolation.'
-            phys_coords_0 = context_spatial_extent[
-                batch_idx,
-                :,
-                nearest_coord_idx[1],
-                nearest_coord_idx[2],
-                nearest_coord_idx[3],
-            ]
-            phys_coords_0 = einops.rearrange(
-                phys_coords_0,
-                "(b x y z) c -> b c x y z",
-                b=batch_size,
-                c=query_coord.shape[1],
-                x=query_coord.shape[2],
-                y=query_coord.shape[3],
-                z=query_coord.shape[4],
-            )
-            inv_dist_total = torch.zeros_like(phys_coords_0)
-            inv_dist_total = (inv_dist_total[:, 0])[:, None]
-            for i, j, k in itertools.product((0, 1), (0, 1), (0, 1)):
-                phys_coords_offset = torch.ones(1, 3, 1, 1, 1).to(
-                    context_spatial_extent
-                )
-                phys_coords_offset[:, 0] *= i
-                phys_coords_offset[:, 1] *= j
-                phys_coords_offset[:, 2] *= k
-                phys_coords_offset = context_vox_size * phys_coords_offset
-                phys_coords = phys_coords_0 + phys_coords_offset
-                inv_dist_total += 1 / torch.linalg.vector_norm(
-                    phys_coords - query_coord, ord=2, dim=1, keepdim=True
-                )
-            # Potentially free some memory here.
-            del phys_coords
-            del phys_coords_0
-
-            y_weighted_accumulate = None
-            # Build the low-res representation one sub-window voxel index at a time.
-            for i in (0, 1):
-                # Rebuild indexing tuple for each element of the sub-window
-                x_idx = nearest_coord_idx[1] + i
-                for j in (0, 1):
-                    y_idx = nearest_coord_idx[2] + j
-                    for k in (0, 1):
-                        z_idx = nearest_coord_idx[3] + k
-                        context_val = context_v[batch_idx, :, x_idx, y_idx, z_idx]
-                        context_val = einops.rearrange(
-                            context_val,
-                            "(b x y z) c -> b c x y z",
-                            b=batch_size,
-                            x=query_coord.shape[2],
-                            y=query_coord.shape[3],
-                            z=query_coord.shape[4],
-                        )
-                        context_coord = context_spatial_extent[
-                            batch_idx, :, x_idx, y_idx, z_idx
-                        ]
-                        context_coord = einops.rearrange(
-                            context_coord,
-                            "(b x y z) c -> b c x y z",
-                            b=batch_size,
-                            x=query_coord.shape[2],
-                            y=query_coord.shape[3],
-                            z=query_coord.shape[4],
-                        )
-
-                        sub_grid_pred_ijk = self.sub_grid_forward(
-                            context_val=context_val,
-                            context_coord=context_coord,
-                            query_coord=query_coord,
-                            context_vox_size=context_vox_size,
-                            query_vox_size=query_vox_size,
-                            return_rel_context_coord=False,
-                        )
-                        # Initialize the accumulated prediction after finding the
-                        # output size; easier than trying to pre-compute it.
-                        if y_weighted_accumulate is None:
-                            y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
-
-                        # Weigh this cell's prediction by the inverse of the distance
-                        # from the cell physical coordinate to the true target
-                        # physical coordinate. Normalize the weight by the inverse
-                        # "sum of the inverse distances" found before.
-                        w = (
-                            1
-                            / torch.linalg.vector_norm(
-                                context_coord - query_coord, ord=2, dim=1, keepdim=True
-                            )
-                        ) / inv_dist_total
-
-                        # Accumulate weighted cell predictions to eventually create
-                        # the final prediction.
-                        y_weighted_accumulate += w * sub_grid_pred_ijk
-
-            y = y_weighted_accumulate
-
-        return y
-
-
 class ReducedDecoder(torch.nn.Module):
 
     TARGET_COORD_EPSILON = 1e-7
@@ -1090,8 +753,10 @@ class ReducedDecoder(torch.nn.Module):
             )
             batch_idx = nearest_coord_idx[0]
 
-            # Find sum of distances to normalize the distance-weighted weight vector for
-            # in-place 'linear interpolation.'
+            # Use the world coordinates to determine the necessary voxel coordinate
+            # offsets such that the offsets enclose the query point.
+            # World coordinate in the low-res input grid that is closest to the
+            # query coordinate.
             phys_coords_0 = context_spatial_extent[
                 batch_idx,
                 :,
@@ -1099,6 +764,7 @@ class ReducedDecoder(torch.nn.Module):
                 nearest_coord_idx[2],
                 nearest_coord_idx[3],
             ]
+
             phys_coords_0 = einops.rearrange(
                 phys_coords_0,
                 "(b x y z) c -> b c x y z",
@@ -1108,81 +774,127 @@ class ReducedDecoder(torch.nn.Module):
                 y=query_coord.shape[3],
                 z=query_coord.shape[4],
             )
+            # Determine the quadrants that the query point lies in relative to the
+            # context grid. We only care about the spatial/non-batch coordinates.
+            surround_query_point_quadrants = (
+                query_coord - self.TARGET_COORD_EPSILON - phys_coords_0
+            )
+            # 3 x batch_and_spatial_size
+            # The signs of the "query coordinate - grid coordinate" should match the
+            # direction the indexing should go for the nearest voxels to the query.
+            surround_offsets_vox = einops.rearrange(
+                surround_query_point_quadrants.sign(), "b dim i j k -> dim (b i j k)"
+            ).to(torch.int8)
+            del surround_query_point_quadrants
+
+            # Now, find sum of distances to normalize the distance-weighted weight vector
+            # for in-place 'linear interpolation.'
             inv_dist_total = torch.zeros_like(phys_coords_0)
             inv_dist_total = (inv_dist_total[:, 0])[:, None]
-            for i, j, k in itertools.product((0, 1), (0, 1), (0, 1)):
-                phys_coords_offset = torch.ones(1, 3, 1, 1, 1).to(
-                    context_spatial_extent
-                )
-                phys_coords_offset[:, 0] *= i
-                phys_coords_offset[:, 1] *= j
-                phys_coords_offset[:, 2] *= k
-                phys_coords_offset = context_vox_size * phys_coords_offset
+            surround_offsets_vox_volume_order = einops.rearrange(
+                surround_offsets_vox,
+                "dim (b i j k) -> b dim i j k",
+                b=batch_size,
+                i=query_coord.shape[2],
+                j=query_coord.shape[3],
+                k=query_coord.shape[4],
+            )
+            for (
+                offcenter_indicate_i,
+                offcenter_indicate_j,
+                offcenter_indicate_k,
+            ) in itertools.product((0, 1), (0, 1), (0, 1)):
+                phys_coords_offset = torch.ones_like(phys_coords_0)
+                phys_coords_offset[:, 0] *= (
+                    offcenter_indicate_i * surround_offsets_vox_volume_order[:, 0]
+                ) * context_vox_size[:, 0]
+                phys_coords_offset[:, 1] *= (
+                    offcenter_indicate_j * surround_offsets_vox_volume_order[:, 1]
+                ) * context_vox_size[:, 1]
+                phys_coords_offset[:, 2] *= (
+                    offcenter_indicate_k * surround_offsets_vox_volume_order[:, 2]
+                ) * context_vox_size[:, 2]
+                # phys_coords_offset = context_vox_size * phys_coords_offset
                 phys_coords = phys_coords_0 + phys_coords_offset
                 inv_dist_total += 1 / torch.linalg.vector_norm(
-                    phys_coords - query_coord, ord=2, dim=1, keepdim=True
+                    query_coord - phys_coords, ord=2, dim=1, keepdim=True
                 )
             # Potentially free some memory here.
             del phys_coords
             del phys_coords_0
+            del phys_coords_offset
+            del surround_offsets_vox_volume_order
 
             y_weighted_accumulate = None
             # Build the low-res representation one sub-window voxel index at a time.
-            for i in (0, 1):
+            # The indicators specify if the current voxel index that surrounds the
+            # query coordinate should be "off the center voxel" or not. If not, then
+            # the center voxel (read: no voxel offset from the center) is selected
+            # (for that dimension).
+            for (
+                offcenter_indicate_i,
+                offcenter_indicate_j,
+                offcenter_indicate_k,
+            ) in itertools.product((0, 1), (0, 1), (0, 1)):
                 # Rebuild indexing tuple for each element of the sub-window
-                x_idx = nearest_coord_idx[1] + i
-                for j in (0, 1):
-                    y_idx = nearest_coord_idx[2] + j
-                    for k in (0, 1):
-                        z_idx = nearest_coord_idx[3] + k
-                        context_val = context_v[batch_idx, :, x_idx, y_idx, z_idx]
-                        context_val = einops.rearrange(
-                            context_val,
-                            "(b x y z) c -> b c x y z",
-                            b=batch_size,
-                            x=query_coord.shape[2],
-                            y=query_coord.shape[3],
-                            z=query_coord.shape[4],
-                        )
-                        context_coord = context_spatial_extent[
-                            batch_idx, :, x_idx, y_idx, z_idx
-                        ]
-                        context_coord = einops.rearrange(
-                            context_coord,
-                            "(b x y z) c -> b c x y z",
-                            b=batch_size,
-                            x=query_coord.shape[2],
-                            y=query_coord.shape[3],
-                            z=query_coord.shape[4],
-                        )
+                i_idx = nearest_coord_idx[1] + (
+                    offcenter_indicate_i * surround_offsets_vox[0]
+                )
+                j_idx = nearest_coord_idx[2] + (
+                    offcenter_indicate_j * surround_offsets_vox[1]
+                )
+                k_idx = nearest_coord_idx[3] + (
+                    offcenter_indicate_k * surround_offsets_vox[2]
+                )
+                context_val = context_v[batch_idx, :, i_idx, j_idx, k_idx]
+                context_val = einops.rearrange(
+                    context_val,
+                    "(b x y z) c -> b c x y z",
+                    b=batch_size,
+                    x=query_coord.shape[2],
+                    y=query_coord.shape[3],
+                    z=query_coord.shape[4],
+                )
+                context_coord = context_spatial_extent[
+                    batch_idx, :, i_idx, j_idx, k_idx
+                ]
+                context_coord = einops.rearrange(
+                    context_coord,
+                    "(b x y z) c -> b c x y z",
+                    b=batch_size,
+                    x=query_coord.shape[2],
+                    y=query_coord.shape[3],
+                    z=query_coord.shape[4],
+                )
 
-                        sub_grid_pred_ijk = self.sub_grid_forward(
-                            context_val=context_val,
-                            context_coord=context_coord,
-                            query_coord=query_coord,
-                            context_vox_size=context_vox_size,
-                            query_vox_size=query_vox_size,
-                            return_rel_context_coord=False,
-                        )
-                        # Initialize the accumulated prediction after finding the
-                        # output size; easier than trying to pre-compute it.
-                        if y_weighted_accumulate is None:
-                            y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
+                sub_grid_pred_ijk = self.sub_grid_forward(
+                    context_val=context_val,
+                    context_coord=context_coord,
+                    query_coord=query_coord,
+                    context_vox_size=context_vox_size,
+                    query_vox_size=query_vox_size,
+                    return_rel_context_coord=False,
+                )
+                # Initialize the accumulated prediction after finding the
+                # output size; easier than trying to pre-compute it.
+                if y_weighted_accumulate is None:
+                    y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
 
-                        # Weigh this cell's prediction by the inverse of the distance
-                        # from the cell physical coordinate to the true target
-                        # physical coordinate. Normalize the weight by the inverse
-                        # "sum of the inverse distances" found before.
-                        w = (
-                            1
-                            / torch.linalg.vector_norm(
-                                context_coord - query_coord, ord=2, dim=1, keepdim=True
-                            )
-                        ) / inv_dist_total
+                # Weigh this cell's prediction by the inverse of the distance
+                # from the cell physical coordinate to the true target
+                # physical coordinate. Normalize the weight by the inverse
+                # "sum of the inverse distances" found before.
+                w = (
+                    1
+                    / torch.linalg.vector_norm(
+                        query_coord - context_coord, ord=2, dim=1, keepdim=True
+                    )
+                ) / inv_dist_total
 
-                        # Accumulate weighted cell predictions to eventually create
-                        # the final prediction.
-                        y_weighted_accumulate += w * sub_grid_pred_ijk
+                # Accumulate weighted cell predictions to eventually create
+                # the final prediction.
+                y_weighted_accumulate += w * sub_grid_pred_ijk
+                del sub_grid_pred_ijk
 
             y = y_weighted_accumulate
 
@@ -1435,13 +1147,6 @@ class INRSystem(LightningLite):
                         end=" ",
                         flush=(step % 10) == 0,
                     )
-                    # self.print(
-                    #     f"| {loss.detach().cpu().item()}",
-                    #     f"= {lambda_pred_fodf} x {loss_fodf.detach().cpu().item()}",
-                    #     f"+ {lambda_recon} x {loss_recon.detach().cpu().item()}",
-                    #     end=" ",
-                    #     flush=True,
-                    # )
                     losses["loss"].append(loss.detach().cpu().item())
                     losses["epoch"].append(epoch)
                     losses["step"].append(step)
