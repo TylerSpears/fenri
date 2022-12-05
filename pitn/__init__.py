@@ -14,7 +14,7 @@ metrics = LazyLoader("metrics", globals(), "pitn.metrics")
 eig = LazyLoader("eig", globals(), "pitn.eig")
 riemann = LazyLoader("riemann", globals(), "pitn.riemann")
 redun = LazyLoader("redun", globals(), "pitn.redun")
-from . import dsi_studio, fsl, mrtrix, utils
+from . import dsi_studio, fsl, mrtrix, odf, utils
 
 # fsl = LazyLoader("fsl", globals(), "pitn.fsl")
 # dsi_studio = LazyLoader("dsi_studio", globals(), "pitn.dsi_studio")

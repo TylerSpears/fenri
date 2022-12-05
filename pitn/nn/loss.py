@@ -4,6 +4,32 @@ import torch
 import torch.nn.functional as F
 
 
+def jenson_shannon_diverge(
+    log_input_dist: torch.Tensor,
+    log_target_dist: torch.Tensor,
+    reduction=None,
+):
+    kl = torch.nn.KLDivLoss(reduction=reduction, log_target=True)
+    log_P = log_target_dist
+    log_Q = log_input_dist
+
+    log_M = (
+        log_P
+        + torch.log1p(torch.exp(log_Q - log_P))
+        - torch.log(torch.tensor([0.5]).to(log_Q))
+    )
+
+    jsd = (
+        torch.exp(
+            torch.log(kl(log_M, log_P))
+            + torch.log1p(torch.exp(kl(log_M, log_Q) - kl(log_M, log_P)))
+        )
+        / 2
+    )
+
+    return jsd
+
+
 def dti_vec_fro_norm_loss(
     input: torch.Tensor,
     target: torch.Tensor,

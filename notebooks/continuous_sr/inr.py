@@ -80,7 +80,6 @@ import skimage
 import torch
 import torch.nn.functional as F
 import torchinfo
-import torchio
 from box import Box
 from icecream import ic
 from natsort import natsorted
@@ -184,7 +183,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "dev_fodf-fix_grid-sample-fix"
+p.experiment_name = "dev_no-333-window_deeper-encoder"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -200,25 +199,25 @@ p.aim_logger = dict(
 ###############################################
 p.train = dict(
     in_patch_size=(24, 24, 24),
-    batch_size=2,
-    samples_per_subj_per_epoch=100,
-    max_epochs=75,
+    batch_size=4,
+    samples_per_subj_per_epoch=40,
+    max_epochs=200,
     # loss="mse",
 )
 
 # Network/model parameters.
 p.encoder = dict(
     interior_channels=80,
-    out_channels=32,
+    out_channels=128,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
 )
 p.decoder = dict(
-    context_v_features=20,
+    context_v_features=128,
     in_features=p.encoder.out_channels,
     out_features=45,
-    m_encode_num_freqs=20,
+    m_encode_num_freqs=36,
     sigma_encode_scale=3.0,
 )
 
@@ -298,7 +297,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 12
+DEBUG_TRAIN_DATA_SUBJS = 20
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -364,7 +363,7 @@ print("=" * 10)
 with warnings.catch_warnings(record=True) as warn_list:
 
     # #!DEBUG
-    DEBUG_VAL_SUBJS = 2
+    DEBUG_VAL_SUBJS = 3
     # Validation dataset.
     val_paths_dataset = pitn.data.datasets.HCPfODFINRDataset(
         subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],
@@ -439,13 +438,26 @@ class INREncoder(torch.nn.Module):
         if isinstance(activate_fn, str):
             activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
 
+        self._activation_fn_init = activate_fn
+        self.activate_fn = activate_fn()
+
         # Pad to maintain the same input shape.
-        self.pre_conv = torch.nn.Conv3d(
-            self.in_channels,
-            self.interior_channels,
-            kernel_size=3,
-            padding="same",
-            padding_mode="reflect",
+        self.pre_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.in_channels,
+                self.in_channels,
+                kernel_size=1,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.in_channels,
+                self.interior_channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
         )
 
         # Construct the densely-connected cascading layers.
@@ -467,21 +479,46 @@ class INREncoder(torch.nn.Module):
             top_level_units.append(
                 pitn.nn.layers.DenseCascadeBlock3d(self.interior_channels, *res_layers)
             )
-        self._activation_fn_init = activate_fn
-        self.activate_fn = activate_fn()
 
         # Wrap everything into a densely-connected cascade.
         self.cascade = pitn.nn.layers.DenseCascadeBlock3d(
             self.interior_channels, *top_level_units
         )
 
-        self.post_conv = torch.nn.Conv3d(
-            self.interior_channels,
-            self.out_channels,
-            kernel_size=3,
-            padding="same",
-            padding_mode="reflect",
+        self.post_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.interior_channels,
+                self.interior_channels,
+                kernel_size=5,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.interior_channels,
+                self.out_channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.ReplicationPad3d((1, 0, 1, 0, 1, 0)),
+            torch.nn.AvgPool3d(kernel_size=2, stride=1),
+            torch.nn.Conv3d(
+                self.out_channels,
+                self.out_channels,
+                kernel_size=1,
+                padding="same",
+                padding_mode="reflect",
+            ),
         )
+        # self.post_conv = torch.nn.Conv3d(
+        #     self.interior_channels,
+        #     self.out_channels,
+        #     kernel_size=3,
+        #     padding="same",
+        #     padding_mode="reflect",
+        # )
 
     def forward(self, x: torch.Tensor):
         y = self.pre_conv(x)
@@ -830,10 +867,7 @@ class LitePoorConvContRepDecoder(torch.nn.Module):
         return y
 
 
-# %%
-
-# INR/Decoder model
-class SlimPoorConvContRepDecoder(torch.nn.Module):
+class ReducedDecoder(torch.nn.Module):
 
     TARGET_COORD_EPSILON = 1e-7
 
@@ -856,7 +890,7 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
         # ~~5) relative coords between high-res target coords and this forward pass'
         #    prediction target, normalized by low-res voxel shape~~
         # 6) encoding of relative coords
-        self.context_v_features = context_v_features * 3 * 3 * 3
+        self.context_v_features = context_v_features
         self.ndim = 3
         self.m_encode_num_freqs = m_encode_num_freqs
         self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
@@ -864,7 +898,7 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
         self.n_coord_features = 2 * self.ndim + self.n_encode_features
         self.internal_features = self.context_v_features + self.n_coord_features
 
-        self.in_features = in_features * 3 * 3 * 3
+        self.in_features = in_features
         self.out_features = out_features
 
         # "Swish" function, recommended in MeshFreeFlowNet
@@ -921,6 +955,7 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
     ):
         # Take relative coordinate difference between the current context
         # coord and the query coord.
+        # rel_context_coord = context_coord - query_coord + self.TARGET_COORD_EPSILON
         rel_context_coord = torch.clamp_min(
             context_coord - query_coord,
             (-context_vox_size / 2) + self.TARGET_COORD_EPSILON,
@@ -1007,20 +1042,6 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
         )
         context_vox_size = context_vox_size[:, :, None, None, None]
 
-        # Unfold the context vector to include all 3x3x3 neighbors via concatenation of
-        # feature vectors into a new, larger feature space.
-        context_v = pitn.nn.functional.unfold_3d(
-            context_v,
-            kernel=3,
-            stride=1,
-            reshape_output=False,
-            pad=(1,) * 6,
-            mode="reflect",
-        )
-        context_v = einops.rearrange(
-            context_v, "b c xmk ymk zmk k_x k_y k_z -> b (k_x k_y k_z c) xmk ymk zmk"
-        )
-
         # If the context space and the query coordinates are equal, then we are actually
         # just mapping within the same physical space to the same coordinates. So,
         # linear interpolation would just zero-out all surrounding predicted voxels,
@@ -1038,6 +1059,7 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
         # More commonly, the input space will not equal the output space, and the
         # prediction will need to be interpolated.
         else:
+            batch_size = query_coord.shape[0]
             # Construct a grid of nearest indices in context space by sampling a grid of
             # *indices* given the coordinates in mm.
             # The channel dim is just repeated for every
@@ -1052,9 +1074,11 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
                 ),
                 dim=1,
             ).to(context_spatial_extent)
-            # Find the nearest grid point, where the batch+spatial dims are the "channels."
+
+            # Find the nearest grid point, where the batch+spatial dims are the
+            # "channels."
             nearest_coord_idx = pitn.nn.inr.weighted_ctx_v(
-                nearest_coord_idx,
+                encoded_feat_vol=nearest_coord_idx,
                 input_space_extent=context_spatial_extent,
                 target_space_extent=query_coord,
                 reindex_spatial_extents=True,
@@ -1062,11 +1086,9 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
             ).to(torch.long)
             # Expand along channel dimension for raw indexing.
             nearest_coord_idx = einops.rearrange(
-                nearest_coord_idx, "b dim x y z -> dim (b x y z)"
+                nearest_coord_idx, "b dim i j k -> dim (b i j k)"
             )
             batch_idx = nearest_coord_idx[0]
-            rel_norm_sub_window_grid_coord: torch.Tensor
-            sub_window_query_sample_grid = list()
 
             # Find sum of distances to normalize the distance-weighted weight vector for
             # in-place 'linear interpolation.'
@@ -1080,6 +1102,8 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
             phys_coords_0 = einops.rearrange(
                 phys_coords_0,
                 "(b x y z) c -> b c x y z",
+                b=batch_size,
+                c=query_coord.shape[1],
                 x=query_coord.shape[2],
                 y=query_coord.shape[3],
                 z=query_coord.shape[4],
@@ -1098,10 +1122,11 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
                 inv_dist_total += 1 / torch.linalg.vector_norm(
                     phys_coords - query_coord, ord=2, dim=1, keepdim=True
                 )
+            # Potentially free some memory here.
             del phys_coords
             del phys_coords_0
 
-            sub_grid_pred = None
+            y_weighted_accumulate = None
             # Build the low-res representation one sub-window voxel index at a time.
             for i in (0, 1):
                 # Rebuild indexing tuple for each element of the sub-window
@@ -1114,6 +1139,7 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
                         context_val = einops.rearrange(
                             context_val,
                             "(b x y z) c -> b c x y z",
+                            b=batch_size,
                             x=query_coord.shape[2],
                             y=query_coord.shape[3],
                             z=query_coord.shape[4],
@@ -1124,76 +1150,41 @@ class SlimPoorConvContRepDecoder(torch.nn.Module):
                         context_coord = einops.rearrange(
                             context_coord,
                             "(b x y z) c -> b c x y z",
+                            b=batch_size,
                             x=query_coord.shape[2],
                             y=query_coord.shape[3],
                             z=query_coord.shape[4],
                         )
 
-                        ret_ctx_coord = True if (i == j == k == 0) else False
                         sub_grid_pred_ijk = self.sub_grid_forward(
                             context_val=context_val,
                             context_coord=context_coord,
                             query_coord=query_coord,
                             context_vox_size=context_vox_size,
                             query_vox_size=query_vox_size,
-                            return_rel_context_coord=ret_ctx_coord,
+                            return_rel_context_coord=False,
                         )
-                        # If the relative context coordinate was returned, then we
-                        # need to unpack the output tuple.
-                        if ret_ctx_coord:
-                            (
-                                sub_grid_pred_ijk,
-                                rel_norm_context_coord,
-                            ) = sub_grid_pred_ijk
-                        if sub_grid_pred is None:
-                            sub_grid_pred = torch.zeros_like(sub_grid_pred_ijk)
+                        # Initialize the accumulated prediction after finding the
+                        # output size; easier than trying to pre-compute it.
+                        if y_weighted_accumulate is None:
+                            y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
 
+                        # Weigh this cell's prediction by the inverse of the distance
+                        # from the cell physical coordinate to the true target
+                        # physical coordinate. Normalize the weight by the inverse
+                        # "sum of the inverse distances" found before.
                         w = (
                             1
                             / torch.linalg.vector_norm(
                                 context_coord - query_coord, ord=2, dim=1, keepdim=True
                             )
                         ) / inv_dist_total
-                        sub_grid_pred = sub_grid_pred + (w * sub_grid_pred_ijk)
 
-                        sub_window_query_sample_grid.append(sub_grid_pred_ijk)
+                        # Accumulate weighted cell predictions to eventually create
+                        # the final prediction.
+                        y_weighted_accumulate += w * sub_grid_pred_ijk
 
-                        if i == j == k == 0:
-                            # Find the relative coordinate of the query within the
-                            # sub-window.
-                            rel_norm_sub_window_grid_coord = torch.clamp(
-                                (rel_norm_context_coord - 0.5) * 2,
-                                -1 + self.TARGET_COORD_EPSILON,
-                                1 - self.TARGET_COORD_EPSILON,
-                            )
-            sub_window_query_sample_grid = torch.stack(
-                sub_window_query_sample_grid, dim=0
-            )
-            spatial_layout = {
-                "b": sub_window_query_sample_grid.shape[1],
-                "x": sub_window_query_sample_grid.shape[3],
-                "y": sub_window_query_sample_grid.shape[4],
-                "z": sub_window_query_sample_grid.shape[5],
-            }
-            sub_window = einops.rearrange(
-                sub_window_query_sample_grid,
-                "(x_sub y_sub z_sub) b c x y z -> (b x y z) c x_sub y_sub z_sub",
-                x_sub=2,
-                y_sub=2,
-                z_sub=2,
-            )
-            sub_window_grid = einops.rearrange(
-                rel_norm_sub_window_grid_coord, "b dim x y z -> (b x y z) 1 1 1 dim "
-            )
-
-            y = F.grid_sample(
-                sub_window,
-                sub_window_grid,
-                mode="bilinear",
-                align_corners=True,
-                padding_mode="reflection",
-            )
-            y = einops.rearrange(y, "(b x y z) c 1 1 1 -> b c x y z", **spatial_layout)
+            y = y_weighted_accumulate
 
         return y
 
@@ -1248,11 +1239,11 @@ class INRSystem(LightningLite):
         try:
             encoder = INREncoder(**{**encoder_kwargs, **{"in_channels": in_channels}})
             # decoder = ContRepDecoder(**decoder_kwargs)
-            decoder = LitePoorConvContRepDecoder(**decoder_kwargs)
+            decoder = ReducedDecoder(**decoder_kwargs)
             recon_decoder = INREncoder(
                 in_channels=encoder.out_channels,
                 interior_channels=48,
-                out_channels=1,
+                out_channels=6,
                 n_res_units=2,
                 n_dense_units=2,
                 activate_fn=encoder_kwargs["activate_fn"],
@@ -1262,11 +1253,11 @@ class INRSystem(LightningLite):
             self.print(decoder)
             self.print(recon_decoder)
 
-            optim_encoder = torch.optim.AdamW(encoder.parameters(), lr=1e-3)
+            optim_encoder = torch.optim.AdamW(encoder.parameters(), lr=1e-4)
             encoder, optim_encoder = self.setup(encoder, optim_encoder)
-            optim_decoder = torch.optim.AdamW(decoder.parameters(), lr=1e-3)
+            optim_decoder = torch.optim.AdamW(decoder.parameters(), lr=5e-4)
             decoder, optim_decoder = self.setup(decoder, optim_decoder)
-            optim_recon_decoder = torch.optim.AdamW(recon_decoder.parameters(), lr=1e-3)
+            optim_recon_decoder = torch.optim.AdamW(recon_decoder.parameters(), lr=1e-4)
             recon_decoder, optim_recon_decoder = self.setup(
                 recon_decoder, optim_recon_decoder
             )
@@ -1297,18 +1288,6 @@ class INRSystem(LightningLite):
             decoder.train()
             recon_decoder.train()
             out_dir = tmp_res_dir
-            sh_coeff_labels = {
-                "idx": list(range(0, 45)),
-                "l": np.concatenate(
-                    list(
-                        map(
-                            lambda x: np.array([x] * (2 * x + 1)),
-                            range(0, 9, 2),
-                        )
-                    ),
-                    dtype=int,
-                ).flatten(),
-            }
             losses = dict(
                 loss=list(),
                 epoch=list(),
@@ -1318,8 +1297,8 @@ class INRSystem(LightningLite):
                 recon_decoder_grad_norm=list(),
             )
             step = 0
-            train_b0_recon_epoch_proportion = -1.00
-            train_lr_epoch_proportion = -1.00
+            train_b0_recon_epoch_proportion = 0.06
+            train_lr_epoch_proportion = 0.06
             train_lr = False
             lambda_pred_fodf = 1.0
             lambda_recon = 0.0
@@ -1342,7 +1321,7 @@ class INRSystem(LightningLite):
                     #         # remove_keys=["lr_fodf"],
                     #     )
                     if train_lr:
-                        print(
+                        self.print(
                             "Switching to LR -> super-res training",
                             f"Epoch {epoch}, step {step}",
                         )
@@ -1378,7 +1357,7 @@ class INRSystem(LightningLite):
                         lambda_recon = 1.0
                     else:
                         if lambda_recon > 0:
-                            print(
+                            self.print(
                                 "Stopping b_0 reconstruction pre-training",
                                 f"Epoch {epoch}, step {step}",
                             )
@@ -1406,7 +1385,8 @@ class INRSystem(LightningLite):
 
                     if lambda_recon != 0:
                         recon_pred = recon_decoder(ctx_v)
-                        recon_y = x[:, 0][:, None]
+                        # Index bvals to be 2 b=0, 2 b=1000, and 2 b=3000.
+                        recon_y = x[:, (0, 1, 2, 21, 22, 23)]
                         x_mask_broad = torch.broadcast_to(x_mask, recon_y.shape)
                         loss_recon = recon_loss_fn(
                             recon_pred[x_mask_broad], recon_y[x_mask_broad]
@@ -1452,11 +1432,16 @@ class INRSystem(LightningLite):
                     )
                     self.print(
                         f"| {loss.detach().cpu().item()}",
-                        f"= {lambda_pred_fodf} x {loss_fodf.detach().cpu().item()}",
-                        f"+ {lambda_recon} x {loss_recon.detach().cpu().item()}",
                         end=" ",
-                        flush=True,
+                        flush=(step % 10) == 0,
                     )
+                    # self.print(
+                    #     f"| {loss.detach().cpu().item()}",
+                    #     f"= {lambda_pred_fodf} x {loss_fodf.detach().cpu().item()}",
+                    #     f"+ {lambda_recon} x {loss_recon.detach().cpu().item()}",
+                    #     end=" ",
+                    #     flush=True,
+                    # )
                     losses["loss"].append(loss.detach().cpu().item())
                     losses["epoch"].append(epoch)
                     losses["step"].append(step)
@@ -1469,6 +1454,10 @@ class INRSystem(LightningLite):
                 optim_encoder.zero_grad(set_to_none=True)
                 optim_decoder.zero_grad(set_to_none=True)
                 optim_recon_decoder.zero_grad(set_to_none=True)
+                # Delete some training inputs to relax memory constraints in whole-
+                # volume inference inside validation step.
+                del x, x_coords, y, y_coords, pred_fodf
+
                 self.print("\n==Validation==", flush=True)
                 self.aim_run, val_viz_subj_id = self.validate_stage(
                     encoder,
@@ -1480,77 +1469,6 @@ class INRSystem(LightningLite):
                     val_viz_subj_id=val_viz_subj_id,
                 )
 
-                # with mpl.rc_context({"font.size": 4.0}):
-                #     # Save some example predictions after each epoch
-                #     fig = plt.figure(dpi=200, figsize=(2, 7))
-                #     pitn.viz.plot_vol_slices(
-                #         x[0, 0].detach(),
-                #         pred_fodf[0, 0].detach() * y_mask[0, 0].detach(),
-                #         recon_pred[0, 0].detach() * x_mask[0, 0].detach(),
-                #         y[0, 0].detach(),
-                #         slice_idx=(0.4, 0.5, 0.5),
-                #         title=f"Epoch {epoch} Step {step}",
-                #         vol_labels=["Input", "Pred", "Recon\nPred", "Target"],
-                #         colorbars="each",
-                #         fig=fig,
-                #         cmap="gray",
-                #         interpolation="antialiased",
-                #     )
-                #     # plt.savefig(Path(out_dir) / f"epoch_{epoch}_sample.png")
-                #     self.aim_run.track(
-                #         aim.Image(fig, optimize=True, quality=100, format="png"),
-                #         name="train_sample",
-                #         epoch=epoch,
-                #         step=step,
-                #         context={"subset": "train"},
-                #     )
-                #     plt.close(fig)
-                # # Track distribution of MSE loss over channels/SH coefficients.
-                # with torch.no_grad():
-                #     error_fodf = F.mse_loss(pred_fodf, y, reduction="none")
-                #     error_fodf = einops.rearrange(
-                #         error_fodf, "b sh_idx x y z -> b x y z sh_idx"
-                #     )
-                #     error_fodf = error_fodf[
-                #         y_mask[:, 0, ..., None].broadcast_to(error_fodf.shape)
-                #     ]
-                #     error_fodf = einops.rearrange(
-                #         error_fodf, "(elem sh_idx) -> elem sh_idx", sh_idx=45
-                #     )
-                #     error_fodf = error_fodf.flatten()
-
-                # error_fodf = error_fodf.detach().cpu().numpy()
-                # error_df = pd.DataFrame.from_dict(
-                #     {
-                #         "MSE": error_fodf,
-                #         "SH_idx": np.tile(
-                #             sh_coeff_labels["idx"], error_fodf.shape[0] // 45
-                #         ),
-                #         "L Order": np.tile(
-                #             sh_coeff_labels["l"], error_fodf.shape[0] // 45
-                #         ),
-                #     }
-                # )
-                # with mpl.rc_context({"font.size": 6.0}):
-                #     fig = plt.figure(dpi=130, figsize=(6, 2))
-                #     sns.boxplot(
-                #         data=error_df,
-                #         x="SH_idx",
-                #         y="MSE",
-                #         hue="L Order",
-                #         linewidth=0.8,
-                #         showfliers=False,
-                #         width=0.85,
-                #         dodge=False,
-                #     )
-                #     self.aim_run.track(
-                #         aim.Image(fig, caption="MSE Over SH idx", optimize=True),
-                #         name="MSE Over SH idx",
-                #         epoch=epoch,
-                #         step=step,
-                #     )
-                #     plt.close(fig)
-
         except Exception as e:
             self.aim_run.add_tag("FAILED")
             self.aim_run.close()
@@ -1558,7 +1476,7 @@ class INRSystem(LightningLite):
 
         self.aim_run.close()
 
-        self.print("=" * 10)
+        self.print("=" * 40)
         losses = pd.DataFrame.from_dict(losses)
         losses.to_csv(Path(out_dir) / "train_losses.csv")
 
@@ -1601,7 +1519,7 @@ class INRSystem(LightningLite):
                     val_viz_subj_id = subj_id
                 x = batch_dict["lr_dwi"]
                 x_coords = batch_dict["lr_extent_acpc"]
-                lr_fodf = batch_dict["lr_fodf"]
+                # lr_fodf = batch_dict["lr_fodf"]
                 y = batch_dict["fodf"]
                 y_mask = batch_dict["mask"].to(torch.bool)
                 y_coords = batch_dict["extent_acpc"]
@@ -1618,7 +1536,7 @@ class INRSystem(LightningLite):
                 # window inference method on the encoded volume.
                 pred_fodf = monai.inferers.sliding_window_inference(
                     y_coords,
-                    roi_size=(16, 16, 16),
+                    roi_size=(32, 32, 32),
                     sw_batch_size=y_coords.shape[0],
                     predictor=lambda q: decoder(
                         query_coord=q,
@@ -1638,18 +1556,23 @@ class INRSystem(LightningLite):
                 # If visualization subj_id is in this batch, create the visual and log it.
                 if subj_id == val_viz_subj_id:
                     with mpl.rc_context({"font.size": 6.0}):
-                        fig = plt.figure(dpi=175, figsize=(7, 5))
+                        fig = plt.figure(dpi=175, figsize=(8, 5))
                         fig, _ = pitn.viz.plot_fodf_coeff_slices(
                             pred_fodf,
                             y,
-                            lr_fodf,
+                            pred_fodf - y,
                             fig=fig,
-                            fodf_vol_labels=("Predicted", "Target", "Low-Res"),
+                            fodf_vol_labels=("Predicted", "Target", "Pred - GT"),
+                            imshow_kwargs={
+                                "interpolation": "antialiased",
+                                "cmap": "gray",
+                            },
                         )
                         aim_run.track(
                             aim.Image(
                                 fig,
-                                caption=f"Val Subj {subj_id}, MSE = {val_metrics['mse'][-1]}",
+                                caption=f"Val Subj {subj_id}, "
+                                + f"MSE = {val_metrics['mse'][-1].item()}",
                                 optimize=True,
                                 quality=100,
                                 format="png",
@@ -1660,6 +1583,62 @@ class INRSystem(LightningLite):
                             step=step,
                         )
                         plt.close(fig)
+
+                    # Plot MSE as distributed over the SH orders.
+                    sh_coeff_labels = {
+                        "idx": list(range(0, 45)),
+                        "l": np.concatenate(
+                            list(
+                                map(
+                                    lambda x: np.array([x] * (2 * x + 1)),
+                                    range(0, 9, 2),
+                                )
+                            ),
+                            dtype=int,
+                        ).flatten(),
+                    }
+                    error_fodf = F.mse_loss(pred_fodf, y, reduction="none")
+                    error_fodf = einops.rearrange(
+                        error_fodf, "b sh_idx x y z -> b x y z sh_idx"
+                    )
+                    error_fodf = error_fodf[
+                        y_mask[:, 0, ..., None].broadcast_to(error_fodf.shape)
+                    ]
+                    error_fodf = einops.rearrange(
+                        error_fodf, "(elem sh_idx) -> elem sh_idx", sh_idx=45
+                    )
+                    error_fodf = error_fodf.flatten().detach().cpu().numpy()
+                    error_df = pd.DataFrame.from_dict(
+                        {
+                            "MSE": error_fodf,
+                            "SH_idx": np.tile(
+                                sh_coeff_labels["idx"], error_fodf.shape[0] // 45
+                            ),
+                            "L Order": np.tile(
+                                sh_coeff_labels["l"], error_fodf.shape[0] // 45
+                            ),
+                        }
+                    )
+                    with mpl.rc_context({"font.size": 6.0}):
+                        fig = plt.figure(dpi=140, figsize=(6, 2))
+                        sns.boxplot(
+                            data=error_df,
+                            x="SH_idx",
+                            y="MSE",
+                            hue="L Order",
+                            linewidth=0.8,
+                            showfliers=False,
+                            width=0.85,
+                            dodge=False,
+                        )
+                        self.aim_run.track(
+                            aim.Image(fig, caption="MSE over SH orders", optimize=True),
+                            name="mse_over_sh_orders",
+                            epoch=epoch,
+                            step=step,
+                        )
+                        plt.close(fig)
+                self.print(f"MSE {val_metrics['mse'][-1].item()}")
                 self.print("Finished validation subj ", subj_id)
                 del pred_fodf
 
