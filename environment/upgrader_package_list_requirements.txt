@@ -1,7 +1,7 @@
 antspyx
 ciftify
 duecredit
-git+https:///github.com/insitro/redun.git
+git+https:///github.com/insitro/redun.git[viz]
 ivy-core
 pdbr
 piqa

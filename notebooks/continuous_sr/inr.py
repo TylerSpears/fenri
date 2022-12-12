@@ -183,13 +183,16 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "dev_fixed-inr-ensemble"
+p.experiment_name = "fixed-inr-ensemble_split-04"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
-p.train_val_test_split_file = random.choice(
-    list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
+p.train_val_test_split_file = Path(
+    "./data_splits/HCP_train-val-test_split_04_seed_1325394393.csv"
 )
+# p.train_val_test_split_file = random.choice(
+#     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
+# )
 p.aim_logger = dict(
     repo="aim://dali.cpe.virginia.edu:53800",
     experiment="PITN_INR",
@@ -297,7 +300,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 20
+# DEBUG_TRAIN_DATA_SUBJS = 20
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -310,7 +313,8 @@ with warnings.catch_warnings(record=True) as warn_list:
 
     # #! DEBUG
     pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
-        subj_ids=p.train.subj_ids[:DEBUG_TRAIN_DATA_SUBJS],
+        # subj_ids=p.train.subj_ids[:DEBUG_TRAIN_DATA_SUBJS],
+        subj_ids=p.train.subj_ids,
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         lr_dwi_root_dir=hcp_low_res_data_dir,
@@ -363,10 +367,11 @@ print("=" * 10)
 with warnings.catch_warnings(record=True) as warn_list:
 
     # #!DEBUG
-    DEBUG_VAL_SUBJS = 3
+    # DEBUG_VAL_SUBJS = 3
     # Validation dataset.
     val_paths_dataset = pitn.data.datasets.HCPfODFINRDataset(
-        subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],
+        # subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],
+        subj_ids=p.val.subj_ids,
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         lr_dwi_root_dir=hcp_low_res_data_dir,
@@ -1180,6 +1185,20 @@ class INRSystem(LightningLite):
             raise e
 
         self.aim_run.close()
+        self.save(
+            {
+                "encoder": encoder.state_dict(),
+                "decoder": decoder.state_dict(),
+                "recon_decoder": recon_decoder.state_dict(),
+                "epoch": epoch,
+                "step": step,
+                "aim_run_hash": self.aim_run.hash,
+                "optim_encoder": optim_encoder.state_dict(),
+                "optim_decoder": optim_decoder.state_dict(),
+                "optim_recon_decoder": optim_recon_decoder.state_dict(),
+            },
+            Path(out_dir) / f"state_dict_epoch_{epoch}_step_{step}.pt",
+        )
 
         self.print("=" * 40)
         losses = pd.DataFrame.from_dict(losses)
@@ -1400,7 +1419,7 @@ try:
         val_dataset=val_dataset,
         # optim_kwargs={"lr": 1e-3},
         dataloader_kwargs={
-            "num_workers": 17,
+            "num_workers": 10,
             "persistent_workers": True,
             "prefetch_factor": 3,
         },

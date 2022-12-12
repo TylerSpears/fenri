@@ -29,6 +29,8 @@ class HCPfODFINRDataset(monai.data.Dataset):
         "lr_fodf",
         "lr_vox_size",
         "lr_patch_extent_acpc",
+        "lr_freesurfer_seg",
+        "lr_fivett",
         "fodf",
         "mask",
         "fivett",
@@ -62,6 +64,8 @@ class HCPfODFINRDataset(monai.data.Dataset):
                 lr_dwi=lr_data["dwi"],
                 lr_fodf=lr_fodf_data["fodf"],
                 lr_mask=lr_data["mask"],
+                lr_freesurfer_seg=lr_fodf_data["freesurfer_seg"],
+                lr_fivett=lr_fodf_data["fivett"],
                 lr_bval=lr_data["bval"],
                 lr_bvec=lr_data["bvec"],
                 fodf=fodf_data["fodf"],
@@ -142,7 +146,16 @@ class HCPfODFINRDataset(monai.data.Dataset):
         )
         tfs.append(
             monai.transforms.LoadImaged(
-                ("lr_dwi", "fodf", "lr_fodf", "lr_mask", "mask", "fivett"),
+                (
+                    "lr_dwi",
+                    "fodf",
+                    "lr_fodf",
+                    "lr_mask",
+                    "mask",
+                    "fivett",
+                    "lr_freesurfer_seg",
+                    "lr_fivett",
+                ),
                 reader=vol_reader,
                 dtype=np.float32,
                 meta_key_postfix="meta",
@@ -159,14 +172,23 @@ class HCPfODFINRDataset(monai.data.Dataset):
         # Data conversion
         tfs.append(
             monai.transforms.ToTensord(
-                ("lr_dwi", "fodf", "lr_fodf", "lr_mask", "mask", "fivett"),
+                (
+                    "lr_dwi",
+                    "fodf",
+                    "lr_fodf",
+                    "lr_mask",
+                    "mask",
+                    "fivett",
+                    "lr_freesurfer_seg",
+                    "lr_fivett",
+                ),
                 track_meta=True,
             )
         )
         tfs.append(monai.transforms.ToTensord(("lr_bval", "lr_bvec"), track_meta=False))
         tfs.append(
             monai.transforms.CastToTyped(
-                ("lr_mask", "mask", "fivett"), dtype=torch.uint8
+                ("lr_mask", "mask", "fivett", "lr_fivett"), dtype=torch.uint8
             )
         )
 
@@ -706,6 +728,8 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
         "lr_bvec",
         "lr_vox_size",
         "lr_extent_acpc",
+        "lr_freesurfer_seg",
+        "lr_fivett",
         "affine_lrvox2acpc",
         "fodf",
         "mask",
@@ -730,7 +754,10 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
         # Pad the low-res by 3 in each direction, to compensate for off-by-1 (1-ish)
         # errors in re-sampling in the network.
         off_by_1_padder = monai.transforms.BorderPadd(
-            ["lr_dwi", "lr_fodf", "lr_mask"], spatial_border=3, mode="constant", value=0
+            ["lr_dwi", "lr_fodf", "lr_mask", "lr_fivett", "lr_freesurfer_seg"],
+            spatial_border=3,
+            mode="constant",
+            value=0,
         )
         feat_tfs.append(off_by_1_padder)
         # Extract the LR affine matrix.
@@ -795,6 +822,8 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "affine_lrvox2acpc",
                 # "lr_bval",
                 # "lr_bvec",
+                "lr_freesurfer_seg",
+                "lr_fivett",
                 "lr_extent_acpc",
                 "lr_vox_size",
                 "fodf",
@@ -813,6 +842,8 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "lr_fodf",
                 "lr_mask",
                 "lr_extent_acpc",
+                "lr_freesurfer_seg",
+                "lr_fivett",
                 "lr_vox_size",
                 "affine_lrvox2acpc",
                 "fodf",
@@ -833,6 +864,8 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
                 "lr_fodf",
                 "lr_mask",
                 "lr_extent_acpc",
+                "lr_freesurfer_seg",
+                "lr_fivett",
                 "lr_vox_size",
                 "affine_lrvox2acpc",
                 # "lr_bval",
