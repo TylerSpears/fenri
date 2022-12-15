@@ -15,6 +15,7 @@ chart-studio==1.1.0
 colorama==0.4.4
 docutils==0.16
 fastapi==0.67.0
+functorch==1.13.0
 gcsfs==2022.8.2
 google-api-core==2.10.0
 google-cloud-core==2.3.2

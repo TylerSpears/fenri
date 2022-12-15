@@ -1,6 +1,7 @@
 name: pitn2
 channels:
   - pytorch
+  - nvidia
   - defaults
   - conda-forge
 dependencies:
@@ -458,9 +459,9 @@ dependencies:
   - zipp==3.8.1=pyhd8ed1ab_0
   - zlib==1.2.12=h7f8727e_2
   - zstd==1.5.2=ha4553b6_0
-  - pytorch=1.12
+  - pytorch=1.13
   - torchvision
-  - pytorch-cuda=11.6
+  - pytorch-cuda=11.7
   - gputil
   - tabulate
   - jupytext
@@ -470,3 +471,4 @@ dependencies:
   - libgcc
   - transforms3d
   - fury
+  - pyg==2.2.0=py310_torch_1.13.0_cu117
