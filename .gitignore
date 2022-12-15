@@ -822,3 +822,9 @@ results/*
 # Ignore certain security-related files.
 *.pem
 .cert
+
+# Ignore tractography files.
+*.tck
+*.fib
+*.trk
+*.src.gz

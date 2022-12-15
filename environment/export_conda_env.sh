@@ -1,4 +1,13 @@
 # Make sure to "source" this file, not "dot-slash" execute it!
+
+# Required linux terminal applications:
+# * jq
+# * awk
+# * sed
+# * conda/anaconda
+# * mamba
+# * conda-lock
+
 # Use sed to remove the "prefix:" field from the environment.yml file.
 ACTIVE_PREFIX=$(conda info --json | jq -e -r '.active_prefix')
 conda env export -p "$ACTIVE_PREFIX" \
