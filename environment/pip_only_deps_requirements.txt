@@ -26,6 +26,8 @@ googleapis-common-protos==1.56.4
 h11==0.14.0
 jmespath==1.0.1
 mako==1.2.2
+packaging==22.0
+pitn==0.0.post1.dev246+g0f01ff9.d20230105
 plotly==5.10.0
 py3nvml==0.2.7
 pygraphviz==1.10
