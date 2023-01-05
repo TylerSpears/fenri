@@ -209,8 +209,8 @@ p = _p
 #     split_subjs = set(split.subj_id.tolist())
 #     subj_ids = subj_ids | split_subjs
 p.subj_ids = [
-    # 123117,
-    201818,
+    # 201818,
+    162329,
 ]
 
 # %% [markdown]
@@ -285,12 +285,12 @@ sampling_sphere = dipy.data.HemiSphere.from_sphere(
     dipy.data.get_sphere("repulsion724").subdivide(1)
 )
 gfa_stopping_threshold = 0.25
-pmf_threshold = 0.1
+pmf_threshold = 0.2
 max_angle = 30.0
-step_size = 0.2
+step_size = 0.5
 max_cross = 4
-maxlen = 700
-seed_density = 1
+maxlen = 500
+seed_density = 4
 
 
 sh_transform_mat, _, _ = dipy.reconst.csdeconv.real_sh_descoteaux(
@@ -299,6 +299,10 @@ sh_transform_mat, _, _ = dipy.reconst.csdeconv.real_sh_descoteaux(
     phi=sampling_sphere.phi,
     full_basis=False,
     legacy=False,
+)
+
+label2dwi_tf = monai.transforms.ResampleToMatch(
+    mode="nearest", padding_mode="zeros", align_corners=True
 )
 
 
@@ -370,20 +374,46 @@ with warnings.catch_warnings(record=True) as warn_list:
         x_fs_seg = subj_dict["lr_freesurfer_seg"].detach().cpu().numpy()
         x_fs_seg = x_fs_seg[0, 0]
 
-        roi_dir = Path(
-            "/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf/201818/T1w/rois/cst"
-        )
-        intern_capsule = nib.load(roi_dir / "cst_border_internal_capsule.nii.gz")
-        seed_mask = intern_capsule.get_fdata().astype(bool)
+        # roi_dir = Path(
+        #     "/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf/162329/T1w/rois/cc"
+        # )
+        # forceps_minor = nib.as_closest_canonical(
+        #     nib.load(roi_dir / "CC_forceps_minor.nii.gz")
+        # )
+        # forceps_major = nib.as_closest_canonical(
+        #     nib.load(roi_dir / "CC_forceps_major.nii.gz")
+        # )
+        # cc_midbody = nib.as_closest_canonical(nib.load(roi_dir / "CC_midbody.nii.gz"))
+        # seed_mask = (
+        #     forceps_minor.get_fdata().astype(bool)
+        #     # | forceps_major.get_fdata().astype(bool)
+        #     # | cc_midbody.get_fdata().astype(bool)
+        # )
+        # if len(seed_mask.shape) == 3:
+        #     seed_mask = seed_mask[None]
+        # seed_mask = label2dwi_tf(
+        #     seed_mask,
+        #     img_dst=x[0, None].detach().cpu().numpy(),
+        #     src_meta={"affine": forceps_minor.affine},
+        #     dst_meta={"affine": x_affine, "spatial_shape": x.numpy().shape[1:]},
+        # )
+        # seed_mask = seed_mask[0]
 
-        # seed_mask = (x_fs_seg >= 251) & (x_fs_seg <= 255)
-
+        seed_mask = np.zeros_like(x.cpu().numpy()[0])
+        seed_mask[37:41, 61:64, 38:41] = 1
         seeds = dipy.tracking.utils.seeds_from_mask(
             seed_mask,
-            affine=intern_capsule.affine,
+            affine=x_affine,
+            density=seed_density,
+        )
+        seeds = dipy.tracking.utils.seeds_from_mask(
+            seed_mask,
+            affine=x_affine,
             density=seed_density,
         )
         print("Created seeds ", seeds.shape)
+        # print("Seed affine\n", x_affine)
+        # print("Subj. affine\n", x_affine)
 
         x_transl, x_rot, x_zoom, x_shear = transforms3d.affines.decompose(x_affine)
         x_np = einops.rearrange(x, "c z y x -> z y x c").numpy()
@@ -440,7 +470,7 @@ with warnings.catch_warnings(record=True) as warn_list:
 
         # dipy.io.streamline.save_tck(tractogram, f"test_streamline_subj-{subj_id}.tck")
         dipy.io.streamline.save_tck(
-            tractogram, f"linear_interp_streamline_cst_subj-{subj_id}.tck"
+            tractogram, f"linear_interp_streamline_forceps_minor_subj-{subj_id}.tck"
         )
 
 # %%
@@ -450,7 +480,7 @@ with warnings.catch_warnings(record=True) as warn_list:
 
 # %%
 model_weight_f = Path(
-    "/data/srv/outputs/pitn/results/runs/2022-12-06T21_40_10__fixed_ensemble_split_03/state_dict_epoch_174_step_35000.pt"
+    "/data/srv/outputs/pitn/results/tmp/2022-12-15T16_12_09/state_dict_epoch_174_step_35000.pt"
 )
 
 
@@ -744,200 +774,240 @@ class ReducedDecoder(torch.nn.Module):
         )
         context_vox_size = context_vox_size[:, :, None, None, None]
 
-        # If the context space and the query coordinates are equal, then we are actually
-        # just mapping within the same physical space to the same coordinates. So,
-        # linear interpolation would just zero-out all surrounding predicted voxels,
-        # and would be a massive waste of computation.
-        if (
-            (context_spatial_extent.shape == query_coord.shape)
-            and torch.isclose(context_spatial_extent, query_coord).all()
-            and torch.isclose(query_vox_size, context_vox_size).all()
-        ):
-            y = self.equal_space_forward(
-                context_v=context_v,
-                context_spatial_extent=context_spatial_extent,
-                context_vox_size=context_vox_size,
+        # # If the context space and the query coordinates are equal, then we are actually
+        # # just mapping within the same physical space to the same coordinates. So,
+        # # linear interpolation would just zero-out all surrounding predicted voxels,
+        # # and would be a massive waste of computation.
+        # if (
+        #     (context_spatial_extent.shape == query_coord.shape)
+        #     and torch.isclose(context_spatial_extent, query_coord).all()
+        #     and torch.isclose(query_vox_size, context_vox_size).all()
+        # ):
+        #     y = self.equal_space_forward(
+        #         context_v=context_v,
+        #         context_spatial_extent=context_spatial_extent,
+        #         context_vox_size=context_vox_size,
+        #     )
+        # # More commonly, the input space will not equal the output space, and the
+        # # prediction will need to be interpolated.
+        # else:
+        batch_size = query_coord.shape[0]
+        # Construct a grid of nearest indices in context space by sampling a grid of
+        # *indices* given the coordinates in mm.
+        # The channel dim is just repeated for every
+        # channel, so that doesn't need to be in the idx grid.
+        nearest_coord_idx = torch.stack(
+            torch.meshgrid(
+                *[
+                    torch.arange(0, context_spatial_extent.shape[i])
+                    for i in (0, 2, 3, 4)
+                ],
+                indexing="ij",
+            ),
+            dim=1,
+        ).to(context_spatial_extent)
+
+        # Find the nearest grid point, where the batch+spatial dims are the
+        # "channels."
+        nearest_coord_idx = pitn.nn.inr.weighted_ctx_v(
+            encoded_feat_vol=nearest_coord_idx,
+            input_space_extent=context_spatial_extent,
+            target_space_extent=query_coord,
+            reindex_spatial_extents=True,
+            sample_mode="nearest",
+        ).to(torch.long)
+        # Expand along channel dimension for raw indexing.
+        nearest_coord_idx = einops.rearrange(
+            nearest_coord_idx, "b dim i j k -> dim (b i j k)"
+        )
+        batch_idx = nearest_coord_idx[0]
+
+        # Use the world coordinates to determine the necessary voxel coordinate
+        # offsets such that the offsets enclose the query point.
+        # World coordinate in the low-res input grid that is closest to the
+        # query coordinate.
+        phys_coords_nearest = context_spatial_extent[
+            batch_idx,
+            :,
+            nearest_coord_idx[1],
+            nearest_coord_idx[2],
+            nearest_coord_idx[3],
+        ]
+
+        phys_coords_nearest = einops.rearrange(
+            phys_coords_nearest,
+            "(b x y z) c -> b c x y z",
+            b=batch_size,
+            c=query_coord.shape[1],
+            x=query_coord.shape[2],
+            y=query_coord.shape[3],
+            z=query_coord.shape[4],
+        )
+        # Determine the quadrants in which the query point lies relative to the
+        # context grid. We only care about the spatial/non-batch coordinates.
+        surround_query_point_quadrants = query_coord - phys_coords_nearest
+        # Query coordinates that lie on a grid line may be contained within at least
+        # 2 equally valid grids, so arbitrarily choose the "next" grid in that
+        # dimension. This will be ignored in the actual tri-linear weighting.
+        surround_query_point_quadrants = torch.where(
+            surround_query_point_quadrants == 0,
+            self.TARGET_COORD_EPSILON,
+            surround_query_point_quadrants,
+        )
+        # 3 x batch_and_spatial_size
+        # Mapping the negative coord diffs -> 1 and the positive coord diffs -> 0,
+        # this gives us the coordinate of the nearest voxel in subgrid space.
+        # nearest_vox_subgrid_coord = einops.rearrange(
+        #     torch.clamp_min(surround_query_point_quadrants.sign() * -1, 0),
+        #     "b dim i j k -> dim (b i j k)",
+        # ).to(torch.int8)
+        # 3 x batch_and_spatial_size
+        # The signs of the "query coordinate - grid coordinate" should match the
+        # direction the indexing should go for the nearest voxels to the query.
+        surround_offsets_vox = einops.rearrange(
+            surround_query_point_quadrants.sign(), "b dim i j k -> dim (b i j k)"
+        ).to(torch.int8)
+        del surround_query_point_quadrants
+
+        # Now, find sum of distances to normalize the distance-weighted weight vector
+        # for in-place 'linear interpolation.'
+        # inv_dist_total = torch.zeros_like(phys_coords_nearest)
+        # inv_dist_total = (inv_dist_total[:, 0])[:, None]
+        # surround_offsets_vox_volume_order = einops.rearrange(
+        #     surround_offsets_vox,
+        #     "dim (b i j k) -> b dim i j k",
+        #     b=batch_size,
+        #     i=query_coord.shape[2],
+        #     j=query_coord.shape[3],
+        #     k=query_coord.shape[4],
+        # )
+        # for (
+        #     offcenter_indicate_i,
+        #     offcenter_indicate_j,
+        #     offcenter_indicate_k,
+        # ) in itertools.product((0, 1), (0, 1), (0, 1)):
+        #     phys_coords_offset = torch.ones_like(phys_coords_nearest)
+        #     phys_coords_offset[:, 0] *= (
+        #         offcenter_indicate_i * surround_offsets_vox_volume_order[:, 0]
+        #     ) * context_vox_size[:, 0]
+        #     phys_coords_offset[:, 1] *= (
+        #         offcenter_indicate_j * surround_offsets_vox_volume_order[:, 1]
+        #     ) * context_vox_size[:, 1]
+        #     phys_coords_offset[:, 2] *= (
+        #         offcenter_indicate_k * surround_offsets_vox_volume_order[:, 2]
+        #     ) * context_vox_size[:, 2]
+        #     # phys_coords_offset = context_vox_size * phys_coords_offset
+        #     phys_coords = phys_coords_nearest + phys_coords_offset
+        #     inv_dist_total += 1 / torch.linalg.vector_norm(
+        #         query_coord - phys_coords, ord=2, dim=1, keepdim=True
+        #     )
+        # # Potentially free some memory here.
+        # del phys_coords
+        # del phys_coords_nearest
+        # del phys_coords_offset
+        # del surround_offsets_vox_volume_order
+
+        y_weighted_accumulate = None
+        context_vox_physical_volume = torch.prod(context_vox_size, dim=1, keepdim=True)
+        # Build the low-res representation one sub-window voxel index at a time.
+        # The indicators specify if the current context voxel is aligned with the
+        # context coordinate of the voxel nearest to the query point.
+        for (
+            align_i_to_nearest_vox,
+            align_j_to_nearest_vox,
+            align_k_to_nearest_vox,
+        ) in itertools.product((True, False), (True, False), (True, False)):
+            # Rebuild indexing tuple for each element of the sub-window.
+            # If we don't want to align with the nearest vox, then we do want to offset
+            # by the given offset value.
+            i_idx = nearest_coord_idx[1] + (
+                int(not align_i_to_nearest_vox) * surround_offsets_vox[0]
             )
-        # More commonly, the input space will not equal the output space, and the
-        # prediction will need to be interpolated.
-        else:
-            batch_size = query_coord.shape[0]
-            # Construct a grid of nearest indices in context space by sampling a grid of
-            # *indices* given the coordinates in mm.
-            # The channel dim is just repeated for every
-            # channel, so that doesn't need to be in the idx grid.
-            nearest_coord_idx = torch.stack(
-                torch.meshgrid(
-                    *[
-                        torch.arange(0, context_spatial_extent.shape[i])
-                        for i in (0, 2, 3, 4)
-                    ],
-                    indexing="ij",
-                ),
-                dim=1,
-            ).to(context_spatial_extent)
-
-            # Find the nearest grid point, where the batch+spatial dims are the
-            # "channels."
-            nearest_coord_idx = pitn.nn.inr.weighted_ctx_v(
-                encoded_feat_vol=nearest_coord_idx,
-                input_space_extent=context_spatial_extent,
-                target_space_extent=query_coord,
-                reindex_spatial_extents=True,
-                sample_mode="nearest",
-            ).to(torch.long)
-            # Expand along channel dimension for raw indexing.
-            nearest_coord_idx = einops.rearrange(
-                nearest_coord_idx, "b dim i j k -> dim (b i j k)"
+            j_idx = nearest_coord_idx[2] + (
+                int(not align_j_to_nearest_vox) * surround_offsets_vox[1]
             )
-            batch_idx = nearest_coord_idx[0]
-
-            # Use the world coordinates to determine the necessary voxel coordinate
-            # offsets such that the offsets enclose the query point.
-            # World coordinate in the low-res input grid that is closest to the
-            # query coordinate.
-            phys_coords_0 = context_spatial_extent[
-                batch_idx,
-                :,
-                nearest_coord_idx[1],
-                nearest_coord_idx[2],
-                nearest_coord_idx[3],
-            ]
-
-            phys_coords_0 = einops.rearrange(
-                phys_coords_0,
+            k_idx = nearest_coord_idx[3] + (
+                int(not align_k_to_nearest_vox) * surround_offsets_vox[2]
+            )
+            context_val = context_v[batch_idx, :, i_idx, j_idx, k_idx]
+            context_val = einops.rearrange(
+                context_val,
                 "(b x y z) c -> b c x y z",
                 b=batch_size,
-                c=query_coord.shape[1],
                 x=query_coord.shape[2],
                 y=query_coord.shape[3],
                 z=query_coord.shape[4],
             )
-            # Determine the quadrants that the query point lies in relative to the
-            # context grid. We only care about the spatial/non-batch coordinates.
-            surround_query_point_quadrants = (
-                query_coord - self.TARGET_COORD_EPSILON - phys_coords_0
+            context_coord = context_spatial_extent[batch_idx, :, i_idx, j_idx, k_idx]
+            context_coord = einops.rearrange(
+                context_coord,
+                "(b x y z) c -> b c x y z",
+                b=batch_size,
+                x=query_coord.shape[2],
+                y=query_coord.shape[3],
+                z=query_coord.shape[4],
             )
-            # 3 x batch_and_spatial_size
-            # The signs of the "query coordinate - grid coordinate" should match the
-            # direction the indexing should go for the nearest voxels to the query.
-            surround_offsets_vox = einops.rearrange(
-                surround_query_point_quadrants.sign(), "b dim i j k -> dim (b i j k)"
-            ).to(torch.int8)
-            del surround_query_point_quadrants
 
-            # Now, find sum of distances to normalize the distance-weighted weight vector
-            # for in-place 'linear interpolation.'
-            inv_dist_total = torch.zeros_like(phys_coords_0)
-            inv_dist_total = (inv_dist_total[:, 0])[:, None]
-            surround_offsets_vox_volume_order = einops.rearrange(
-                surround_offsets_vox,
-                "dim (b i j k) -> b dim i j k",
+            sub_grid_pred_ijk = self.sub_grid_forward(
+                context_val=context_val,
+                context_coord=context_coord,
+                query_coord=query_coord,
+                context_vox_size=context_vox_size,
+                query_vox_size=query_vox_size,
+                return_rel_context_coord=False,
+            )
+            # Initialize the accumulated prediction after finding the
+            # output size; easier than trying to pre-compute it.
+            if y_weighted_accumulate is None:
+                y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
+
+            # Tri-linear weight of sub-grid predictions. The weight values are
+            # determined by the opposite corner point's area between that context
+            # point and the query point.
+            # The compliment of the "align_X_to_nearest_vox" indicator variables
+            # will give the voxel coordinate of the opposing corner.
+            # If we are aligning to the nearest vox, we *don't* want to *not* apply
+            # the given coord offsets; invert what we did with i_idx, j_idx, etc.
+            # The double negative then cancels out.
+            i_comp_idx = nearest_coord_idx[1] + (
+                int(align_i_to_nearest_vox) * surround_offsets_vox[0]
+            )
+            j_comp_idx = nearest_coord_idx[2] + (
+                int(align_j_to_nearest_vox) * surround_offsets_vox[1]
+            )
+            k_comp_idx = nearest_coord_idx[3] + (
+                int(align_k_to_nearest_vox) * surround_offsets_vox[2]
+            )
+            context_coord_comp = context_spatial_extent[
+                batch_idx, :, i_comp_idx, j_comp_idx, k_comp_idx
+            ]
+            # Find the physical coordinates of the compliment voxel.
+            context_coord_comp = einops.rearrange(
+                context_coord_comp,
+                "(b i j k) c -> b c i j k",
                 b=batch_size,
                 i=query_coord.shape[2],
                 j=query_coord.shape[3],
                 k=query_coord.shape[4],
             )
-            for (
-                offcenter_indicate_i,
-                offcenter_indicate_j,
-                offcenter_indicate_k,
-            ) in itertools.product((0, 1), (0, 1), (0, 1)):
-                phys_coords_offset = torch.ones_like(phys_coords_0)
-                phys_coords_offset[:, 0] *= (
-                    offcenter_indicate_i * surround_offsets_vox_volume_order[:, 0]
-                ) * context_vox_size[:, 0]
-                phys_coords_offset[:, 1] *= (
-                    offcenter_indicate_j * surround_offsets_vox_volume_order[:, 1]
-                ) * context_vox_size[:, 1]
-                phys_coords_offset[:, 2] *= (
-                    offcenter_indicate_k * surround_offsets_vox_volume_order[:, 2]
-                ) * context_vox_size[:, 2]
-                # phys_coords_offset = context_vox_size * phys_coords_offset
-                phys_coords = phys_coords_0 + phys_coords_offset
-                inv_dist_total += 1 / torch.linalg.vector_norm(
-                    query_coord - phys_coords, ord=2, dim=1, keepdim=True
+            # Calculate the tri-linear weights.
+            w = (
+                torch.prod(
+                    torch.abs(query_coord - context_coord_comp), dim=1, keepdim=True
                 )
-            # Potentially free some memory here.
-            del phys_coords
-            del phys_coords_0
-            del phys_coords_offset
-            del surround_offsets_vox_volume_order
+                / context_vox_physical_volume
+            )
 
-            y_weighted_accumulate = None
-            # Build the low-res representation one sub-window voxel index at a time.
-            # The indicators specify if the current voxel index that surrounds the
-            # query coordinate should be "off the center voxel" or not. If not, then
-            # the center voxel (read: no voxel offset from the center) is selected
-            # (for that dimension).
-            for (
-                offcenter_indicate_i,
-                offcenter_indicate_j,
-                offcenter_indicate_k,
-            ) in itertools.product((0, 1), (0, 1), (0, 1)):
-                # Rebuild indexing tuple for each element of the sub-window
-                i_idx = nearest_coord_idx[1] + (
-                    offcenter_indicate_i * surround_offsets_vox[0]
-                )
-                j_idx = nearest_coord_idx[2] + (
-                    offcenter_indicate_j * surround_offsets_vox[1]
-                )
-                k_idx = nearest_coord_idx[3] + (
-                    offcenter_indicate_k * surround_offsets_vox[2]
-                )
-                context_val = context_v[batch_idx, :, i_idx, j_idx, k_idx]
-                context_val = einops.rearrange(
-                    context_val,
-                    "(b x y z) c -> b c x y z",
-                    b=batch_size,
-                    x=query_coord.shape[2],
-                    y=query_coord.shape[3],
-                    z=query_coord.shape[4],
-                )
-                context_coord = context_spatial_extent[
-                    batch_idx, :, i_idx, j_idx, k_idx
-                ]
-                context_coord = einops.rearrange(
-                    context_coord,
-                    "(b x y z) c -> b c x y z",
-                    b=batch_size,
-                    x=query_coord.shape[2],
-                    y=query_coord.shape[3],
-                    z=query_coord.shape[4],
-                )
+            # Accumulate weighted cell predictions to eventually create
+            # the final prediction.
+            y_weighted_accumulate += w * sub_grid_pred_ijk
 
-                sub_grid_pred_ijk = self.sub_grid_forward(
-                    context_val=context_val,
-                    context_coord=context_coord,
-                    query_coord=query_coord,
-                    context_vox_size=context_vox_size,
-                    query_vox_size=query_vox_size,
-                    return_rel_context_coord=False,
-                )
-                # Initialize the accumulated prediction after finding the
-                # output size; easier than trying to pre-compute it.
-                if y_weighted_accumulate is None:
-                    y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
+            del i_idx, j_idx, k_idx
+            del i_comp_idx, j_comp_idx, k_comp_idx
+            del context_coord_comp
+            del sub_grid_pred_ijk
 
-                # Weigh this cell's prediction by the inverse of the distance
-                # from the cell physical coordinate to the true target
-                # physical coordinate. Normalize the weight by the inverse
-                # "sum of the inverse distances" found before.
-                w = (
-                    1
-                    / torch.linalg.vector_norm(
-                        query_coord - context_coord, ord=2, dim=1, keepdim=True
-                    )
-                ) / inv_dist_total
-
-                # Accumulate weighted cell predictions to eventually create
-                # the final prediction.
-                y_weighted_accumulate += w * sub_grid_pred_ijk
-                del sub_grid_pred_ijk
-
-            y = y_weighted_accumulate
-
-        return y
+        return y_weighted_accumulate
 
 
 class INRSystemLoader(LightningLite):
@@ -1010,6 +1080,7 @@ class INRPredictionPmfGen(dipy.direction.pmf.SHCoeffPmfGen):
         )
         self.tck_counter = 0
         self.seed_ref = seed_ref
+        self.phys_point_tm1 = np.array([0, 0, 0], dtype=np.double)
 
     def batched_sphere_sample(self, odf_coeffs):
         coeffs = torch.as_tensor(odf_coeffs).to(self.device)
@@ -1025,38 +1096,35 @@ class INRPredictionPmfGen(dipy.direction.pmf.SHCoeffPmfGen):
         phys_point = (
             self.affine_lrvox2world[:3, :3] @ point[:, None]
         ) + self.affine_lrvox2world[:3, 3:4]
-        # If the point is exactly at the center of a voxel, then just return the LR
-        # odf coefficient without any prediction.
-        if (point.astype(int) == point).all():
-            pred_odf_coeff = self.subj_fodf_coeff_data[0][
-                tuple(point.astype(int).flatten())
-            ]
-            pred_odf_coeff = pred_odf_coeff[None, :, None, None, None]
-            self.tck_counter += 1
-            seed_idx = np.where(np.prod(phys_point.T == self.seed_ref, axis=1))[
-                0
-            ].tolist()
-            print(
-                f"{seed_idx[0]}/{self.seed_ref.shape[0]}",
-                end="...",
-                flush=(self.tck_counter % 20) == 0,
-            )
+        phys_point = torch.from_numpy(phys_point.flatten().astype(np.double))
+        query_coord = phys_point.reshape(1, -1, 1, 1, 1).to(self.device)
 
-        else:
-            phys_point = torch.from_numpy(phys_point.flatten().astype(np.double))
-            query_coord = phys_point.reshape(1, -1, 1, 1, 1).to(self.device)
-
-            pred_odf_coeff = self.decoder(
-                self.encoded_dwi,
-                context_spatial_extent=self.subj_dwi_coord_grid,
-                query_vox_size=self.query_vox_size,
-                query_coord=query_coord,
-            )
+        pred_odf_coeff = self.decoder(
+            self.encoded_dwi,
+            context_spatial_extent=self.subj_dwi_coord_grid,
+            query_vox_size=self.query_vox_size,
+            query_coord=query_coord,
+        )
 
         pmf = pitn.odf.sample_sphere_coords(
             pred_odf_coeff, theta=self.theta, phi=self.phi, sh_order=self.sh_order
         )
         pmf = pmf.flatten().detach().cpu().numpy().astype(np.double)
+        point_jump = (
+            np.linalg.norm(phys_point.cpu().numpy() - self.phys_point_tm1, ord=2)
+            .flatten()
+            .item()
+        )
+        if point_jump > 2.0:
+            # if (point.astype(int) == point).all():
+            print(
+                f"{self.tck_counter}/{3*self.seed_ref.shape[0]}",
+                end=" ",
+                flush=self.tck_counter % 20 == 1,
+            )
+            self.tck_counter += 1
+            # self.phys_point_tm1 = phys_point.cpu().numpy()
+        self.phys_point_tm1 = phys_point.cpu().numpy()
 
         return pmf
 
@@ -1076,7 +1144,9 @@ print(encoder.device, decoder.device)
 dev = encoder.device
 # The target vox size isn't used right now, so just make a dummy vox size to satisfy the
 # function args.
-dummy_vox_size = torch.as_tensor([1.25, 1.25, 1.25]).reshape(1, -1).to(dev)
+dummy_vox_size = (
+    torch.as_tensor([step_size, step_size, step_size]).reshape(1, -1).to(dev)
+)
 
 with warnings.catch_warnings(record=True) as warn_list:
     with torch.no_grad():
@@ -1093,19 +1163,39 @@ with warnings.catch_warnings(record=True) as warn_list:
             x_coords = subj_dict["lr_extent_acpc"].to(dev)
             x_fs_seg = subj_dict["lr_freesurfer_seg"].detach().cpu().numpy()
             x_fs_seg = x_fs_seg[0, 0]
-            # seed_mask = (x_fs_seg >= 251) & (x_fs_seg <= 255)
 
-            roi_dir = Path(
-                "/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf/201818/T1w/rois/cst"
-            )
-            intern_capsule = nib.load(roi_dir / "cst_border_internal_capsule.nii.gz")
-            seed_mask = intern_capsule.get_fdata().astype(bool)
+            # roi_dir = Path(
+            #     "/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf/162329/T1w/rois/cc"
+            # )
+            # forceps_minor = nib.as_closest_canonical(
+            #     nib.load(roi_dir / "CC_forceps_minor.nii.gz")
+            # )
+            # forceps_major = nib.as_closest_canonical(
+            #     nib.load(roi_dir / "CC_forceps_major.nii.gz")
+            # )
+            # cc_midbody = nib.as_closest_canonical(
+            #     nib.load(roi_dir / "CC_midbody.nii.gz")
+            # )
+            # seed_mask = (
+            #     forceps_minor.get_fdata().astype(bool)
+            #     # | forceps_major.get_fdata().astype(bool)
+            #     # | cc_midbody.get_fdata().astype(bool)
+            # )
 
-            # seed_mask = (x_fs_seg >= 251) & (x_fs_seg <= 255)
-
+            # if len(seed_mask.shape) == 3:
+            #     seed_mask = seed_mask[None]
+            # seed_mask = label2dwi_tf(
+            #     seed_mask,
+            #     img_dst=x[0, None].detach().cpu().numpy(),
+            #     src_meta={"affine": forceps_minor.affine},
+            #     dst_meta={"affine": x_affine, "spatial_shape": x.numpy().shape[1:]},
+            # )
+            # seed_mask = seed_mask[0]
+            seed_mask = np.zeros_like(lr_fodf.cpu().numpy()[0, 0])
+            seed_mask[37:41, 61:64, 38:41] = 1
             seeds = dipy.tracking.utils.seeds_from_mask(
                 seed_mask,
-                affine=intern_capsule.affine,
+                affine=x_affine,
                 density=seed_density,
             )
             print("Created seeds ", seeds.shape)
@@ -1162,7 +1252,8 @@ with warnings.catch_warnings(record=True) as warn_list:
 
             # dipy.io.streamline.save_tck(tractogram, f"test_streamline_subj-{subj_id}.tck")
             dipy.io.streamline.save_tck(
-                tractogram, f"test_streamline_cst_trained-INR_subj-{subj_id}.tck"
+                tractogram,
+                f"test_streamline_forceps-minor_trained-INR_subj-{subj_id}.tck",
             )
 
 # pd.DataFrame.from_dict(lin_results).to_csv(tmp_res_dir / f"run_results_{RUN_NAME}.csv")

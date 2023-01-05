@@ -77,7 +77,8 @@ def sample_sphere_coords(
     orig_spatial_shape = tuple(fn_coeffs.shape[:-1])
     fn_coeffs = fn_coeffs.reshape(-1, fn_coeffs.shape[-1])
     if mask is not None:
-        fn_mask = mask.movedim(1, -1)[..., 0]
+        fn_mask = mask.squeeze(sh_order_dim)
+        # fn_mask = mask.movedim(1, -1)[..., 0]
         fn_mask = fn_mask.broadcast_to(orig_spatial_shape).reshape(-1)
         fn_coeffs = fn_coeffs[fn_mask]
     else:
@@ -165,3 +166,9 @@ def adjacent_sphere_points_idx(
     nearest_point_idx_mask = arc_len_sorted.values[:, 1:7] < sphere_surface_point_radius
 
     return nearest_point_idx, nearest_point_idx_mask
+
+
+def _fast_march_level_set_fod_segment_unbatched(
+    fod_coeff: torch.Tensor, theta: torch.Tensor, phi: torch.Tensor, sh_order: int
+):
+    pass
