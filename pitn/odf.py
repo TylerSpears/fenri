@@ -106,6 +106,16 @@ def sample_sphere_coords(
     return fn_samples.contiguous()
 
 
+def thresh_fodf_samples_by_pdf(
+    sphere_samples: torch.Tensor, pdf_thresh_min: float
+) -> torch.Tensor:
+    s_pdf = sphere_samples - sphere_samples.min(1, keepdim=True)
+    s_pdf = s_pdf / s_pdf.sum(1, keepdim=True)
+    s = torch.where(s_pdf < pdf_thresh_min, 0, sphere_samples)
+
+    return s
+
+
 def _unit_sphere_arc_length(
     theta_1: torch.Tensor,
     phi_1: torch.Tensor,
@@ -166,9 +176,3 @@ def adjacent_sphere_points_idx(
     nearest_point_idx_mask = arc_len_sorted.values[:, 1:7] < sphere_surface_point_radius
 
     return nearest_point_idx, nearest_point_idx_mask
-
-
-def _fast_march_level_set_fod_segment_unbatched(
-    fod_coeff: torch.Tensor, theta: torch.Tensor, phi: torch.Tensor, sh_order: int
-):
-    pass
