@@ -109,7 +109,7 @@ def sample_sphere_coords(
 def thresh_fodf_samples_by_pdf(
     sphere_samples: torch.Tensor, pdf_thresh_min: float
 ) -> torch.Tensor:
-    s_pdf = sphere_samples - sphere_samples.min(1, keepdim=True)
+    s_pdf = sphere_samples - sphere_samples.min(1, keepdim=True).values
     s_pdf = s_pdf / s_pdf.sum(1, keepdim=True)
     s = torch.where(s_pdf < pdf_thresh_min, 0, sphere_samples)
 

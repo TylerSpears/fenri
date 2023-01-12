@@ -259,6 +259,7 @@ def _jax_unbatched_fmls_fodf_seg(
         jnp.diff(lobe_labels.at[label_sorted_idx].get(), prepend=0) > 0
     )
     lobe_labels = lobe_labels.at[unsort_label_idx].get()
+    lobe_labels = lobe_labels.astype(jnp.int16)
 
     return lobe_labels
 
@@ -320,7 +321,7 @@ def _contiguify_lobe_labels(
             ll.take_along_dim(label_sorted_idx, dim=1),
             prepend=ll.new_zeros(ll.shape[0], 1),
             dim=1,
-        )
+        ).to(ll.dtype)
         > 0,
         dim=1,
     )
@@ -340,10 +341,8 @@ def remove_fodf_labels_by_pdf(
     s_pdf = s_pdf / s_pdf.sum(1, keepdim=True)
 
     remapped_ll = torch.clone(lobe_labels)
-    unique_ll = lobe_labels.unique(dim=1)
 
-    for i in range(unique_ll.shape[1]):
-        l = unique_ll[:, i, None]
+    for l in lobe_labels.unique():
 
         select_s_pdf = torch.where(
             (lobe_labels == l) & (lobe_labels != 0), s_pdf, torch.nan
@@ -359,4 +358,4 @@ def remove_fodf_labels_by_pdf(
         remapped_ll.masked_fill_(to_remove_mask, 0)
 
     remapped_ll = _contiguify_lobe_labels(remapped_ll)
-    return remapped_ll
+    return remapped_ll.to(lobe_labels.dtype)
