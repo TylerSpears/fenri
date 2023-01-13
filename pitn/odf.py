@@ -6,8 +6,21 @@ from typing import Tuple
 import dipy
 import dipy.reconst.csdeconv
 import dipy.reconst.shm
+import einops
 import numpy as np
 import torch
+import torch.nn.functional as F
+
+
+def gfa(fodf_samples: torch.Tensor) -> torch.Tensor:
+    s = einops.rearrange(
+        fodf_samples, "... samples -> (...) samples", samples=fodf_samples.shape[-1]
+    )
+    s_var = torch.var(s, dim=-1, keepdim=True, unbiased=True)
+    s_ms = torch.mean(s**2, dim=-1, keepdim=True)
+    gfa_ = torch.where(s_ms > 0, torch.sqrt(s_var / s_ms), 0)
+    return gfa_.reshape(fodf_samples.shape[:-1])
+
 
 _ThetaPhiResult = collections.namedtuple("_ThetaPhiResult", ("theta", "phi"))
 

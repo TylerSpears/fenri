@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import collections
 from typing import Tuple
 
 import dipy
@@ -12,6 +13,26 @@ import pitn
 # theta - torch.Tensor of spherical polar (or inclinication) coordinate theta in range
 #   [0, $\pi$].
 # phi - torch.Tensor of spherical azimuth coordinate phi in range (-\pi$, $\pi$].
+
+_SphereSampleResult = collections.namedtuple("_FodfResult", ("vals", "theta", "phi"))
+
+
+def fodf_duplicate_hemisphere2sphere(
+    fodf: torch.Tensor, theta: torch.Tensor, phi: torch.Tensor
+) -> _SphereSampleResult:
+    sphere_theta = torch.cat([theta, (theta + torch.pi / 2) % torch.pi], dim=0)
+    sphere_phi = torch.cat(
+        [
+            phi,
+            torch.clamp_min(-phi, -torch.pi + torch.finfo(phi.dtype).eps),
+        ],
+        dim=0,
+    )
+
+    # Values are the same, so just duplicate them.
+    sphere_sample = torch.cat([fodf, fodf], dim=0)
+
+    return _SphereSampleResult(vals=sphere_sample, theta=sphere_theta, phi=sphere_phi)
 
 
 def __euclid_dist_spherical_coords(

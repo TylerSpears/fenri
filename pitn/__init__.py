@@ -14,6 +14,7 @@ coords = LazyLoader("coords", globals(), "pitn.coords")
 # eig = LazyLoader("eig", globals(), "pitn.eig")
 riemann = LazyLoader("riemann", globals(), "pitn.riemann")
 from . import (  # coords,; data,; nn,; riemann,
+    affine,
     dsi_studio,
     eig,
     fsl,

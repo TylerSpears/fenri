@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+import collections
 from functools import partial
+from typing import Optional
 
 import dipy
 import jax
@@ -11,6 +13,88 @@ from jax import lax
 
 import pitn
 import pitn.odf
+
+_PeaksContainer = collections.namedtuple(
+    "_PeaksContainer", ["peaks", "theta", "phi", "valid_peak_mask"]
+)
+
+
+def topk_peaks(
+    k: int,
+    fodf_peaks: torch.Tensor,
+    theta_peak: torch.Tensor,
+    phi_peak: torch.Tensor,
+    valid_peak_mask: torch.Tensor,
+) -> _PeaksContainer:
+    peak_idx = torch.argsort(fodf_peaks, dim=-1, descending=True)
+    topk_peak_idx = peak_idx[..., :k]
+    topk_peak_valid = torch.take_along_dim(valid_peak_mask, topk_peak_idx, dim=-1)
+
+    topk_peaks = (
+        torch.take_along_dim(fodf_peaks, topk_peak_idx, dim=-1) * topk_peak_valid
+    )
+    topk_theta = torch.take(theta_peak, topk_peak_idx) * topk_peak_valid
+    topk_phi = torch.take(phi_peak, topk_peak_idx) * topk_peak_valid
+
+    return _PeaksContainer(
+        peaks=topk_peaks,
+        theta=topk_theta,
+        phi=topk_phi,
+        valid_peak_mask=topk_peak_valid,
+    )
+
+
+def peaks_from_segment(
+    lobe_labels: torch.Tensor,
+    sphere_samples: torch.Tensor,
+    theta_coord: torch.Tensor,
+    phi_coord: torch.Tensor,
+    take_topk_peaks: Optional[int] = None,
+) -> _PeaksContainer:
+    unique_labels = lobe_labels.unique(sorted=True)
+    unique_labels = unique_labels[unique_labels > 0]
+
+    # The number of peaks (and the shape of the return) may be dependent upon the
+    # number of unique labels in the segmentation.
+    if take_topk_peaks is not None:
+        num_labels = take_topk_peaks
+    else:
+        num_labels = len(unique_labels)
+    batch_size = lobe_labels.shape[0]
+    peak_vals = torch.zeros(batch_size, num_labels).to(sphere_samples)
+    peak_idx = -torch.ones_like(peak_vals).to(torch.long)
+
+    # Reduce the number of loop iterations to either the k requested peaks, or the total
+    # number of unique labels across the batch.
+    n_labels_to_process = min(num_labels, len(unique_labels))
+    for i in range(n_labels_to_process):
+        l = unique_labels[i]
+        select_vals = torch.where(lobe_labels == l, sphere_samples, -1)
+        l_peak_idx = torch.argmax(select_vals, dim=1)[:, None]
+        peak_idx[:, i] = l_peak_idx.flatten()
+        peak_idx[:, i] = torch.where(
+            select_vals.take_along_dim(l_peak_idx, dim=1) > 0, peak_idx[:, i, None], -1
+        ).flatten()
+
+    valid_peak_mask = peak_idx >= 0
+    peak_vals = torch.where(
+        peak_idx >= 0, sphere_samples.take_along_dim(peak_idx.clamp_min(0), dim=1), -1
+    )
+    # The invalid indices are set to 0 to avoid subtle indexing errors later on; cuda in
+    # particular hates indexing out-of-bounds of a Tensor. Even though it is possible that
+    # an index value of 0 is valid, this is the only way to avoid those errors. The valid
+    # peak mask must be used to distinguish between real peak indices and those that are
+    # actually valued at 0.
+    peak_idx.clamp_min_(0)
+    peak_theta = torch.take(theta_coord, index=peak_idx) * valid_peak_mask
+    peak_phi = torch.take(phi_coord, index=peak_idx) * valid_peak_mask
+
+    return _PeaksContainer(
+        peaks=peak_vals,
+        theta=peak_theta,
+        phi=peak_phi,
+        valid_peak_mask=valid_peak_mask,
+    )
 
 
 def _t2j(t_tensor: torch.Tensor) -> jax.Array:
