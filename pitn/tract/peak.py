@@ -14,8 +14,8 @@ from jax import lax
 import pitn
 import pitn.odf
 
-_PeaksContainer = collections.namedtuple(
-    "_PeaksContainer", ["peaks", "theta", "phi", "valid_peak_mask"]
+PeaksContainer = collections.namedtuple(
+    "PeaksContainer", ["peaks", "theta", "phi", "valid_peak_mask"]
 )
 
 
@@ -25,7 +25,7 @@ def topk_peaks(
     theta_peak: torch.Tensor,
     phi_peak: torch.Tensor,
     valid_peak_mask: torch.Tensor,
-) -> _PeaksContainer:
+) -> PeaksContainer:
     peak_idx = torch.argsort(fodf_peaks, dim=-1, descending=True)
     topk_peak_idx = peak_idx[..., :k]
     topk_peak_valid = torch.take_along_dim(valid_peak_mask, topk_peak_idx, dim=-1)
@@ -36,7 +36,7 @@ def topk_peaks(
     topk_theta = torch.take(theta_peak, topk_peak_idx) * topk_peak_valid
     topk_phi = torch.take(phi_peak, topk_peak_idx) * topk_peak_valid
 
-    return _PeaksContainer(
+    return PeaksContainer(
         peaks=topk_peaks,
         theta=topk_theta,
         phi=topk_phi,
@@ -50,7 +50,7 @@ def peaks_from_segment(
     theta_coord: torch.Tensor,
     phi_coord: torch.Tensor,
     take_topk_peaks: Optional[int] = None,
-) -> _PeaksContainer:
+) -> PeaksContainer:
     unique_labels = lobe_labels.unique(sorted=True)
     unique_labels = unique_labels[unique_labels > 0]
 
@@ -89,7 +89,7 @@ def peaks_from_segment(
     peak_theta = torch.take(theta_coord, index=peak_idx) * valid_peak_mask
     peak_phi = torch.take(phi_coord, index=peak_idx) * valid_peak_mask
 
-    return _PeaksContainer(
+    return PeaksContainer(
         peaks=peak_vals,
         theta=peak_theta,
         phi=peak_phi,

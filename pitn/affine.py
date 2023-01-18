@@ -14,14 +14,21 @@ def coord_transform_3d(coords: torch.Tensor, affine_a2b: torch.Tensor) -> torch.
         new_shape = (1,) * (affine_a2b.ndim - 2)
         new_shape = new_shape + (-1,)
         c = coords.expand(*new_shape)
+        affine = affine_a2b
     elif coords.ndim > 1 and affine_a2b.ndim == 2:
         new_shape = (1,) * (coords.ndim - 1)
         new_shape = new_shape + (-1, -1)
         affine = affine_a2b.expand(*new_shape)
-    c = torch.atleast_2d(coords)
-    affine = torch.atleast_3d(affine_a2b)
-    if affine.ndim != affine_a2b.ndim:
-        affine = affine.movedim(-1, 0)
+        c = coords
+    else:
+        c = coords
+        affine = affine_a2b
+
+    if c.ndim == 1:
+        c = c[None]
+    if affine.ndim == 2:
+        affine = affine[None]
+
     c = c.to(torch.result_type(c, affine))
     affine = affine.to(torch.result_type(c, affine))
 
@@ -82,6 +89,8 @@ def sample_3d(
         point_shape = (v.shape[-4],) + point_shape
 
     samples = samples.reshape(*point_shape)
+    if vol.ndim > 3:
+        samples = samples.movedim(0, -1)
     # Change samples back to the input dtype only if the input was not a floating point,
     # and the interpolation was nearest-neighbor.
     if not torch.is_floating_point(vol) and mode == "nearest":

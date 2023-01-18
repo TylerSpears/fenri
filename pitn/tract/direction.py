@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import collections
-from typing import Tuple
+from typing import Optional, Tuple
 
 import dipy
 import einops
@@ -14,25 +14,35 @@ import pitn
 #   [0, $\pi$].
 # phi - torch.Tensor of spherical azimuth coordinate phi in range (-\pi$, $\pi$].
 
-_SphereSampleResult = collections.namedtuple("_FodfResult", ("vals", "theta", "phi"))
+_SphereSampleResult = collections.namedtuple("_FodfResult", ("theta", "phi", "vals"))
 
 
 def fodf_duplicate_hemisphere2sphere(
-    fodf: torch.Tensor, theta: torch.Tensor, phi: torch.Tensor
+    theta: torch.Tensor,
+    phi: torch.Tensor,
+    sphere_fn_vals: Tuple[torch.Tensor, ...] = tuple(),
+    fn_vals_concat_dim: Tuple[int, ...] = tuple(),
 ) -> _SphereSampleResult:
-    sphere_theta = torch.cat([theta, (theta + torch.pi / 2) % torch.pi], dim=0)
+    sphere_theta = torch.cat([theta, (theta + torch.pi / 2) % torch.pi], dim=-1)
     sphere_phi = torch.cat(
         [
             phi,
             torch.clamp_min(-phi, -torch.pi + torch.finfo(phi.dtype).eps),
         ],
-        dim=0,
+        dim=-1,
     )
 
-    # Values are the same, so just duplicate them.
-    sphere_sample = torch.cat([fodf, fodf], dim=0)
+    if isinstance(sphere_fn_vals, (tuple, list)) and (len(sphere_fn_vals) > 0):
+        if isinstance(fn_vals_concat_dim, int):
+            fn_vals_concat_dim = (fn_vals_concat_dim,) * len(sphere_fn_vals)
+        sphere_sample = list()
+        for fn, concat_dim in zip(sphere_fn_vals, fn_vals_concat_dim):
+            sphere_sample.append(torch.cat([fn, fn], dim=concat_dim))
+        sphere_sample = tuple(sphere_sample)
+    else:
+        sphere_sample = None
 
-    return _SphereSampleResult(vals=sphere_sample, theta=sphere_theta, phi=sphere_phi)
+    return _SphereSampleResult(theta=sphere_theta, phi=sphere_phi, vals=sphere_sample)
 
 
 def __euclid_dist_spherical_coords(
@@ -80,6 +90,8 @@ def closest_opposing_direction(
 
     # Radius is always 1, but we must pass a Tensor object instead of an int for the jit
     # tracing.
+    theta_entry = theta_entry.expand_as(theta_peak)
+    phi_entry = theta_entry.expand_as(phi_peak)
     peak_dists = _euclid_dist_spherical_coords(
         peaks_p.new_ones(1),
         theta_entry,

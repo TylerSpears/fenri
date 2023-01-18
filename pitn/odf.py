@@ -11,15 +11,39 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+import pitn
+import pitn.affine
 
-def gfa(fodf_samples: torch.Tensor) -> torch.Tensor:
-    s = einops.rearrange(
-        fodf_samples, "... samples -> (...) samples", samples=fodf_samples.shape[-1]
-    )
+
+def gfa(fodf_samples: torch.Tensor, sphere_samples_idx=1) -> torch.Tensor:
+    s = fodf_samples.movedim(sphere_samples_idx, -1)
+    s = einops.rearrange(s, "... samples -> (...) samples", samples=s.shape[-1])
     s_var = torch.var(s, dim=-1, keepdim=True, unbiased=True)
     s_ms = torch.mean(s**2, dim=-1, keepdim=True)
     gfa_ = torch.where(s_ms > 0, torch.sqrt(s_var / s_ms), 0)
-    return gfa_.reshape(fodf_samples.shape[:-1])
+
+    result_shape = list(fodf_samples.shape)
+    result_shape[sphere_samples_idx] = 1
+    return gfa_.reshape(result_shape)
+
+
+def sample_odf_coeffs_lin_interp(
+    coords_mm_zyx: torch.Tensor,
+    fodf_coeff_vol: torch.Tensor,
+    affine_vox2mm: torch.Tensor,
+    padding_mode="zeros",
+    align_corners=True,
+) -> torch.Tensor:
+    interp_coeffs = pitn.affine.sample_3d(
+        fodf_coeff_vol,
+        coords_mm_zyx,
+        affine_vox2mm=affine_vox2mm,
+        mode="bilinear",
+        padding_mode=padding_mode,
+        align_corners=align_corners,
+    )
+
+    return interp_coeffs
 
 
 _ThetaPhiResult = collections.namedtuple("_ThetaPhiResult", ("theta", "phi"))
@@ -85,9 +109,16 @@ def sample_sphere_coords(
     -------
     torch.Tensor
     """
+    orig_spatial_shape = list(odf_coeffs.shape)
+    orig_spatial_shape.pop(sh_order_dim)
+    orig_spatial_shape = tuple(orig_spatial_shape)
+    if odf_coeffs.ndim < 5:
+        if odf_coeffs.ndim == 1:
+            odf_coeffs = odf_coeffs[None]
+        if odf_coeffs.ndim == 2:
+            odf_coeffs = odf_coeffs[..., None, None, None]
 
     fn_coeffs = odf_coeffs.movedim(sh_order_dim, -1)
-    orig_spatial_shape = tuple(fn_coeffs.shape[:-1])
     fn_coeffs = fn_coeffs.reshape(-1, fn_coeffs.shape[-1])
     if mask is not None:
         fn_mask = mask.squeeze(sh_order_dim)
