@@ -105,8 +105,27 @@ def _t2j(t_tensor: torch.Tensor) -> jax.Array:
         to_bool = True
     else:
         to_bool = False
+    if not jax.config.x64_enabled and t.dtype == torch.float64:
+        # Unsafe casting, but it's necessary if jax can only handle 32-bit floats. In
+        # some edge cases, like if any dimension size is 1, the conversion will error
+        # out.
+        t = t.to(torch.float32)
+
+    # 1-dims cause all sorts of problems, so just remove them before conversion, then
+    # add them back afterwards.
+    if 1 in tuple(t.shape):
+        orig_shape = tuple(t.shape)
+        t = t.squeeze()
+        to_expand = tuple(
+            filter(lambda i_d: orig_shape[i_d] == 1, range(len(orig_shape)))
+        )
+    else:
+        to_expand = None
     j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(t))
     j = j.astype(bool) if to_bool else j
+
+    if to_expand is not None:
+        j = lax.expand_dims(j, to_expand)
 
     return j
 

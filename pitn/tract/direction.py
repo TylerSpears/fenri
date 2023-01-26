@@ -17,17 +17,26 @@ import pitn
 _SphereSampleResult = collections.namedtuple("_FodfResult", ("theta", "phi", "vals"))
 
 
+def wrap_bound_modulo(
+    x: torch.Tensor, low: torch.Tensor, high: torch.Tensor
+) -> torch.Tensor:
+    # Totally stolen from <https://stackoverflow.com/a/22367889>
+    d = high - low
+    return ((x - low) % d) + low
+
+
 def fodf_duplicate_hemisphere2sphere(
     theta: torch.Tensor,
     phi: torch.Tensor,
     sphere_fn_vals: Tuple[torch.Tensor, ...] = tuple(),
     fn_vals_concat_dim: Tuple[int, ...] = tuple(),
 ) -> _SphereSampleResult:
-    sphere_theta = torch.cat([theta, (theta + torch.pi / 2) % torch.pi], dim=-1)
+    sphere_theta = torch.cat([theta, torch.pi - theta], dim=-1)
+    open_interval_phi_low = -torch.pi + torch.finfo(phi.dtype).eps
     sphere_phi = torch.cat(
         [
             phi,
-            torch.clamp_min(-phi, -torch.pi + torch.finfo(phi.dtype).eps),
+            wrap_bound_modulo(phi + torch.pi, open_interval_phi_low, torch.pi),
         ],
         dim=-1,
     )
@@ -85,20 +94,32 @@ def closest_opposing_direction(
     )
     theta_peak = p[..., 0]
     phi_peak = p[..., 1]
+    # Change the spherical "south pole" such that the entry vector is theta=pi, phi=0,
+    # then map each peak coordinate to the opposite "north pole."
+    theta_peak_v = torch.pi - ((theta_peak + (torch.pi - theta_entry)) % torch.pi)
+    open_interval_phi_low = -torch.pi + torch.finfo(phi_peak.dtype).eps
+    phi_peak_v = wrap_bound_modulo(
+        phi_peak - phi_entry, open_interval_phi_low, torch.pi
+    )
+    phi_peak_v = wrap_bound_modulo(
+        phi_peak_v + torch.pi, open_interval_phi_low, torch.pi
+    )
+
     peaks_p = einops.rearrange(fodf_peaks, "b ... -> b (...)")
     peaks_p_mask = einops.rearrange(peaks_valid_mask, "b ... -> b (...)")
 
+    # Set all entry vectors to theta=pi and phi=0
+    theta_entry_prime = (0 * theta_entry.expand_as(theta_peak_v)) + torch.pi
+    phi_entry_prime = theta_entry.expand_as(phi_peak_v) * 0
     # Radius is always 1, but we must pass a Tensor object instead of an int for the jit
     # tracing.
-    theta_entry = theta_entry.expand_as(theta_peak)
-    phi_entry = theta_entry.expand_as(phi_peak)
     peak_dists = _euclid_dist_spherical_coords(
         peaks_p.new_ones(1),
-        theta_entry,
-        phi_entry,
+        theta_entry_prime,
+        phi_entry_prime,
         peaks_p.new_ones(1),
-        theta_peak,
-        phi_peak,
+        theta_peak_v,
+        phi_peak_v,
     )
     # Only take distances of valid peaks, ignore the "dummy" peaks that are given for
     # the purposes of processing non-jagged tensors.
@@ -108,7 +129,23 @@ def closest_opposing_direction(
     # circle from entry to outgoing should be as close to an "equator" as possible.
     closest_dir_idx = torch.argmax(peak_dists, dim=1, keepdim=True)
     closest_peaks = torch.take_along_dim(peaks_p, closest_dir_idx, dim=1)
-    closest_dirs = torch.take_along_dim(p, closest_dir_idx[..., None], dim=1)
+
+    # Every peak is actually two peaks, due to polar symmetry. So, we only want the peak
+    # direction that is on the opposite hemisphere from the entry vector.
+    # Start from spherical peak coordinate with south pole v, then invert only the first
+    # mapping (from south pole (pi, 0) -> (v_theta, v_phi)), but keep the direction in
+    # the same hemisphere it's currently at.
+    theta_peak_prime = (theta_peak_v - (torch.pi + theta_entry) % torch.pi) % torch.pi
+    phi_peak_prime = wrap_bound_modulo(
+        phi_peak_v - phi_entry, open_interval_phi_low, torch.pi
+    )
+    phi_peak_prime = wrap_bound_modulo(
+        phi_peak_prime + torch.pi, open_interval_phi_low, torch.pi
+    )
+    # All directions in p_prime should be found in either the original peak coordinates,
+    # or the coordinates opposite those original coordinates.
+    p_prime = torch.stack([theta_peak_prime, phi_peak_prime], -1)
+    closest_dirs = torch.take_along_dim(p_prime, closest_dir_idx[..., None], dim=1)
 
     closest_peaks = torch.reshape(closest_peaks, entry_vec_theta_phi.shape[:-1])
     closest_dirs = torch.reshape(closest_dirs, entry_vec_theta_phi.shape)

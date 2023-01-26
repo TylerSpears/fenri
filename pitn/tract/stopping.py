@@ -54,7 +54,7 @@ def gfa_threshold(
     # Filter coordinates by only the valid streamlines, to save computation.
     coords = sample_coords_mm_zyx[streamline_status == CONTINUE]
     if coords.numel() == 0:
-        samples = torch.tensor(-1)
+        samples = -gfa_vol.new_ones(1)
     else:
         samples = pitn.affine.sample_3d(
             vol=gfa_vol,
@@ -66,19 +66,27 @@ def gfa_threshold(
         samples.squeeze_(-1)
     # Re-expand samples and set stopped/invalid streamlines to a gfa value of -1
     # (always an invalid GFA).
-    samples = torch.where(streamline_status == CONTINUE, samples, -1)
-
-    return torch.where(
-        (streamline_status == CONTINUE) & (samples < gfa_min_threshold),
-        STOP,
-        streamline_status,
-    ).to(torch.int8)
+    # samples = torch.masked_scatter()
+    null_samples = torch.ones_like(streamline_status, dtype=samples.dtype)
+    null_samples.masked_scatter_(streamline_status == CONTINUE, samples)
+    samples = null_samples
+    # samples.masked_fill_(streamline_status != CONTINUE, -1)
+    st_new = streamline_status.masked_fill(
+        (streamline_status == CONTINUE) & (samples < gfa_min_threshold), STOP
+    )
+    return st_new
 
 
 def angular_threshold(
-    coords_mm_tm1: torch.Tensor, coords_mm_t: torch.Tensor, max_radians: float
+    streamline_status: torch.Tensor,
+    coords_mm_tm1: torch.Tensor,
+    coords_mm_t: torch.Tensor,
+    max_radians: float,
 ) -> torch.Tensor:
     cos_theta = F.cosine_similarity(coords_mm_tm1, coords_mm_t, dim=-1)
 
-    angle = torch.arccos(cos_theta)
-    return torch.where(angle <= max_radians, CONTINUE, STOP).to(torch.int8)
+    theta = torch.arccos(cos_theta)
+    new_status = torch.where(
+        (streamline_status == CONTINUE) & (theta > max_radians), STOP, streamline_status
+    )
+    return new_status

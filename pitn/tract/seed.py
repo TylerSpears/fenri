@@ -147,6 +147,10 @@ def seeds_from_mask(
     )
 
     within_vox_offsets = torch.stack(within_vox_offsets, -1).reshape(1, -1, 3)
+    # If only 1 seed is requested per voxel, give the 0,0,0 offset instead. The linspace
+    # function would return -0.5 if there is only 'steps=1'
+    if seeds_per_vox_axis == 1:
+        within_vox_offsets *= 0
     # within_vox_offsets_mm = pitn.affine.coord_transform_3d(
     #     within_vox_offsets, affine_vox2mm
     # )
