@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import collections
-from typing import Tuple
+from typing import Sequence, Tuple
 
 import dipy
 import einops
@@ -20,6 +20,17 @@ def to_continue_mask(streamline_status: torch.Tensor) -> torch.Tensor:
     return streamline_status == CONTINUE
 
 
+def merge_status(
+    base_status: torch.Tensor, *streamline_statuses: Sequence[torch.Tensor]
+) -> torch.Tensor:
+    statuses = torch.stack(tuple(streamline_statuses), dim=0)
+    tmp_status = torch.clone(base_status)
+    tmp_status[(statuses == STOP).any(0)] = STOP
+    tmp_status[(statuses == INVALID).any(0)] = INVALID
+
+    return tmp_status
+
+
 def streamline_len_mm(
     streamline_status: torch.Tensor,
     streamline_len: torch.Tensor,
@@ -29,8 +40,7 @@ def streamline_len_mm(
     tmp_status = torch.clone(streamline_status)
     # Streamlines that have been stopped should be within the allowed range of lengths.
     tmp_status = torch.where(
-        (streamline_status == STOP)
-        & ((streamline_len < min_len) | (streamline_len > max_len)),
+        (streamline_status == STOP) & (streamline_len < min_len),
         INVALID,
         tmp_status,
     )
@@ -60,7 +70,7 @@ def gfa_threshold(
             vol=gfa_vol,
             coords_mm_zyx=coords,
             affine_vox2mm=affine_vox2mm,
-            mode="nearest",
+            mode="bilinear",
             align_corners=True,
         )
         samples.squeeze_(-1)

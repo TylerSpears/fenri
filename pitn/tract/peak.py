@@ -22,8 +22,8 @@ PeaksContainer = collections.namedtuple(
 def topk_peaks(
     k: int,
     fodf_peaks: torch.Tensor,
-    theta_peak: torch.Tensor,
-    phi_peak: torch.Tensor,
+    theta_peaks: torch.Tensor,
+    phi_peaks: torch.Tensor,
     valid_peak_mask: torch.Tensor,
 ) -> PeaksContainer:
     peak_idx = torch.argsort(fodf_peaks, dim=-1, descending=True)
@@ -33,8 +33,8 @@ def topk_peaks(
     topk_peaks = (
         torch.take_along_dim(fodf_peaks, topk_peak_idx, dim=-1) * topk_peak_valid
     )
-    topk_theta = torch.take(theta_peak, topk_peak_idx) * topk_peak_valid
-    topk_phi = torch.take(phi_peak, topk_peak_idx) * topk_peak_valid
+    topk_theta = torch.take(theta_peaks, topk_peak_idx) * topk_peak_valid
+    topk_phi = torch.take(phi_peaks, topk_peak_idx) * topk_peak_valid
 
     return PeaksContainer(
         peaks=topk_peaks,

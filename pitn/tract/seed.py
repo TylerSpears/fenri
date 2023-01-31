@@ -29,8 +29,8 @@ def seeds_directions_from_peaks(
     topk = pitn.tract.peak.topk_peaks(
         max_peaks_per_voxel,
         peaks,
-        theta_peak=theta_peak,
-        phi_peak=phi_peak,
+        theta_peaks=theta_peak,
+        phi_peaks=phi_peak,
         valid_peak_mask=valid_peak_mask,
     )
     topk_valid = topk.valid_peak_mask
@@ -75,8 +75,8 @@ def expand_seeds_from_topk_peaks_rk4(
     topk = pitn.tract.peak.topk_peaks(
         max_peaks_per_voxel,
         seed_peak_vals,
-        theta_peak=theta_peak,
-        phi_peak=phi_peak,
+        theta_peaks=theta_peak,
+        phi_peaks=phi_peak,
         valid_peak_mask=valid_peak_mask,
     )
     topk_valid = topk.valid_peak_mask
