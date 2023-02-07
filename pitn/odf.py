@@ -176,6 +176,22 @@ def thresh_fodf_samples_by_pdf(
     return s
 
 
+def thresh_fodf_samples_by_value(
+    sphere_samples: torch.Tensor, value_min: float
+) -> torch.Tensor:
+    s = torch.where(sphere_samples < value_min, 0, sphere_samples)
+    return s
+
+
+def thresh_fodf_samples_by_quantile(
+    sphere_samples: torch.Tensor, q_low: float
+) -> torch.Tensor:
+    q_low_val = torch.nanquantile(sphere_samples, q=q_low, dim=1, keepdim=True)
+    s = torch.where(sphere_samples < q_low_val, 0, sphere_samples)
+
+    return s
+
+
 def _unit_sphere_arc_length(
     theta_1: torch.Tensor,
     phi_1: torch.Tensor,

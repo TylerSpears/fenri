@@ -462,3 +462,42 @@ def remove_fodf_labels_by_pdf(
 
     remapped_ll = _contiguify_lobe_labels(remapped_ll)
     return remapped_ll.to(lobe_labels.dtype)
+
+
+def remove_fodf_labels_by_rel_peak(
+    lobe_labels: torch.Tensor,
+    sphere_samples: torch.Tensor,
+    min_peak_rel_to_largest_peak: float,
+) -> torch.Tensor:
+    s = sphere_samples
+
+    remapped_ll = torch.clone(lobe_labels)
+    # Take the top peak across the batch, but discard the theta-phi coordinates.
+    tmp_sph_coord = torch.zeros(
+        sphere_samples.shape[1],
+        device=sphere_samples.device,
+        dtype=sphere_samples.dtype,
+    )
+    peaks = peaks_from_segment(
+        remapped_ll,
+        sphere_samples=sphere_samples,
+        theta_coord=tmp_sph_coord,
+        phi_coord=tmp_sph_coord,
+        take_topk_peaks=1,
+    )
+    max_peaks = peaks.peaks
+    has_0_peaks_mask = ~peaks.valid_peak_mask
+
+    for l in lobe_labels.unique():
+
+        select_s_l = torch.where((lobe_labels == l) & (lobe_labels != 0), s, torch.nan)
+
+        s_l_peaks = torch.nanquantile(select_s_l, 1.0, dim=1, keepdim=True)
+        select_s_l_mask = ~select_s_l.isnan()
+        to_remove_under_thresh_mask = (
+            s_l_peaks < (max_peaks * min_peak_rel_to_largest_peak)
+        ) | has_0_peaks_mask
+        remapped_ll.masked_fill_(select_s_l_mask & to_remove_under_thresh_mask, 0)
+
+    remapped_ll = _contiguify_lobe_labels(remapped_ll)
+    return remapped_ll.to(lobe_labels.dtype)

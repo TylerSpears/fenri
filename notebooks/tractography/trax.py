@@ -251,9 +251,9 @@ wm_mask = torch.from_numpy(wm_mask_im.get_fdata().astype(bool)).to(device)
 wm_mask = einops.rearrange(wm_mask, "z y x -> 1 z y x")
 wm_mask_im.uncache()
 seed_mask = torch.zeros_like(brain_mask).bool()
-
 select_vox_idx = lobe_vox_idx["unipole_left_A_lobe_idx"]
 # select_vox_idx = lobe_vox_idx["unipole_lr_c_lobe_idx"]
+# select_vox_idx = lobe_vox_idx["three_crossing_right_A_lobe_idx"]
 # select_vox_idx = cc_lr_lobe_idx
 # select_vox_idx = lr_and_ap_bipolar_lobe_idx
 # select_vox_idx = tri_polar_lobe_idx
@@ -283,23 +283,29 @@ nearest_sphere_samples_valid_mask = nearest_sphere_samples[1]
 max_sh_order = 8
 
 # Element-wise filtering of sphere samples.
-min_sample_pdf_threshold = 0.0001
+min_sample_pdf_threshold = 0.01
+# fodf_pdf_thresh_min: float = None,
+# fodf_value_thresh_min: float = None,
+# fodf_quantile_thresh_min: float = None,
+# lobe_fodf_pdf_filter_kwargs: dict = None,
+# lobe_fodf_rel_to_largest_peak: float = None,
 
 # Threshold parameter for FMLS segmentation.
 lobe_merge_ratio = 0.8
 # Post-segmentation label filtering.
-min_lobe_pdf_peak_threshold = 1e-4
+min_lobe_pdf_peak_threshold = 1e-3
 min_lobe_pdf_integral_threshold = 0.05
+min_lobe_ratio_to_largest_peak = 0.2
 
 # Seed creation.
 peaks_per_seed_vox = 1
 seed_batch_size = 2
-# Total seeds per voxel will be `seeds_per_vox_axis`^3
-seeds_per_vox_axis = 5
+# Total seeds per voxel will be 2 x (`seeds_per_vox_axis`^3)
+seeds_per_vox_axis = 1
 
 # RK4 estimation
 step_size = 0.4
-alpha_exponential_moving_avg = 0.3
+alpha_exponential_moving_avg = 0.4
 
 # Stopping & invalidation criteria.
 min_streamline_len = 10
@@ -326,9 +332,12 @@ def _fn_linear_interp_zyx_tangent_t2theta_phi(
     sphere_samples_theta: torch.Tensor,
     sphere_samples_phi: torch.Tensor,
     sh_order: int,
-    fodf_pdf_thresh_min: float,
     fmls_lobe_merge_ratio: float,
-    lobe_fodf_pdf_filter_kwargs: dict,
+    fodf_pdf_thresh_min: float = None,
+    fodf_value_thresh_min: float = None,
+    fodf_quantile_thresh_min: float = None,
+    lobe_fodf_pdf_filter_kwargs: dict = None,
+    lobe_fodf_rel_to_largest_peak: float = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # Initial interpolation of fodf coefficients at the target points.
     pred_sample_fodf_coeffs = pitn.odf.sample_odf_coeffs_lin_interp(
@@ -344,12 +353,19 @@ def _fn_linear_interp_zyx_tangent_t2theta_phi(
         phi=sphere_samples_phi,
         sh_order=sh_order,
     )
-
-    # Threshold spherical function values.
-    target_sphere_samples = pitn.odf.thresh_fodf_samples_by_pdf(
-        target_sphere_samples, fodf_pdf_thresh_min
-    )
-
+    if fodf_pdf_thresh_min is not None:
+        # Threshold spherical function values.
+        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_pdf(
+            target_sphere_samples, fodf_pdf_thresh_min
+        )
+    if fodf_value_thresh_min is not None:
+        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_value(
+            target_sphere_samples, fodf_value_thresh_min
+        )
+    if fodf_quantile_thresh_min is not None:
+        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_quantile(
+            target_sphere_samples, fodf_quantile_thresh_min
+        )
     # Segment lobes on the fodf samples in each voxel.
     lobe_labels = pitn.tract.peak.fmls_fodf_seg(
         target_sphere_samples,
@@ -358,10 +374,17 @@ def _fn_linear_interp_zyx_tangent_t2theta_phi(
         phi=sphere_samples_phi,
     )
 
-    # Refine the segmentation.
-    lobe_labels = pitn.tract.peak.remove_fodf_labels_by_pdf(
-        lobe_labels, target_sphere_samples, **lobe_fodf_pdf_filter_kwargs
-    )
+    if lobe_fodf_pdf_filter_kwargs is not None:
+        # Refine the segmentation.
+        lobe_labels = pitn.tract.peak.remove_fodf_labels_by_pdf(
+            lobe_labels, target_sphere_samples, **lobe_fodf_pdf_filter_kwargs
+        )
+    if lobe_fodf_rel_to_largest_peak is not None:
+        lobe_labels = pitn.tract.peak.remove_fodf_labels_by_rel_peak(
+            lobe_labels,
+            target_sphere_samples,
+            min_peak_rel_to_largest_peak=lobe_fodf_rel_to_largest_peak,
+        )
 
     # Find the peaks from the lobe segmentation.
     peaks = pitn.tract.peak.peaks_from_segment(
@@ -422,12 +445,12 @@ fn_linear_interp_zyx_tangent_t2theta_phi = partial(
     sphere_samples_theta=theta,
     sphere_samples_phi=phi,
     sh_order=max_sh_order,
-    fodf_pdf_thresh_min=min_sample_pdf_threshold,
     fmls_lobe_merge_ratio=lobe_merge_ratio,
     lobe_fodf_pdf_filter_kwargs={
         "pdf_peak_min": min_lobe_pdf_peak_threshold,
         "pdf_integral_min": min_lobe_pdf_integral_threshold,
     },
+    lobe_fodf_rel_to_largest_peak=min_lobe_ratio_to_largest_peak,
 )
 
 
@@ -441,9 +464,12 @@ def _peaks_only_fn_linear_interp_zyx(
     sphere_samples_theta: torch.Tensor,
     sphere_samples_phi: torch.Tensor,
     sh_order: int,
-    fodf_pdf_thresh_min: float,
     fmls_lobe_merge_ratio: float,
-    lobe_fodf_pdf_filter_kwargs: dict,
+    fodf_pdf_thresh_min: float = None,
+    fodf_value_thresh_min: float = None,
+    fodf_quantile_thresh_min: float = None,
+    lobe_fodf_pdf_filter_kwargs: dict = None,
+    lobe_fodf_rel_to_largest_peak: float = None,
 ) -> pitn.tract.peak.PeaksContainer:
     # Initial interpolation of fodf coefficients at the target points.
     pred_sample_fodf_coeffs = pitn.odf.sample_odf_coeffs_lin_interp(
@@ -460,10 +486,19 @@ def _peaks_only_fn_linear_interp_zyx(
         sh_order=sh_order,
     )
 
-    # Threshold spherical function values.
-    target_sphere_samples = pitn.odf.thresh_fodf_samples_by_pdf(
-        target_sphere_samples, fodf_pdf_thresh_min
-    )
+    if fodf_pdf_thresh_min is not None:
+        # Threshold spherical function values.
+        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_pdf(
+            target_sphere_samples, fodf_pdf_thresh_min
+        )
+    if fodf_value_thresh_min is not None:
+        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_value(
+            target_sphere_samples, fodf_value_thresh_min
+        )
+    if fodf_quantile_thresh_min is not None:
+        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_quantile(
+            target_sphere_samples, fodf_quantile_thresh_min
+        )
 
     # Segment lobes on the fodf samples in each voxel.
     lobe_labels = pitn.tract.peak.fmls_fodf_seg(
@@ -473,10 +508,17 @@ def _peaks_only_fn_linear_interp_zyx(
         phi=sphere_samples_phi,
     )
 
-    # Refine the segmentation.
-    lobe_labels = pitn.tract.peak.remove_fodf_labels_by_pdf(
-        lobe_labels, target_sphere_samples, **lobe_fodf_pdf_filter_kwargs
-    )
+    if lobe_fodf_pdf_filter_kwargs is not None:
+        # Refine the segmentation.
+        lobe_labels = pitn.tract.peak.remove_fodf_labels_by_pdf(
+            lobe_labels, target_sphere_samples, **lobe_fodf_pdf_filter_kwargs
+        )
+    if lobe_fodf_rel_to_largest_peak is not None:
+        lobe_labels = pitn.tract.peak.remove_fodf_labels_by_rel_peak(
+            lobe_labels,
+            target_sphere_samples,
+            min_peak_rel_to_largest_peak=lobe_fodf_rel_to_largest_peak,
+        )
 
     # Find the peaks from the lobe segmentation.
     peaks = pitn.tract.peak.peaks_from_segment(
@@ -485,7 +527,6 @@ def _peaks_only_fn_linear_interp_zyx(
         theta_coord=sphere_samples_theta,
         phi_coord=sphere_samples_phi,
     )
-
     return peaks
 
 
