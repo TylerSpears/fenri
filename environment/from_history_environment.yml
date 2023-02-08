@@ -1,9 +1,9 @@
-name: base
+name: pitnjax
 channels:
   - pytorch
+  - conda-forge
   - nvidia
   - defaults
-  - conda-forge
 dependencies:
   - ipython==8.4.0=py310h06a4308_0
   - pip==22.2.2=pyhd8ed1ab_0
@@ -344,7 +344,7 @@ dependencies:
   - python-box==6.0.2=py310h5764c6d_3
   - python-levenshtein==0.12.2=py310h7f8727e_0
   - python-telegram-bot==13.13=pyhd8ed1ab_0
-  - pytorch==1.13.0=py3.10_cuda11.7_cudnn8.5.0_0
+  - pytorch
   - pytorch-cluster==1.6.0=py310_torch_1.13.0_cu117
   - pytorch-cuda==11.7=h67b0de4_0
   - pytorch-lightning==1.8.1=pyhd8ed1ab_0
@@ -573,3 +573,4 @@ dependencies:
   - zstd==1.5.2=ha4553b6_0
   - jaxlib
   - jax
+  - jaxopt
