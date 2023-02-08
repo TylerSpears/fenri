@@ -2,31 +2,39 @@
 
 # Setup
 
+## Development Environment Installation
+
+To re-create the anaconda environment used for development:
+
+```bash
+# Make sure to install mamba in your root anaconda env for package installation.
+# Explicit anaconda packages with versions and platform specs. Only works on the same
+# platform as development.
+mamba create --name pitn --file pitn.txt
+# Move to the new environment.
+conda activate pitn
+# Install pip packages, try to constrain by the anaconda package versions, even if pip
+# does not detect some of them.
+pip install --requirement requirements.txt --constraints pitn_pip_constraints.txt
+```
+
+See the `environment/` directory for more information regarding package versions.
+
+## pitn Package Installation
+
 To install as a python package, install directly from this repository (no pypi wheels yet!):
 
 ```bash
 pip install git+ssh://git@github.com/TylerSpears/pitn.git
 ```
 
-## Environment
+To install an editable version for development:
 
-### Required Packages
+```bash
+pip install -e .
+```
 
-This project requires the python packages:
-
-- `pytorch`
-- `conda`
-- `tensorboard`
-- `jupyter`
-- `numpy`
-- ...and many others
-
-It is *strongly* recommended that you create a new `conda` environment with the
-`environment.yml` file.
-
-Please see the `environment/` directory for other environment description files.
-
-### Environment Variables
+## Environment Variables
 
 Several configuration options in the form of environment variables are used in this code.
 In particular, env vars that define directories are needed to properly locate data
@@ -41,15 +49,16 @@ it is explicitly *not* version-controlled.
 See the `.env.template` file for all env vars and example values, and for a starting
 point for your own `.env` file.
 
-## Developers
+# Developers
 
-### Installing Packages
+## Installing Packages
 
 Installing new python packages to the conda environment requires the following anaconda
 channels:
 
 - `pytorch`
 - `conda-forge`
+- `nvidia`
 
 When installing a new python package, always use [`mamba`](https://github.com/mamba-org/mamba)
 for installation; this will save you so much time and effort. For example:
@@ -67,7 +76,7 @@ a git repository, then use `pip`:
 pip install ipyvolume
 ```
 
-### pre-commit Hooks
+## pre-commit Hooks
 
 This repository relies on [`pre-commit`](<https://pre-commit.com/>) to run basic cleanup
 and linting utilities before a commit can be made. Hooks are defined in the
@@ -81,7 +90,7 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-### git Filters
+## git Filters
 
 The [`nbstripout`](<https://github.com/kynan/nbstripout>) application is set up as
 a git repository filter that strips jupyter/ipython notebooks (*.ipynb files) of output
