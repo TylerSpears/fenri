@@ -121,7 +121,6 @@ ensureconda==1.4.3
 entrypoints==0.4
 executing==0.10.0
 expat==2.5.0
-fastapi==0.89.1
 ffmpeg==4.4.2
 fftw==3.3.10
 filelock==3.8.0
@@ -424,7 +423,6 @@ pretty_errors==1.2.25
 proj==9.0.1
 prometheus_client==0.14.1
 prompt-toolkit==3.0.30
-protobuf==4.21.12
 psutil==5.9.1
 ptyprocess==0.7.0
 pugixml==1.11.4
@@ -506,7 +504,6 @@ sniffio==1.3.0
 soupsieve==2.3.2.post1
 sqlite==3.39.2
 stack_data==0.4.0
-starlette==0.22.0
 statsmodels==0.13.2
 svt-av1==1.2.1
 sysroot_linux-64==2.12
