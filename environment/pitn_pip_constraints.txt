@@ -38,7 +38,7 @@ brunsli==0.1
 bzip2==1.0.8
 c-ares==1.18.1
 c-blosc2==2.2.0
-ca-certificates==2022.12.7
+ca-certificates==2023.01.10
 cachecontrol==0.12.11
 cached-property==1.5.2
 cachetools==4.2.2
@@ -462,7 +462,7 @@ python_abi==3.10
 pytorch==1.13.1
 pytorch-cluster==1.6.0
 pytorch-cuda==11.7
-pytorch-lightning==1.8.1
+pytorch-lightning==1.9.0
 pytorch-mutex==1.0
 pytorch-scatter==2.1.0
 pytorch-sparse==0.6.15

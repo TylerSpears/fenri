@@ -9,7 +9,7 @@ dependencies:
   - conda-forge/noarch::pybind11-abi==4=hd8ed1ab_3
   - conda-forge/linux-64::_libgcc_mutex==0.1=conda_forge
   - defaults/linux-64::blas==1.0=mkl
-  - conda-forge/linux-64::ca-certificates==2022.12.7=ha878542_0
+  - ca-certificates
   - nvidia/linux-64::cuda-cccl==11.7.91=0
   - nvidia/linux-64::cuda-cudart==11.7.99=0
   - nvidia/linux-64::cuda-cuobjdump==11.7.91=0
@@ -154,7 +154,7 @@ dependencies:
   - conda-forge/linux-64::ninja==1.11.0=h924138e_0
   - conda-forge/linux-64::nspr==4.35=h27087fc_0
   - conda-forge/linux-64::openh264==2.3.0=h27087fc_0
-  - conda-forge/linux-64::openssl==3.0.8=h0b41bf4_0
+  - openssl
   - defaults/linux-64::pcre==8.45=h295c915_0
   - defaults/linux-64::pixman==0.40.0=h7f8727e_1
   - defaults/linux-64::pkg-config==0.29.2=h1bed415_8
@@ -275,7 +275,7 @@ dependencies:
   - defaults/noarch::cachetools==4.2.2=pyhd3eb1b0_0
   - defaults/noarch::cachy==0.3.0=pyhd3eb1b0_0
   - conda-forge/linux-64::cairo==1.16.0=ha61ee94_1013
-  - conda-forge/noarch::certifi==2022.12.7=pyhd8ed1ab_0
+  - certifi
   - conda-forge/noarch::cfgv==3.3.1=pyhd8ed1ab_0
   - conda-forge/linux-64::cfitsio==4.1.0=hd9d235c_0
   - conda-forge/noarch::charset-normalizer==2.1.0=pyhd8ed1ab_0
@@ -567,7 +567,7 @@ dependencies:
   - conda-forge/noarch::monai==1.0.1=pyhd8ed1ab_0
   - conda-forge/noarch::opt_einsum==3.3.0=pyhd8ed1ab_1
   - conda-forge/noarch::tensorboard==2.10.1=pyhd8ed1ab_0
-  - conda-forge/noarch::pytorch-lightning==1.8.1=pyhd8ed1ab_0
+  - pytorch-lightning
   - conda-forge/noarch::tifffile==2022.8.12=pyhd8ed1ab_0
   - conda-forge/noarch::tikzplotlib==0.10.1=pyh050c7b8_0
   - conda-forge/noarch::timm==0.4.12=pyhd8ed1ab_0
