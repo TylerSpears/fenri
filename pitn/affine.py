@@ -65,6 +65,7 @@ def sample_3d(
     # aff_diag = 2 / (torch.as_tensor(spatial_shape))
     aff_diag = torch.cat([aff_diag, aff_diag.new_ones(1)], 0)
     aff_vox2grid = aff_vox2grid.diagonal_scatter(aff_diag)
+    # TODO check that this is correct...
     aff_vox2grid[:3, 3:4] = -1
 
     # Invert the typical vox->mm affine.

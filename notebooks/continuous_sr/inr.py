@@ -183,7 +183,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "dev_fixed-inr-ensemble"
+p.experiment_name = "test_package-upgrade_rerun"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -200,8 +200,8 @@ p.aim_logger = dict(
 p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=4,
-    samples_per_subj_per_epoch=10,
-    max_epochs=5,
+    samples_per_subj_per_epoch=40,
+    max_epochs=175,
     dwi_recon_epoch_proportion=0.05,
 )
 # Optimizer kwargs for training.
@@ -303,7 +303,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 10
+DEBUG_TRAIN_DATA_SUBJS = 20
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -971,7 +971,6 @@ def validate_stage(
                 val_viz_subj_id = subj_id
             x = batch_dict["lr_dwi"]
             x_coords = batch_dict["lr_extent_acpc"]
-            # lr_fodf = batch_dict["lr_fodf"]
             y = batch_dict["fodf"]
             y_mask = batch_dict["mask"].to(torch.bool)
             y_coords = batch_dict["extent_acpc"]
@@ -1201,12 +1200,11 @@ try:
     step = 0
     train_dwi_recon_epoch_proportion = p.train.dwi_recon_epoch_proportion
     train_recon = False
-    # train_lr_epoch_proportion = 0.01
-    # train_lr = False
-    lambda_pred_fodf = 1.0
-    lambda_recon = 0.0
     epochs = p.train.max_epochs
+
+    ###### Primary training loop
     for epoch in range(epochs):
+
         fabric.print(f"\nEpoch {epoch}\n", "=" * 10)
         if epoch <= math.floor(epochs * train_dwi_recon_epoch_proportion):
             if not train_recon:
