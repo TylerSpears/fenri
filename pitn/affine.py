@@ -61,11 +61,12 @@ def sample_3d(
     # Construct an affine transformation that maps from voxel space to [-1, 1].
     spatial_shape = v.shape[-3:]
     aff_vox2grid = torch.eye(4).to(affine_vox2mm)
+    # Scale all coordinates to be in range [0, 2].
     aff_diag = 2 / (torch.as_tensor(spatial_shape) - 1)
-    # aff_diag = 2 / (torch.as_tensor(spatial_shape))
     aff_diag = torch.cat([aff_diag, aff_diag.new_ones(1)], 0)
     aff_vox2grid = aff_vox2grid.diagonal_scatter(aff_diag)
-    # TODO check that this is correct...
+    # Translate coords "back" by 1 arbitrary unit to make all coords within range
+    # [-1, 1], rather than [0, 2].
     aff_vox2grid[:3, 3:4] = -1
 
     # Invert the typical vox->mm affine.
