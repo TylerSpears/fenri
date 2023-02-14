@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 import collections
 from functools import partial
-from typing import Optional
+from typing import Callable, Generic, Optional, Tuple, TypeVar
 
 import dipy
 import jax
 import jax.dlpack
 import jax.numpy as jnp
+import jaxopt
 import numpy as np
 import torch
 from jax import lax
@@ -501,3 +502,160 @@ def remove_fodf_labels_by_rel_peak(
 
     remapped_ll = _contiguify_lobe_labels(remapped_ll)
     return remapped_ll.to(lobe_labels.dtype)
+
+
+# # From <https://github.com/google/jax/issues/4572#issuecomment-1235458797>
+
+
+# T = TypeVar("T")  # Declare type variable
+
+
+# class HashableArrayWrapper(Generic[T]):
+#     def __init__(self, val: T):
+#         self.val = val
+
+#     def __getattribute__(self, prop):
+#         if prop == "val" or prop == "__hash__" or prop == "__eq__":
+#             return super(HashableArrayWrapper, self).__getattribute__(prop)
+#         return getattr(self.val, prop)
+
+#     def __getitem__(self, key):
+#         return self.val[key]
+
+#     def __setitem__(self, key, val):
+#         self.val[key] = val
+
+#     def __hash__(self):
+#         return hash(self.val.tobytes())
+
+#     def __eq__(self, other):
+#         if isinstance(other, HashableArrayWrapper):
+#             return self.__hash__() == other.__hash__()
+
+#         f = getattr(self.val, "__eq__")
+#         return f(self, other)
+
+
+def _jax_unbatched_sh_basis_mrtrix3(
+    azimuth: jax.Array,
+    polar: jax.Array,
+    m: jax.Array,
+    n: jax.Array,
+    n_max: int,
+) -> jax.Array:
+    """Spherical harmonic basis functions for given (azimuth, polar), used in MRtrix3.
+
+    See:
+    * <https://mrtrix.readthedocs.io/en/latest/concepts/spherical_harmonics.html#formulation-used-in-mrtrix3>
+    * <https://jax.readthedocs.io/en/latest/_autosummary/jax.scipy.special.sph_harm.html#jax-scipy-special-sph-harm>
+
+    Parameters
+    ----------
+    azimuth : jax.Array
+        Azimuthal spherical coordinate, in range (0, 2*pi].
+    polar : jax.Array
+        Polar spherical coordinate, in range [0, pi].
+    m : jax.Array
+        Tuple of spherical harmonic orders.
+    n : jax.Array
+        Tuple of spherical harmonic degrees, in range n >= 0, and n is even.
+    n_max : int
+        Statically-defined max SH degree.
+
+    Returns
+    -------
+    jax.Array
+        Vector of spherical harmonic transformation of a function at (azimuth, polar).
+    """
+
+    # <https://github.com/dipy/dipy/blob/13af40fec09fb23a3692cb0bfdcb91d08acfd766/dipy/reconst/shm.py#L299>
+    # When m < 0, we use the SH from Y^{|m|}, as defined by Descoteaux, et al, 2007 and
+    # MRtrix3.
+    Y_m_abs = jax.scipy.special.sph_harm(
+        m=jnp.abs(m), n=n, theta=azimuth, phi=polar, n_max=n_max
+    )
+    Y_m_abs = jnp.where(m < 0, jnp.sqrt(2) * Y_m_abs.imag, Y_m_abs)
+    Y_m_abs = jnp.where(m > 0, jnp.sqrt(2) * Y_m_abs.real, Y_m_abs)
+
+    return Y_m_abs.real
+
+
+# def _jax_unbatched_sh_basis_mrtrix3(
+#     azimuth: jax.Array, polar: jax.Array, m: jax.Array, n: jax.Array, n_max: int
+# ) -> jax.Array:
+#     return __jax_unbatched_sh_basis_mrtrix3(
+#         azimuth, polar, HashableArrayWrapper(m), HashableArrayWrapper(n), n_max
+#     )
+
+
+@partial(jax.jit, static_argnames=("degree_max", "min_sphere_val"), inline=True)
+def _jax_unbatched_negated_odf_sample(
+    params_azimuth_polar,
+    odf_coeffs: jax.Array,
+    sh_orders: jax.Array,
+    sh_degrees: jax.Array,
+    degree_max: int,
+    min_sphere_val: float,
+) -> jax.Array:
+    azimuth = params_azimuth_polar[0] % jnp.pi
+    polar = params_azimuth_polar[1] % (2 * jnp.pi)
+    Y_basis = _jax_unbatched_sh_basis_mrtrix3(
+        azimuth, polar, sh_orders, sh_degrees, degree_max
+    )
+    sphere_sample = jnp.dot(Y_basis, odf_coeffs)
+    sphere_sample = jnp.where(sphere_sample < min_sphere_val, 0.0, sphere_sample)
+
+    sphere_sample = -sphere_sample
+    print("Not jitted optimization function!", type(sphere_sample))
+    return sphere_sample
+
+
+def get_grad_descent_peak_finder_fn(
+    sh_orders: torch.Tensor,
+    sh_degrees: torch.Tensor,
+    degree_max: int,
+    min_sphere_val: float,
+    *grad_descent_args,
+    **grad_descent_kwargs,
+) -> Callable[
+    [torch.Tensor, torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]
+]:
+    m = _t2j(sh_orders)
+    n = _t2j(sh_degrees)
+    objective_fn = partial(
+        _jax_unbatched_negated_odf_sample,
+        sh_orders=m,
+        sh_degrees=n,
+        degree_max=degree_max,
+        min_sphere_val=min_sphere_val,
+    )
+
+    def run(jaxopt_solver, azimuth_polar, coeffs):
+        return jaxopt_solver.run(azimuth_polar, coeffs).params
+
+    # def torch_in2jax_run(sh_coeffs, init_theta, init_phi):
+
+    solver = jaxopt.GradientDescent(
+        fun=objective_fn, *grad_descent_args, **grad_descent_kwargs
+    )
+    # # Gradient Descent
+    # slv = jaxopt.GradientDescent(
+    #     ),
+    #     # stepsize=0.125,
+    #     # maxiter=5000,
+    #     acceleration=True,
+    #     # verbose=1,
+    #     # decrease_factor=0.1,
+    #     # implicit_diff=True,
+    #     # implicit_diff_solve=None,
+    #     jit=True,
+    #     # unroll=True,
+    #     tol=1e-5,
+    # )
+
+    # @partial(jax.jit, static_argnums=(0,))
+    # def run(solver, az_pol, coeffs):
+    #     print("Not jitted in run()")
+    #     return jnp.concatenate(solver.run(az_pol, coeffs).params)
+
+    # vrun = jax.vmap(run, in_axes=(None, (0, 0), 0), out_axes=0)

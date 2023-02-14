@@ -101,6 +101,7 @@ def sample_sphere_coords(
     sh_order: int,
     sh_order_dim=1,
     mask: torch.Tensor = None,
+    force_nonnegative: bool = True,
 ) -> torch.Tensor:
     """Sample a spherical function on the sphere with coefficients in the SH domain.
 
@@ -158,8 +159,10 @@ def sample_sphere_coords(
         fn_samples[fn_mask] = torch.matmul(fn_coeffs, sh_transform)
     else:
         fn_samples = torch.matmul(fn_coeffs, sh_transform)
-    # Enforce non-negativity constraint.
-    fn_samples.clamp_min_(0)
+
+    if force_nonnegative:
+        # Enforce non-negativity constraint.
+        fn_samples.clamp_min_(0)
     fn_samples = fn_samples.reshape(*orig_spatial_shape, -1)
     fn_samples = fn_samples.movedim(-1, sh_order_dim)
 
