@@ -10,6 +10,7 @@ import pitn
 
 # world_extent = (affine[:3, :3] @ vox_grid.T) + (affine[:3, 3:4])
 def coord_transform_3d(coords: torch.Tensor, affine_a2b: torch.Tensor) -> torch.Tensor:
+    # For now, this function only accepts coords that are 1 or 2-dimensional
     if coords.ndim == 1 and affine_a2b.ndim > 2:
         new_shape = (1,) * (affine_a2b.ndim - 2)
         new_shape = new_shape + (-1,)
@@ -31,11 +32,10 @@ def coord_transform_3d(coords: torch.Tensor, affine_a2b: torch.Tensor) -> torch.
 
     c = c.to(torch.result_type(c, affine))
     affine = affine.to(torch.result_type(c, affine))
+    p = einops.einsum(affine[..., :3, :3], c, "... i j, ... j -> ... i")
+    p = p + affine[..., :3, -1]
 
-    p = torch.matmul(affine[..., :3, :3], torch.swapdims(c, -1, -2))
-    p = p + affine[..., :3, 3:4]
-
-    return p.swapdims(-2, -1).reshape(coords.shape)
+    return p.reshape(coords.shape)
 
 
 def sample_3d(

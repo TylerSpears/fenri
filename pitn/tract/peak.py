@@ -618,7 +618,7 @@ def get_grad_descent_peak_finder_fn(
     *grad_descent_args,
     **grad_descent_kwargs,
 ) -> Callable[
-    [torch.Tensor, torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]
+    [Tuple[torch.Tensor, torch.Tensor], torch.Tensor], Tuple[torch.Tensor, torch.Tensor]
 ]:
     m = _t2j(sh_orders)
     n = _t2j(sh_degrees)
@@ -630,32 +630,36 @@ def get_grad_descent_peak_finder_fn(
         min_sphere_val=min_sphere_val,
     )
 
-    def run(jaxopt_solver, azimuth_polar, coeffs):
+    def run_solver(jaxopt_solver, azimuth_polar, coeffs):
         return jaxopt_solver.run(azimuth_polar, coeffs).params
-
-    # def torch_in2jax_run(sh_coeffs, init_theta, init_phi):
 
     solver = jaxopt.GradientDescent(
         fun=objective_fn, *grad_descent_args, **grad_descent_kwargs
     )
-    # # Gradient Descent
-    # slv = jaxopt.GradientDescent(
-    #     ),
-    #     # stepsize=0.125,
-    #     # maxiter=5000,
-    #     acceleration=True,
-    #     # verbose=1,
-    #     # decrease_factor=0.1,
-    #     # implicit_diff=True,
-    #     # implicit_diff_solve=None,
-    #     jit=True,
-    #     # unroll=True,
-    #     tol=1e-5,
-    # )
+    run = partial(
+        jax.jit(run_solver, static_argnums=(0,)), jaxopt_solver=solver, inline=True
+    )
+    vrun = jax.vmap(run, in_axes=((0, 0), 0), out_axes=(0, 0))
 
-    # @partial(jax.jit, static_argnums=(0,))
-    # def run(solver, az_pol, coeffs):
-    #     print("Not jitted in run()")
-    #     return jnp.concatenate(solver.run(az_pol, coeffs).params)
+    def pt_vrun(jax_fn, coeffs, init_theta_phi) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Offset phi to be between (0, 2\pi] instead of (-\pi, \pi]
+        azimuth = pitn.tract.direction.wrap_bound_modulo(
+            init_theta_phi[1], 0, 2 * torch.pi
+        )
+        azimuth = _t2j(azimuth)
+        polar = _t2j(init_theta_phi[0])
+        c = _t2j(coeffs)
+        jax_res = jax_fn((azimuth, polar), c)
+        t_res_azimuth = _j2t(jax_res[0], delete_from_jax=True)
+        t_res_polar = _j2t(jax_res[1], delete_from_jax=True)
 
-    # vrun = jax.vmap(run, in_axes=(None, (0, 0), 0), out_axes=0)
+        # Un-offset result phi.
+        res_phi = pitn.tract.direction.wrap_bound_modulo(
+            t_res_azimuth, -torch.pi, torch.pi
+        )
+        res_theta = t_res_polar
+
+        return (res_theta, res_phi)
+
+    peak_finder_fn = partial(pt_vrun, jax_fn=vrun)
+    return peak_finder_fn

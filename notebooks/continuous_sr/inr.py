@@ -200,9 +200,9 @@ p.aim_logger = dict(
 p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=4,
-    samples_per_subj_per_epoch=40,
-    max_epochs=175,
-    dwi_recon_epoch_proportion=0.05,
+    samples_per_subj_per_epoch=20,
+    max_epochs=20,
+    dwi_recon_epoch_proportion=0.01,
 )
 # Optimizer kwargs for training.
 p.train.optim.encoder.lr = 1e-4
@@ -303,7 +303,7 @@ assert hcp_low_res_fodf_dir.exists()
 # ### Create Patch-Based Training Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 20
+DEBUG_TRAIN_DATA_SUBJS = 10
 with warnings.catch_warnings(record=True) as warn_list:
     # pre_sample_ds = pitn.data.datasets.HCPfODFINRDataset(
     #     subj_ids=p.train.subj_ids,
@@ -709,6 +709,7 @@ class ReducedDecoder(torch.nn.Module):
         self,
         context_v,
         context_spatial_extent,
+        affine_vox2context_mm,
         query_vox_size,
         query_coord,
     ) -> torch.Tensor:
@@ -720,6 +721,14 @@ class ReducedDecoder(torch.nn.Module):
         context_vox_size = context_vox_size[:, :, None, None, None]
 
         batch_size = query_coord.shape[0]
+
+        # bot_back_left_corner_query_coord = query_coord - (
+        #     query_coord % context_vox_size
+        # )
+        # bot_back_left_query_vox = pitn.affine.coord_transform_3d(
+        #     bot_back_left_corner_query_coord.movedim(1, -1), torch.linalg.inv(affine_vox2context_mm)[:, None, None, None]
+        # )
+
         # Construct a grid of nearest indices in context space by sampling a grid of
         # *indices* given the coordinates in mm.
         # The channel dim is just repeated for every
@@ -789,43 +798,43 @@ class ReducedDecoder(torch.nn.Module):
         ).to(torch.int8)
         del surround_query_point_quadrants
 
-        # Now, find sum of distances to normalize the distance-weighted weight vector
-        # for in-place 'linear interpolation.'
-        inv_dist_total = torch.zeros_like(phys_coords_0)
-        inv_dist_total = (inv_dist_total[:, 0])[:, None]
-        surround_offsets_vox_volume_order = einops.rearrange(
-            surround_offsets_vox,
-            "dim (b i j k) -> b dim i j k",
-            b=batch_size,
-            i=query_coord.shape[2],
-            j=query_coord.shape[3],
-            k=query_coord.shape[4],
-        )
-        for (
-            offcenter_indicate_i,
-            offcenter_indicate_j,
-            offcenter_indicate_k,
-        ) in itertools.product((0, 1), (0, 1), (0, 1)):
-            phys_coords_offset = torch.ones_like(phys_coords_0)
-            phys_coords_offset[:, 0] *= (
-                offcenter_indicate_i * surround_offsets_vox_volume_order[:, 0]
-            ) * context_vox_size[:, 0]
-            phys_coords_offset[:, 1] *= (
-                offcenter_indicate_j * surround_offsets_vox_volume_order[:, 1]
-            ) * context_vox_size[:, 1]
-            phys_coords_offset[:, 2] *= (
-                offcenter_indicate_k * surround_offsets_vox_volume_order[:, 2]
-            ) * context_vox_size[:, 2]
-            # phys_coords_offset = context_vox_size * phys_coords_offset
-            phys_coords = phys_coords_0 + phys_coords_offset
-            inv_dist_total += 1 / torch.linalg.vector_norm(
-                query_coord - phys_coords, ord=2, dim=1, keepdim=True
-            )
-        # Potentially free some memory here.
-        del phys_coords
-        del phys_coords_0
-        del phys_coords_offset
-        del surround_offsets_vox_volume_order
+        # # Now, find sum of distances to normalize the distance-weighted weight vector
+        # # for in-place 'linear interpolation.'
+        # inv_dist_total = torch.zeros_like(phys_coords_0)
+        # inv_dist_total = (inv_dist_total[:, 0])[:, None]
+        # surround_offsets_vox_volume_order = einops.rearrange(
+        #     surround_offsets_vox,
+        #     "dim (b i j k) -> b dim i j k",
+        #     b=batch_size,
+        #     i=query_coord.shape[2],
+        #     j=query_coord.shape[3],
+        #     k=query_coord.shape[4],
+        # )
+        # for (
+        #     offcenter_indicate_i,
+        #     offcenter_indicate_j,
+        #     offcenter_indicate_k,
+        # ) in itertools.product((0, 1), (0, 1), (0, 1)):
+        #     phys_coords_offset = torch.ones_like(phys_coords_0)
+        #     phys_coords_offset[:, 0] *= (
+        #         offcenter_indicate_i * surround_offsets_vox_volume_order[:, 0]
+        #     ) * context_vox_size[:, 0]
+        #     phys_coords_offset[:, 1] *= (
+        #         offcenter_indicate_j * surround_offsets_vox_volume_order[:, 1]
+        #     ) * context_vox_size[:, 1]
+        #     phys_coords_offset[:, 2] *= (
+        #         offcenter_indicate_k * surround_offsets_vox_volume_order[:, 2]
+        #     ) * context_vox_size[:, 2]
+        #     # phys_coords_offset = context_vox_size * phys_coords_offset
+        #     phys_coords = phys_coords_0 + phys_coords_offset
+        #     inv_dist_total += 1 / torch.linalg.vector_norm(
+        #         query_coord - phys_coords, ord=2, dim=1, keepdim=True
+        #     )
+        # # Potentially free some memory here.
+        # del phys_coords
+        # del phys_coords_0
+        # del phys_coords_offset
+        # del surround_offsets_vox_volume_order
 
         y_weighted_accumulate = None
         # Build the low-res representation one sub-window voxel index at a time.
@@ -971,6 +980,7 @@ def validate_stage(
                 val_viz_subj_id = subj_id
             x = batch_dict["lr_dwi"]
             x_coords = batch_dict["lr_extent_acpc"]
+            lr_vox2acpc = batch_dict["affine_lrvox2acpc"]
             y = batch_dict["fodf"]
             y_mask = batch_dict["mask"].to(torch.bool)
             y_coords = batch_dict["extent_acpc"]
@@ -993,6 +1003,7 @@ def validate_stage(
                     query_coord=q,
                     context_v=ctx_v,
                     context_spatial_extent=x_coords,
+                    affine_vox2context_mm=lr_vox2acpc,
                     query_vox_size=y_vox_size,
                 ),
                 overlap=0,
@@ -1218,6 +1229,7 @@ try:
             x_coords = batch_dict["lr_patch_extent_acpc"]
             x_vox_size = torch.atleast_2d(batch_dict["lr_vox_size"])
             x_mask = batch_dict["lr_mask"].to(torch.bool)
+            affine_lr_patchvox2acpc = batch_dict["affine_lr_patchvox2acpc"]
 
             y = batch_dict["fodf"]
             y_mask = batch_dict["mask"].to(torch.bool)
@@ -1237,6 +1249,7 @@ try:
                     context_spatial_extent=x_coords,
                     query_vox_size=y_vox_size,
                     query_coord=y_coords,
+                    affine_vox2context_mm=affine_lr_patchvox2acpc,
                 )
                 loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
                 loss_recon = y.new_zeros(1)
