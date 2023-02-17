@@ -504,38 +504,6 @@ def remove_fodf_labels_by_rel_peak(
     return remapped_ll.to(lobe_labels.dtype)
 
 
-# # From <https://github.com/google/jax/issues/4572#issuecomment-1235458797>
-
-
-# T = TypeVar("T")  # Declare type variable
-
-
-# class HashableArrayWrapper(Generic[T]):
-#     def __init__(self, val: T):
-#         self.val = val
-
-#     def __getattribute__(self, prop):
-#         if prop == "val" or prop == "__hash__" or prop == "__eq__":
-#             return super(HashableArrayWrapper, self).__getattribute__(prop)
-#         return getattr(self.val, prop)
-
-#     def __getitem__(self, key):
-#         return self.val[key]
-
-#     def __setitem__(self, key, val):
-#         self.val[key] = val
-
-#     def __hash__(self):
-#         return hash(self.val.tobytes())
-
-#     def __eq__(self, other):
-#         if isinstance(other, HashableArrayWrapper):
-#             return self.__hash__() == other.__hash__()
-
-#         f = getattr(self.val, "__eq__")
-#         return f(self, other)
-
-
 def _jax_unbatched_sh_basis_mrtrix3(
     azimuth: jax.Array,
     polar: jax.Array,
@@ -580,15 +548,7 @@ def _jax_unbatched_sh_basis_mrtrix3(
     return Y_m_abs.real
 
 
-# def _jax_unbatched_sh_basis_mrtrix3(
-#     azimuth: jax.Array, polar: jax.Array, m: jax.Array, n: jax.Array, n_max: int
-# ) -> jax.Array:
-#     return __jax_unbatched_sh_basis_mrtrix3(
-#         azimuth, polar, HashableArrayWrapper(m), HashableArrayWrapper(n), n_max
-#     )
-
-
-@partial(jax.jit, static_argnames=("degree_max", "min_sphere_val"), inline=True)
+# @partial(jax.jit, static_argnames=("degree_max", "min_sphere_val"), inline=True)
 def _jax_unbatched_negated_odf_sample(
     params_azimuth_polar,
     odf_coeffs: jax.Array,
@@ -615,6 +575,7 @@ def get_grad_descent_peak_finder_fn(
     sh_degrees: torch.Tensor,
     degree_max: int,
     min_sphere_val: float,
+    batch_size: int,
     *grad_descent_args,
     **grad_descent_kwargs,
 ) -> Callable[
@@ -622,44 +583,102 @@ def get_grad_descent_peak_finder_fn(
 ]:
     m = _t2j(sh_orders)
     n = _t2j(sh_degrees)
-    objective_fn = partial(
-        _jax_unbatched_negated_odf_sample,
-        sh_orders=m,
-        sh_degrees=n,
-        degree_max=degree_max,
-        min_sphere_val=min_sphere_val,
+    objective_fn = lambda az_pol, coeffs: _jax_unbatched_negated_odf_sample(
+        az_pol, coeffs, m, n, degree_max, min_sphere_val
     )
+    # objective_fn = partial(
+    #     _jax_unbatched_negated_odf_sample,
+    #     sh_orders=m,
+    #     sh_degrees=n,
+    #     degree_max=degree_max,
+    #     min_sphere_val=min_sphere_val,
+    # )
 
-    def run_solver(jaxopt_solver, azimuth_polar, coeffs):
+    # @partial(jax.vmap, in_axes=((0, 0), 0, None), out_axes=(0, 0))
+    # @partial(jax.jit, static_argnums=(2,), inline=True)
+    def run_solver(azimuth_polar, coeffs, jaxopt_solver):
         return jaxopt_solver.run(azimuth_polar, coeffs).params
 
     solver = jaxopt.GradientDescent(
         fun=objective_fn, *grad_descent_args, **grad_descent_kwargs
     )
-    run = partial(
-        jax.jit(run_solver, static_argnums=(0,)), jaxopt_solver=solver, inline=True
+    vrun_solver = jax.jit(
+        jax.vmap(run_solver, in_axes=((0, 0), 0, None)),
+        static_argnums=(2,),
+        inline=True,
     )
-    vrun = jax.vmap(run, in_axes=((0, 0), 0), out_axes=(0, 0))
+    batch_run_solver = lambda az_pol, coeffs: vrun_solver(az_pol, coeffs, solver)
+    # batch_run_solver = partial(
+    #     jax.vmap(
+    #         jax.jit(run_solver, static_argnames=("jaxopt_solver",), inline=True),
+    #         in_axes=((0, 0), 0, None),
+    #     ),
+    #     jaxopt_solver=solver,
+    # )
+    # batch_run = partial(run_solver, jaxopt_solver=solver)
+    # run = jax.jit(partial(run_solver, jaxopt_solver=solver))
+    # vrun = jax.vmap(run, in_axes=((0, 0), 0), out_axes=(0, 0))
 
-    def pt_vrun(jax_fn, coeffs, init_theta_phi) -> Tuple[torch.Tensor, torch.Tensor]:
+    def pt_vrun(
+        coeffs, init_theta_phi, jax_fn, batch_size: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Offset phi to be between (0, 2\pi] instead of (-\pi, \pi]
         azimuth = pitn.tract.direction.wrap_bound_modulo(
             init_theta_phi[1], 0, 2 * torch.pi
         )
+        if azimuth.ndim == 1:
+            azimuth = azimuth[..., None]
         azimuth = _t2j(azimuth)
-        polar = _t2j(init_theta_phi[0])
+        polar = init_theta_phi[0]
+        if polar.ndim == 1:
+            polar = polar[..., None]
+        polar = _t2j(polar)
         c = _t2j(coeffs)
+
+        if (
+            c.shape[0] < batch_size
+            or polar.shape[0] < batch_size
+            or azimuth.shape[0] < batch_size
+        ):
+            c_pad_shape = ((0, batch_size - max(0, c.shape[0])),) + (
+                ((0, 0),) * (c.ndim - 1)
+            )
+            c = jnp.pad(c, c_pad_shape, mode="constant", constant_values=0)
+
+            azimuth_valid_max_idx = azimuth.shape[0]
+            azimuth_pad_shape = ((0, max(0, batch_size - azimuth.shape[0])),) + (
+                ((0, 0),) * (azimuth.ndim - 1)
+            )
+            azimuth = jnp.pad(
+                azimuth, azimuth_pad_shape, mode="constant", constant_values=0
+            )
+
+            polar_valid_max_idx = polar.shape[0]
+            polar_pad_shape = ((0, max(0, batch_size - polar.shape[0])),) + (
+                ((0, 0),) * (polar.ndim - 1)
+            )
+            polar = jnp.pad(polar, polar_pad_shape, mode="constant", constant_values=0)
+        else:
+            azimuth_valid_max_idx = None
+            polar_valid_max_idx = None
+
         jax_res = jax_fn((azimuth, polar), c)
+
         t_res_azimuth = _j2t(jax_res[0], delete_from_jax=True)
         t_res_polar = _j2t(jax_res[1], delete_from_jax=True)
+        if azimuth_valid_max_idx is not None:
+            t_res_azimuth = t_res_azimuth[:azimuth_valid_max_idx]
+        if polar_valid_max_idx is not None:
+            t_res_polar = t_res_polar[:polar_valid_max_idx]
 
         # Un-offset result phi.
         res_phi = pitn.tract.direction.wrap_bound_modulo(
             t_res_azimuth, -torch.pi, torch.pi
         )
-        res_theta = t_res_polar
+        res_phi = res_phi.reshape(init_theta_phi[1].shape)
+        res_theta = t_res_polar.reshape(init_theta_phi[0].shape)
 
         return (res_theta, res_phi)
 
-    peak_finder_fn = partial(pt_vrun, jax_fn=vrun)
+    peak_finder_fn = partial(pt_vrun, jax_fn=batch_run_solver, batch_size=batch_size)
     return peak_finder_fn

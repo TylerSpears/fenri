@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from typing import Optional
+
 import einops
 import numpy as np
 import torch
@@ -45,6 +47,7 @@ def sample_3d(
     mode="bilinear",
     padding_mode="zeros",
     align_corners=True,
+    override_out_of_bounds_val: Optional[float] = None,
 ) -> torch.Tensor:
 
     if vol.ndim == 3:
@@ -85,6 +88,14 @@ def sample_3d(
     samples = F.grid_sample(
         v, grid=grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners
     )
+    # If out-of-bounds samples should be overridden, set those sample values now.
+    # Otherwise, the grid_sample() only interpolates with the padded values, which
+    # still makes them valid.
+    if override_out_of_bounds_val is not None:
+        samples.masked_fill_(
+            (grid < -1).any(dim=-1)[:, None] | (grid > 1).any(dim=-1)[:, None],
+            override_out_of_bounds_val,
+        )
     point_shape = tuple(coords_mm_zyx.shape[:-1])
     # If the volume contained channels, account for those.
     if vol.ndim > 3:

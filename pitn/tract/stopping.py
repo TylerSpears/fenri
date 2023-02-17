@@ -72,13 +72,15 @@ def gfa_threshold(
             affine_vox2mm=affine_vox2mm,
             mode="bilinear",
             align_corners=True,
+            override_out_of_bounds_val=-1.0,
         )
         samples.squeeze_(-1)
     # Re-expand samples and set stopped/invalid streamlines to a gfa value of -1
     # (always an invalid GFA).
     # samples = torch.masked_scatter()
-    null_samples = torch.ones_like(streamline_status, dtype=samples.dtype)
-    null_samples.masked_scatter_(streamline_status == CONTINUE, samples)
+    null_samples = -torch.ones_like(streamline_status, dtype=samples.dtype)
+    null_samples = torch.where(streamline_status == CONTINUE, samples, null_samples)
+    # null_samples.masked_scatter_(streamline_status == CONTINUE, samples)
     samples = null_samples
     # samples.masked_fill_(streamline_status != CONTINUE, -1)
     st_new = streamline_status.masked_fill(
