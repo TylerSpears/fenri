@@ -23,6 +23,14 @@ def coord_transform_3d(coords: torch.Tensor, affine_a2b: torch.Tensor) -> torch.
         new_shape = new_shape + (-1, -1)
         affine = affine_a2b.expand(*new_shape)
         c = coords
+    elif coords.ndim > affine_a2b.ndim + 1 and affine_a2b.ndim == 3:
+        new_shape = (
+            (affine_a2b.shape[0],)
+            + ((1,) * (coords.ndim - 2))
+            + tuple(affine_a2b.shape[1:])
+        )
+        affine = affine_a2b.view(*new_shape)
+        c = coords
     else:
         c = coords
         affine = affine_a2b
