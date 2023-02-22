@@ -209,7 +209,7 @@ p.train.optim.encoder.lr = 2e-4
 p.train.optim.decoder.lr = 1e-4
 p.train.optim.recon_decoder.lr = 5e-4
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=17, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=16, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
@@ -638,24 +638,14 @@ class ReducedDecoder(torch.nn.Module):
     ):
         # Take relative coordinate difference between the current context
         # coord and the query coord.
-        # rel_context_coord = context_coord - query_coord + self.TARGET_COORD_EPSILON
-        rel_context_coord = torch.clamp_min(
-            context_coord - query_coord,
-            (-context_vox_size / 2),
+        rel_context_coord = query_coord - context_coord
+        # Also normalize to [0, 1) by subtracting the lower bound of differences
+        # (- voxel size) and dividing by 2xupper bound (2 x voxel size).
+        rel_norm_context_coord = (rel_context_coord - -context_vox_size) / (
+            2 * context_vox_size
         )
-        # Also normalize to [0, 1)
-        # Coordinates are located in the center of the voxel. By the way
-        # the context vector is being constructed surrounding the query
-        # coord, the query coord is always within 1.5 x vox_size of the
-        # context (low-res space) coordinate. So, subtract the
-        # batch-and-channel-wise minimum, and divide by the known upper
-        # bound.
-        rel_norm_context_coord = (
-            rel_context_coord
-            - torch.amin(rel_context_coord, dim=(2, 3, 4), keepdim=True)
-        ) / (1.5 * context_vox_size)
         assert (rel_norm_context_coord >= 0).all() and (
-            rel_norm_context_coord < 1.0
+            rel_norm_context_coord <= 1.0
         ).all()
         encoded_rel_norm_context_coord = self.encode_relative_coord(
             rel_norm_context_coord
@@ -923,7 +913,7 @@ def validate_stage(
             # window inference method on the encoded volume.
             pred_fodf = monai.inferers.sliding_window_inference(
                 y_coords,
-                roi_size=(32, 32, 32),
+                roi_size=(36, 36, 36),
                 sw_batch_size=y_coords.shape[0],
                 predictor=lambda q: decoder(
                     query_coord=q,
