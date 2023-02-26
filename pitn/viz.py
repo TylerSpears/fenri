@@ -29,6 +29,94 @@ from pitn._lazy_loader import LazyLoader
 pitn = LazyLoader("pitn", globals(), "pitn")
 
 
+def plot_fodf_3d(theta, phi, sphere_vals, fig=None, **plot_trisurf_kwargs):
+    theta = torch.Tensor(theta)
+    phi = torch.Tensor(phi)
+    sphere_vals = torch.Tensor(sphere_vals)
+    if (
+        (theta.ndim > 1 and (theta.numel() / theta.shape[-1]) > 1)
+        or (phi.ndim > 1 and (phi.numel() / phi.shape[-1]) > 1)
+        or (sphere_vals.ndim > 1 and (sphere_vals.numel() / sphere_vals.shape[-1]) > 1)
+    ):
+        raise ValueError(
+            "Plotting can only accept 1 sphere to plot, got",
+            f"{tuple(theta.shape)}, {tuple(phi.shape)}, {tuple(sphere_vals.shape)}",
+        )
+    elif (theta.numel() != phi.numel()) or (phi.numel() != sphere_vals.numel()):
+        raise ValueError(
+            "Coordinates and function values must have the same number of elements",
+            f"got {theta.numel()}, {phi.numel()}, {sphere_vals.numel()}",
+        )
+
+    vals = sphere_vals.detach().cpu().numpy().flatten()
+    r = (vals - vals.min()) / (vals - vals.min()).max()
+    r = vals / vals.sum()
+
+    zyx = pitn.tract.local.unit_sphere2zyx(theta, phi)
+    x = r * zyx[:, 2].detach().cpu().numpy().flatten()
+    y = r * zyx[:, 1].detach().cpu().numpy().flatten()
+    z = r * zyx[:, 0].detach().cpu().numpy().flatten()
+    theta = theta.detach().cpu().numpy().flatten()
+    phi = phi.detach().cpu().numpy().flatten()
+
+    if fig is None:
+        fig = plt.figure(dpi=120)
+    ax = fig.add_subplot(projection="3d")
+    tri = mpl.tri.Triangulation(phi, theta)
+    ax.plot_trisurf(
+        x,
+        y,
+        z,
+        triangles=tri.triangles,
+        **{**dict(cmap="gnuplot", alpha=1, linewidth=0), **plot_trisurf_kwargs},
+    )
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+
+    return fig
+
+
+def plot_sphere_fn_vals(
+    theta, phi, fn_vals, subplots_kwargs: dict = dict(), **scatter_kwargs
+):
+    zyx = pitn.tract.local.unit_sphere2zyx(theta, phi)
+    x = zyx[:, 2].detach().cpu().numpy().flatten()
+    y = zyx[:, 1].detach().cpu().numpy().flatten()
+    z = zyx[:, 0].detach().cpu().numpy().flatten()
+    vals = fn_vals.detach().cpu().numpy().flatten()
+    vmax = vals.max()
+    vmin = -vmax
+    fig, axs = plt.subplots(
+        nrows=1, ncols=2, **{**{"dpi": 120, "figsize": (7, 3.5)}, **subplots_kwargs}
+    )
+    ax = axs[0]
+    distance_from_xy_plane_vals = np.copy(vals)
+    distance_from_xy_plane_vals[z < 0] = -vals[z < 0]
+    ax.scatter(
+        x,
+        y,
+        c=distance_from_xy_plane_vals,
+        **{**{"vmin": vmin, "vmax": vmax, "cmap": "coolwarm"}, **scatter_kwargs},
+    )
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+
+    ax = axs[1]
+    distance_from_xz_plane_vals = np.copy(vals)
+    distance_from_xz_plane_vals[y < 0] = -vals[y < 0]
+    ax.scatter(
+        x,
+        z,
+        c=distance_from_xz_plane_vals,
+        **{**{"vmin": vmin, "vmax": vmax, "cmap": "coolwarm"}, **scatter_kwargs},
+    )
+    ax.set_xlabel("X")
+    ax.set_ylabel("Z")
+
+    return fig
+
+
 def plot_im_grid(
     *ims,
     nrows: int = 3,

@@ -23,6 +23,8 @@ _unit_sphere2zyx = torch.jit.trace(
     ),
 )
 
+unit_sphere2zyx = _unit_sphere2zyx
+
 
 def _zyx2unit_sphere_theta_phi(
     coords_zyx: torch.Tensor,

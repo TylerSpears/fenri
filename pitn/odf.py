@@ -76,8 +76,8 @@ def get_torch_sh_transform(
     azimuth = azimuth_coord.detach().flatten().cpu().numpy()
     # The azimuth in dipy/scipy is set to be between (0, 2*pi], rather than (-pi, pi],
     # so the azimuth coordinate must be set to that compatible range.
-    if azimuth.min() < 0 and azimuth.min() >= -np.pi and azimuth.max() <= np.pi:
-        azimuth = azimuth + np.pi
+    if azimuth.min() < 0 and azimuth.min() >= -torch.pi and azimuth.max() <= torch.pi:
+        azimuth = pitn.tract.direction.wrap_bound_modulo(azimuth, 0, 2 * torch.pi)
     # The Tournier basis is what Mrtrix uses, so we'll default to that for now.
     # <https://mrtrix.readthedocs.io/en/3.0.4/concepts/spherical_harmonics.html#formulation-used-in-mrtrix3>
     # <https://github.com/dipy/dipy/blob/13af40fec09fb23a3692cb0bfdcb91d08acfd766/dipy/reconst/shm.py#L363>
@@ -142,7 +142,7 @@ def sample_sphere_coords(
         fn_coeffs = fn_coeffs[fn_mask]
     else:
         fn_mask = None
-
+    phi = pitn.tract.direction.wrap_bound_modulo(phi, 0, 2 * torch.pi)
     sh_transform, _, _ = get_torch_sh_transform(
         sh_order=sh_order, polar_coord=theta, azimuth_coord=phi
     )
