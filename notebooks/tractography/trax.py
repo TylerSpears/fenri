@@ -49,9 +49,6 @@ import functorch
 import jax
 import jax.config
 import jax.dlpack
-
-# jax.config.update("jax_enable_x64", True)
-# jax.config.update("jax_default_matmul_precision", 32)
 import jax.numpy as jnp
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -72,7 +69,9 @@ import pitn
 # jax.config.update("jax_disable_jit", True)
 # jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_infs", True)
-# jax.config.update("jax_disable_most_optimizations", True)
+
+# jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_default_matmul_precision", 32)
 
 
 plt.rcParams.update({"figure.autolayout": True})
@@ -340,7 +339,8 @@ max_sh_order = 8
 peaks_per_seed_vox = 2
 # Total seeds per voxel will be `seeds_per_vox_axis`^3
 seeds_per_vox_axis = 1
-seed_batch_size = 20
+# seed_batch_size = 20
+seed_batch_size = 2  #!DEBUG
 
 # Threshold parameter for peak finding in the seed voxels.
 # Element-wise filtering of sphere samples.
@@ -470,84 +470,6 @@ fn_linear_interp_zyx_tangent_t2theta_phi = partial(
     affine_vox2mm=affine_sar_vox2sar_mm,
     fn_peak_finder=peak_finder_fn_theta_phi_c2theta_phi,
 )
-
-# %%
-# # Reduced version of the full interpolation function, to be called only when expanding
-# # the seed points at the start of streamline estimation.
-# def _peaks_only_fn_linear_interp_zyx(
-#     target_coords_mm_zyx: torch.Tensor,
-#     fodf_coeffs_brain_vol: torch.Tensor,
-#     affine_vox2mm: torch.Tensor,
-#     sphere_samples_theta: torch.Tensor,
-#     sphere_samples_phi: torch.Tensor,
-#     sh_order: int,
-#     fodf_pdf_thresh_min: float,
-#     fmls_lobe_merge_ratio: float,
-#     lobe_fodf_pdf_filter_kwargs: dict,
-#     lobe_peak_to_max_peak_ratio: float,
-# ) -> pitn.tract.peak.PeaksContainer:
-#     # Initial interpolation of fodf coefficients at the target points.
-#     pred_sample_fodf_coeffs = pitn.odf.sample_odf_coeffs_lin_interp(
-#         target_coords_mm_zyx,
-#         fodf_coeff_vol=fodf_coeffs_brain_vol,
-#         affine_vox2mm=affine_vox2mm,
-#     )
-
-#     # Transform to fodf spherical samples.
-#     target_sphere_samples = pitn.odf.sample_sphere_coords(
-#         pred_sample_fodf_coeffs,
-#         theta=sphere_samples_theta,
-#         phi=sphere_samples_phi,
-#         sh_order=sh_order,
-#     )
-
-#     # Threshold spherical function values.
-#     target_sphere_samples = pitn.odf.thresh_fodf_samples_by_pdf(
-#         target_sphere_samples, fodf_pdf_thresh_min
-#     )
-
-#     # Segment lobes on the fodf samples in each voxel.
-#     lobe_labels = pitn.tract.peak.fmls_fodf_seg(
-#         target_sphere_samples,
-#         lobe_merge_ratio=fmls_lobe_merge_ratio,
-#         theta=sphere_samples_theta,
-#         phi=sphere_samples_phi,
-#     )
-
-#     # Refine the segmentation.
-#     lobe_labels = pitn.tract.peak.remove_fodf_labels_by_pdf(
-#         lobe_labels, target_sphere_samples, **lobe_fodf_pdf_filter_kwargs
-#     )
-#     lobe_labels = pitn.tract.peak.remove_fodf_labels_by_rel_peak(
-#         lobe_labels, target_sphere_samples, lobe_peak_to_max_peak_ratio
-#     )
-#     # Find the peaks from the lobe segmentation.
-#     peaks = pitn.tract.peak.peaks_from_segment(
-#         lobe_labels,
-#         target_sphere_samples,
-#         theta_coord=sphere_samples_theta,
-#         phi_coord=sphere_samples_phi,
-#     )
-
-#     return peaks
-
-
-# # Copy the static parameters from the full interplation function.
-# peaks_only_fn_linear_interp_zyx = partial(
-#     _peaks_only_fn_linear_interp_zyx,
-#     fodf_coeffs_brain_vol=coeffs,
-#     affine_vox2mm=affine_sar_vox2sar_mm,
-#     sphere_samples_theta=seed_theta,
-#     sphere_samples_phi=seed_phi,
-#     sh_order=max_sh_order,
-#     fodf_pdf_thresh_min=min_sample_pdf_threshold,
-#     fmls_lobe_merge_ratio=lobe_merge_ratio,
-#     lobe_fodf_pdf_filter_kwargs={
-#         "pdf_integral_min": min_lobe_pdf_integral_threshold,
-#         "pdf_peak_min": 0.0,
-#     },
-#     lobe_peak_to_max_peak_ratio=min_lobe_peak_to_max_peak_ratio,
-# )
 
 # %%
 # Reduced version of the full interpolation function, to be called only when expanding
@@ -745,7 +667,7 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
     full_streamline_len = torch.zeros_like(full_streamline_status).float() + step_size
     full_points_t = seed_batch_t_neg1_to_0[1].clone()
     full_tangent_t_theta_phi = torch.stack(
-        pitn.tract.local.zyx2unit_sphere_theta_phi(seed_batch_tangent_t0_zyx), -1
+        pitn.tract.local.zyx2unit_sphere_theta_phi(seed_batch_tangent_t0_zyx), dim=-1
     )
     full_tangent_t_zyx = seed_batch_tangent_t0_zyx
     full_points_tp1 = torch.zeros_like(full_points_t) * torch.nan

@@ -52,6 +52,8 @@ def plot_fodf_3d(theta, phi, sphere_vals, fig=None, **plot_trisurf_kwargs):
     r = (vals - vals.min()) / (vals - vals.min()).max()
     r = vals / vals.sum()
 
+    assert (theta.min() >= 0).all() and (theta.max() <= torch.pi).all()
+    assert (phi.min() > -torch.pi).all() and (phi.max() <= torch.pi).all()
     zyx = pitn.tract.local.unit_sphere2zyx(theta, phi)
     x = r * zyx[:, 2].detach().cpu().numpy().flatten()
     y = r * zyx[:, 1].detach().cpu().numpy().flatten()

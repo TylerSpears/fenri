@@ -6,8 +6,11 @@ import torch
 
 def __unit_sphere2zyx(theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
     #! Inputs to this function should generally be 64-bit floats! Precision is poor for
-    # 32-bit floats.
+    #! 32-bit floats.
     # r = 1 on the unit sphere.
+    # Phi is expected to be in (-pi, pi], but this formulation expects phi to be in
+    # (0, 2*pi].
+    phi = phi + torch.pi
     x = torch.sin(theta) * torch.cos(phi)
     y = torch.sin(theta) * torch.sin(phi)
     z = torch.cos(theta)
@@ -30,12 +33,26 @@ def _zyx2unit_sphere_theta_phi(
     coords_zyx: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     #! Inputs to this function should generally be 64-bit floats! Precision is poor for
-    # 32-bit floats.
+    #! 32-bit floats.
     z = coords_zyx[..., 0]
     y = coords_zyx[..., 1]
     x = coords_zyx[..., 2]
-    theta = torch.arccos(z)
-    phi = torch.arctan2(y, x)
+    r = torch.linalg.vector_norm(coords_zyx, ord=2, dim=-1, keepdim=False)
+    theta = torch.arccos(z / r)
+    # Azimuth is arbitrary if polar angle is 0, so just set to spherical origin.
+    azimuth = torch.where(
+        (theta != 0.0) & (theta != torch.pi),
+        torch.arctan2(y, x),
+        0 + torch.finfo(theta.dtype).tiny,
+    )
+    # The discontinuities of atan2 means we have to shift and cycle some values, but
+    # not others. Even though atan2 is in the (-pi, pi] range that we want, the actual
+    # mapping onto that range is not the same.
+    # Shift the negative values by 2*pi to bring into the range and shape of the
+    # azimuth angle back to (0, 2*pi]. Then, shift every point by -pi to get back to the
+    # phi range (-pi, pi].
+    azimuth = torch.where(azimuth < 0, azimuth + 2 * torch.pi, azimuth)
+    phi = azimuth - torch.pi
 
     return (theta, phi)
 
@@ -58,40 +75,40 @@ def gen_tract_step_rk4(
     init_direction_theta_phi: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
 
-    # Allow for a different initial direction vector than that found by the derivative
-    # function.
-    if (init_direction_theta_phi is None) or (
-        torch.as_tensor(init_direction_theta_phi) == 0
-    ).all():
-        k1 = fn_zyx_direction_t2theta_phi(start_point_zyx, init_direction_theta_phi)
-    else:
-        k1 = (init_direction_theta_phi[..., 0], init_direction_theta_phi[..., 1])
+    # # Allow for a different initial direction vector than that found by the derivative
+    # # function.
+    # if (init_direction_theta_phi is None) or (
+    #     torch.as_tensor(init_direction_theta_phi) == 0
+    # ).all():
+    k1 = fn_zyx_direction_t2theta_phi(start_point_zyx, init_direction_theta_phi)
+    # else:
+    #     k1 = (init_direction_theta_phi[..., 0], init_direction_theta_phi[..., 1])
     k1_theta, k1_phi = k1
     k1_zyx_tangent = _unit_sphere2zyx(k1_theta, k1_phi)
 
     k2 = fn_zyx_direction_t2theta_phi(
-        start_point_zyx + step_size / 2 * k1_zyx_tangent,
+        start_point_zyx + (step_size / 2 * k1_zyx_tangent),
         torch.stack([k1_theta, k1_phi], -1),
     )
     k2_theta, k2_phi = k2
     k2_zyx_tangent = _unit_sphere2zyx(k2_theta, k2_phi)
 
     k3 = fn_zyx_direction_t2theta_phi(
-        start_point_zyx + step_size / 2 * k2_zyx_tangent,
+        start_point_zyx + (step_size / 2 * k2_zyx_tangent),
         torch.stack([k2_theta, k2_phi], -1),
     )
     k3_theta, k3_phi = k3
     k3_zyx_tangent = _unit_sphere2zyx(k3_theta, k3_phi)
 
     k4 = fn_zyx_direction_t2theta_phi(
-        start_point_zyx + step_size * k3_zyx_tangent,
+        start_point_zyx + (step_size * k3_zyx_tangent),
         torch.stack([k3_theta, k3_phi], -1),
     )
     k4_theta, k4_phi = k4
     k4_zyx_tangent = _unit_sphere2zyx(k4_theta, k4_phi)
 
     weighted_summed_tangent = (
-        k1_zyx_tangent + 2 * k2_zyx_tangent + 2 * k3_zyx_tangent + k4_zyx_tangent
+        k1_zyx_tangent + (2 * k2_zyx_tangent) + (2 * k3_zyx_tangent) + k4_zyx_tangent
     )
     # Scaling the vectors to unit norm substitutes as the division by 6.
     tangent_tp1 = (

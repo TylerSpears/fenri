@@ -565,6 +565,10 @@ def _jax_unbatched_negated_odf_sample(
     degree_max: int,
     min_sphere_val: float,
 ) -> jax.Array:
+    # Modulo params to cycle values back if the optimizer chooses parameters outside
+    # the set ranges for the azimuth and polar coordinates. Not the same as a
+    # constrained optimization, though, as the circular numbering is naturally how the
+    # coordinate spaces operate.
     azimuth = params_azimuth_polar[0] % (2 * jnp.pi)
     azimuth = jnp.clip(azimuth, a_min=jnp.finfo(azimuth.dtype).tiny)
     polar = params_azimuth_polar[1] % jnp.pi
@@ -577,6 +581,13 @@ def _jax_unbatched_negated_odf_sample(
     # sphere_sample = jnp.where(sphere_sample < min_sphere_val, 0.0, sphere_sample)
 
     sphere_sample = -sphere_sample
+    # jax.debug.print(
+    #     "Az {az} Pol {pol} fodf val {fodf}",
+    #     az=azimuth,
+    #     pol=polar,
+    #     fodf=sphere_sample,
+    #     ordered=True,
+    # )
     # print("Not jitted optimization function!", type(sphere_sample))
     return sphere_sample
 
@@ -607,8 +618,14 @@ def get_grad_descent_peak_finder_fn(
             azimuth_polar,
             coeffs,
         )
-        # jax.debug.print(f"Result error: {str(solution.state.error)}")
-        # jax.debug.print(f"Result step size: {str(solution.state.stepsize)}")
+        # jax.debug.print(
+        #     "Error: {error}, Step size: {step_size}, Az {az} Pol {pol}",
+        #     error=solution.state.error,
+        #     step_size=solution.state.stepsize,
+        #     az=solution.params[0],
+        #     pol=solution.params[1],
+        #     ordered=True,
+        # )
         sol_azimuth, sol_polar = solution.params
         sol_azimuth = sol_azimuth % (2 * jnp.pi)
         sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
@@ -653,16 +670,15 @@ def get_grad_descent_peak_finder_fn(
         coeffs, init_theta_phi, jax_fn, batch_size: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Offset phi to be between (0, 2\pi] instead of (-\pi, \pi]
-        azimuth = pitn.tract.direction.wrap_bound_modulo(
-            init_theta_phi[1], 0, 2 * torch.pi
-        )
-        if azimuth.ndim == 1:
-            azimuth = azimuth[..., None]
-        azimuth = _t2j(azimuth)
         polar = init_theta_phi[0]
         if polar.ndim == 1:
             polar = polar[..., None]
         polar = _t2j(polar)
+
+        azimuth = init_theta_phi[1] + torch.pi
+        if azimuth.ndim == 1:
+            azimuth = azimuth[..., None]
+        azimuth = _t2j(azimuth)
         c = _t2j(coeffs)
 
         if (
@@ -704,9 +720,7 @@ def get_grad_descent_peak_finder_fn(
             t_res_polar = t_res_polar[:polar_valid_max_idx]
 
         # Un-offset result phi.
-        res_phi = pitn.tract.direction.wrap_bound_modulo(
-            t_res_azimuth, -torch.pi, torch.pi
-        )
+        res_phi = t_res_azimuth - torch.pi
         res_phi = res_phi.reshape(init_theta_phi[1].shape)
         res_theta = t_res_polar.reshape(init_theta_phi[0].shape)
 
