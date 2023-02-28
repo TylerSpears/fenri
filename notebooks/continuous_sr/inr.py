@@ -201,13 +201,13 @@ p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=4,
     samples_per_subj_per_epoch=40,
-    max_epochs=200,
+    max_epochs=250,
     dwi_recon_epoch_proportion=0.05,
 )
 # Optimizer kwargs for training.
-p.train.optim.encoder.lr = 2e-4
-p.train.optim.decoder.lr = 1e-4
-p.train.optim.recon_decoder.lr = 5e-4
+p.train.optim.encoder.lr = 5e-4
+p.train.optim.decoder.lr = 5e-4
+p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
 p.train.dataloader = dict(num_workers=16, persistent_workers=True, prefetch_factor=3)
 
@@ -269,7 +269,7 @@ assert len(set(p.train.subj_ids) & set(p.test.subj_ids)) == 0
 assert len(set(p.val.subj_ids) & set(p.test.subj_ids)) == 0
 
 # %%
-ppr(p.to_dict())
+ic(p.to_dict())
 
 # %%
 # Select which parameters to store in the aim meta-params.
@@ -949,6 +949,7 @@ def validate_stage(
                             )
                         )
                     )
+                    target_dpi = max(target_dpi, 175)
                     fig = plt.figure(dpi=target_dpi, figsize=figsize)
                     fig, _ = pitn.viz.plot_fodf_coeff_slices(
                         pred_fodf,
@@ -957,7 +958,8 @@ def validate_stage(
                         fig=fig,
                         fodf_vol_labels=("Predicted", "Target", "Pred - GT"),
                         imshow_kwargs={
-                            "interpolation": "nearest",
+                            # "interpolation": "nearest",
+                            "interpolation": "antialiased",
                             "cmap": "gray",
                         },
                     )

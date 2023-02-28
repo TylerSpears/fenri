@@ -34,8 +34,12 @@ def topk_peaks(
     topk_peaks = (
         torch.take_along_dim(fodf_peaks, topk_peak_idx, dim=-1) * topk_peak_valid
     )
-    topk_theta = torch.take(theta_peaks, topk_peak_idx) * topk_peak_valid
-    topk_phi = torch.take(phi_peaks, topk_peak_idx) * topk_peak_valid
+    topk_theta = (
+        torch.take_along_dim(theta_peaks, topk_peak_idx, dim=-1) * topk_peak_valid
+    )
+    topk_phi = torch.take_along_dim(phi_peaks, topk_peak_idx, dim=-1) * topk_peak_valid
+    # topk_theta = torch.take(theta_peaks, topk_peak_idx) * topk_peak_valid
+    # topk_phi = torch.take(phi_peaks, topk_peak_idx) * topk_peak_valid
 
     return PeaksContainer(
         peaks=topk_peaks,
@@ -581,14 +585,14 @@ def _jax_unbatched_negated_odf_sample(
     # sphere_sample = jnp.where(sphere_sample < min_sphere_val, 0.0, sphere_sample)
 
     sphere_sample = -sphere_sample
-    # jax.debug.print(
-    #     "Az {az} Pol {pol} fodf val {fodf}",
-    #     az=azimuth,
-    #     pol=polar,
-    #     fodf=sphere_sample,
-    #     ordered=True,
-    # )
-    # print("Not jitted optimization function!", type(sphere_sample))
+    jax.debug.print(
+        "===Az {az} Pol {pol} fodf val {fodf}",
+        az=azimuth,
+        pol=polar,
+        fodf=sphere_sample,
+        ordered=True,
+    )
+    print("Not jitted optimization function!", type(sphere_sample))
     return sphere_sample
 
 
@@ -618,14 +622,15 @@ def get_grad_descent_peak_finder_fn(
             azimuth_polar,
             coeffs,
         )
-        # jax.debug.print(
-        #     "Error: {error}, Step size: {step_size}, Az {az} Pol {pol}",
-        #     error=solution.state.error,
-        #     step_size=solution.state.stepsize,
-        #     az=solution.params[0],
-        #     pol=solution.params[1],
-        #     ordered=True,
-        # )
+        jax.debug.print(
+            "Error: {error}, Iter {iteration}, Step size: {step_size}, Az {az} Pol {pol}",
+            error=solution.state.error,
+            step_size=solution.state.stepsize,
+            az=solution.params[0],
+            pol=solution.params[1],
+            iteration=solution.state.iter_num,
+            ordered=True,
+        )
         sol_azimuth, sol_polar = solution.params
         sol_azimuth = sol_azimuth % (2 * jnp.pi)
         sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
@@ -711,7 +716,6 @@ def get_grad_descent_peak_finder_fn(
             polar_valid_max_idx = None
 
         jax_res = jax_fn((azimuth, polar), c)
-
         t_res_azimuth = _j2t(jax_res[0], delete_from_jax=True)
         t_res_polar = _j2t(jax_res[1], delete_from_jax=True)
         if azimuth_valid_max_idx is not None:

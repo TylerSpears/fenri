@@ -30,6 +30,7 @@ from typing import Optional, Tuple
 
 # Change default behavior of jax GPU memory allocation.
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".20"
 
 # visualization libraries
@@ -128,6 +129,58 @@ assert hcp_low_res_data_dir.exists()
 assert hcp_low_res_fodf_dir.exists()
 assert fibercup_fodf_dir.exists()
 
+# %%
+network_weights_f = (
+    Path("/data/srv/outputs/pitn/results")
+    / "tmp"
+    / "2023-02-22T01_29_25"
+    / "state_dict_epoch_249_step_50000.pt"
+)
+assert network_weights_f.exists()
+
+# %%
+# Parameters
+max_sh_order = 8
+
+# Seed creation.
+peaks_per_seed_vox = 2
+# Total seeds per voxel will be `seeds_per_vox_axis`^3
+seeds_per_vox_axis = 3
+seed_batch_size = 2
+
+# Threshold parameter for peak finding in the seed voxels.
+# Element-wise filtering of sphere samples.
+fodf_sample_min_val = 0.005
+fodf_sample_min_quantile_thresh = 0.001
+dipy_relative_peak_threshold = 0.2
+dipy_min_separation_angle = 20
+
+# RK4 estimation
+step_size = 0.4
+alpha_exponential_moving_avg = 0.6
+tracking_fodf_sample_min_val = 0.01
+# Seems that MRtrix's Newton optimization also has a tolerance value of 0.001, max
+# iterations of 100.
+# <https://github.com/MRtrix3/mrtrix3/blob/f633dfd7e9080f71877ea6a4619dabdde99a0fb6/src/dwi/tractography/SIFT2/coeff_optimiser.cpp#L369>
+grad_descent_kwargs = dict(
+    tol=1e-3,
+    stepsize=0.2,
+    # maxiter=100,
+    acceleration=True,
+    # implicit_diff=True,
+    implicit_diff=False,
+    jit=True,
+    # jit=False,  #!DEBUG
+    unroll=True,
+    # verbose=True,  #!DEBUG
+)
+
+# Stopping & invalidation criteria.
+min_streamline_len = 30
+max_streamline_len = 300
+fa_min_threshold = 0.1
+max_angular_thresh_rad = torch.pi / 4
+
 # %% [markdown]
 # ## Seed-Based Tractography Test
 
@@ -142,31 +195,32 @@ dataset_selection = "HCP"
 # HCP Subject scan.
 if dataset_selection.casefold() == "hcp".casefold():
     sample_fod_f = (
-        hcp_full_res_fodf_dir / "162329" / "T1w" / "postproc_wm_msmt_csd_fod.nii.gz"
+        hcp_low_res_fodf_dir / "162329" / "T1w" / "postproc_wm_msmt_csd_fod.nii.gz"
     )
     fod_coeff_im = nib.load(sample_fod_f)
     fod_coeff_im = nib.as_closest_canonical(fod_coeff_im)
     print("Original shape", fod_coeff_im.shape)
     print("Original affine", fod_coeff_im.affine)
+
+    sample_dwi_f = hcp_low_res_data_dir / "162329" / "T1w" / "Diffusion" / "data.nii.gz"
+    dwi_im = nib.load(sample_dwi_f)
+    dwi_im = nib.as_closest_canonical(dwi_im)
+
     mask_f = sample_fod_f.parent / "postproc_nodif_brain_mask.nii.gz"
     mask_im = nib.load(mask_f)
     mask_im = nib.as_closest_canonical(mask_im)
-    white_matter_mask_f = sample_fod_f.parent / "postproc_5tt_parcellation.nii.gz"
-    wm_mask_im = nib.load(white_matter_mask_f)
-    wm_mask_im = nib.as_closest_canonical(wm_mask_im)
-    wm_mask_im = wm_mask_im.slicer[..., 2]
 
-    # Pre-select voxels of interest in RAS+ space for this specific subject.
-    lobe_vox_idx = dict(
-        # CC forceps minor, strong L-R uni-modal lobe
-        cc_lr_lobe_idx=(55, 98, 53),
-        # Dual-polar approx. equal volume fiber crossing
-        lr_and_ap_bipolar_lobe_idx=(70, 106, 54),
-        # Vox. adjacent to CST, tri-polar
-        tri_polar_lobe_idx=(60, 68, 43),
-        # Direct CST voxel
-        cst_si_lobe_idx=(59, 63, 31),
-    )
+    fa_f = sample_fod_f.parent / "postproc_dti-fa.nii.gz"
+    fa_im = nib.load(fa_f)
+    fa_im = nib.as_closest_canonical(fa_im)
+
+    ##
+    SEED_MASK_FNAME = "L_CST_aligned_seed-roi.nii.gz"
+    ##
+    seed_roi_mask_f = sample_fod_f.parent / "rois" / SEED_MASK_FNAME
+    seed_roi_mask_im = nib.load(seed_roi_mask_f)
+    seed_roi_mask_im = nib.as_closest_canonical(seed_roi_mask_im)
+
 elif dataset_selection.casefold() == "fibercup".casefold():
     # Fibercup phantom data.
     sample_fod_f = fibercup_fodf_dir / "B1-3_bval-1500_wm_fod_coeffs.nii.gz"
@@ -192,28 +246,6 @@ elif dataset_selection.casefold() == "fibercup".casefold():
 
 
 # %%
-# # Fibercup phantom data.
-# sample_fod_f = fibercup_fodf_dir / "B1-3_bval-1500_wm_fod_coeffs.nii.gz"
-# fod_coeff_im = nib.load(sample_fod_f)
-# fod_coeff_im = nib.as_closest_canonical(fod_coeff_im)
-# print("Original shape", fod_coeff_im.shape)
-# print("Original affine", fod_coeff_im.affine)
-# mask_f = fibercup_fodf_dir.parent / "dwi" / "B1-3_mask.nii.gz"
-# mask_im = nib.load(mask_f)
-# mask_im = nib.as_closest_canonical(mask_im)
-# white_matter_mask_f = mask_f
-# wm_mask_im = nib.load(white_matter_mask_f)
-# wm_mask_im = nib.as_closest_canonical(wm_mask_im)
-
-# # Pre-select voxels of interest in RAS+ space.
-# lobe_vox_idx = dict(
-#     unipole_lr_c_lobe_idx=(51, 40, 1),
-#     unipole_left_A_lobe_idx=(41, 34, 1),
-#     bipole_lr_left_A_lobe_idx=(45, 24, 1),
-#     two_crossing_center_A_lobe_idx=(32, 47, 1),
-#     three_crossing_right_A_lobe_idx=(24, 39, 1),
-# )
-# %%
 # Re-orient volumes from RAS to SAR (xyz -> zyx)
 nib_affine_vox2ras_mm = fod_coeff_im.affine
 affine_ras_vox2ras_mm = torch.from_numpy(nib_affine_vox2ras_mm).to(device)
@@ -236,20 +268,34 @@ affine_sar_vox2sar_mm = affine_ras2sar @ (affine_ras_vox2ras_mm @ affine_sar2ras
 sar_fod = einops.rearrange(fod_coeff_im.get_fdata(), "x y z coeffs -> z y x coeffs")
 fod_coeff_im = nib.Nifti1Image(
     sar_fod,
-    affine=(affine_sar_vox2sar_mm).cpu().numpy(),
+    affine=affine_sar_vox2sar_mm.cpu().numpy(),
     header=fod_coeff_im.header,
 )
+sar_dwi = einops.rearrange(dwi_im.get_fdata(), "x y z b_grads -> z y x b_grads")
+dwi_im = nib.Nifti1Image(
+    sar_dwi, affine=affine_sar_vox2sar_mm.cpu().numpy(), header=dwi_im.header
+)
+
 sar_mask = einops.rearrange(mask_im.get_fdata().astype(bool), "x y z -> z y x")
 mask_im = nib.Nifti1Image(
     sar_mask,
-    affine=(affine_sar_vox2sar_mm).cpu().numpy(),
+    affine=affine_sar_vox2sar_mm.cpu().numpy(),
     header=mask_im.header,
 )
-sar_wm_mask = einops.rearrange(wm_mask_im.get_fdata().astype(bool), "x y z -> z y x")
-wm_mask_im = nib.Nifti1Image(
-    sar_wm_mask,
-    affine=(affine_sar_vox2sar_mm).cpu().numpy(),
-    header=wm_mask_im.header,
+sar_fa = einops.rearrange(fa_im.get_fdata(), "x y z -> z y x")
+fa_im = nib.Nifti1Image(
+    sar_fa,
+    affine=affine_sar_vox2sar_mm.cpu().numpy(),
+    header=fa_im.header,
+)
+
+sar_roi_seed_mask = einops.rearrange(
+    seed_roi_mask_im.get_fdata().astype(bool), "x y z -> z y x"
+)
+seed_roi_mask_im = nib.Nifti1Image(
+    sar_roi_seed_mask,
+    affine=affine_sar_vox2sar_mm.cpu().numpy(),
+    header=seed_roi_mask_im.header,
 )
 
 print(fod_coeff_im.affine)
@@ -257,48 +303,57 @@ print(fod_coeff_im.shape)
 print(mask_im.affine)
 print(mask_im.shape)
 
-# Flip the pre-selected voxels.
-sar_vox_idx = pitn.affine.coord_transform_3d(
-    affine_ras2sar.new_tensor(list(lobe_vox_idx.values())),
-    affine_ras2sar,
-)
-sar_vox_idx = sar_vox_idx.int().cpu().tolist()
-for i, k in enumerate(lobe_vox_idx.keys()):
-    lobe_vox_idx[k] = tuple(sar_vox_idx[i])
-# cc_lr_lobe_idx, lr_and_ap_bipolar_lobe_idx, tri_polar_lobe_idx = tuple(
-#     sar_vox_idx.int().cpu().tolist()
-# )
-# cc_lr_lobe_idx = tuple(cc_lr_lobe_idx)
-# lr_and_ap_bipolar_lobe_idx = tuple(lr_and_ap_bipolar_lobe_idx)
-# tri_polar_lobe_idx = tuple(tri_polar_lobe_idx)
-# print(cc_lr_lobe_idx, lr_and_ap_bipolar_lobe_idx, tri_polar_lobe_idx)
-
 # %%
 coeffs = fod_coeff_im.get_fdata()
 coeffs = torch.from_numpy(coeffs).to(device)
-fod_coeff_im.uncache()
 # Move to channels-first layout.
 coeffs = einops.rearrange(coeffs, "z y x coeffs -> coeffs z y x")
+fod_coeff_im.uncache()
+
 brain_mask = mask_im.get_fdata().astype(bool)
 brain_mask = torch.from_numpy(brain_mask).to(device)
-mask_im.uncache()
 brain_mask = einops.rearrange(brain_mask, "z y x -> 1 z y x")
-wm_mask = torch.from_numpy(wm_mask_im.get_fdata().astype(bool)).to(device)
-wm_mask = einops.rearrange(wm_mask, "z y x -> 1 z y x")
-wm_mask_im.uncache()
+mask_im.uncache()
+
+dwi = dwi_im.get_fdata()
+dwi = torch.from_numpy(dwi).to(device)
+dwi = einops.rearrange(dwi, "z y x b_grads -> b_grads z y x")
+dwi = dwi * brain_mask
+dwi_im.uncache()
+
+
+fa = torch.from_numpy(fa_im.get_fdata()).to(device)
+fa = einops.rearrange(fa, "z y x -> 1 z y x")
+fa = fa * brain_mask
+fa_im.uncache()
+
+seed_roi_mask = torch.from_numpy(seed_roi_mask_im.get_fdata().astype(bool)).to(device)
+seed_roi_mask = einops.rearrange(seed_roi_mask, "z y x -> 1 z y x")
+seed_roi_mask = seed_roi_mask * brain_mask
+seed_roi_mask_im.uncache()
 
 # %%
 seed_mask = torch.zeros_like(brain_mask).bool()
 
 if dataset_selection.casefold() == "HCP".casefold():
 
-    select_vox_idx = lobe_vox_idx["cst_si_lobe_idx"]
-    seed_mask[0, select_vox_idx[0], select_vox_idx[1], select_vox_idx[2]] = True
-    selected_seed_vox_name = None
-
-    # selected_seed_vox_name = "four-vox"
-    # for vox_idx in lobe_vox_idx.values():
-    #     seed_mask[0, vox_idx[0], vox_idx[1], vox_idx[2]] = True
+    selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
+    # #!DEBUG
+    seed_roi_mask = 0 * seed_roi_mask
+    seed_roi_mask[:, 16:17, 38:39, 33:34] = True
+    # roi_shape = seed_roi_mask.shape
+    # s_roi = einops.rearrange(seed_roi_mask, "1 z y x -> (z y x)")
+    # mask_idx = torch.where(s_roi)
+    # s_roi = s_roi * 0
+    # s_roi[(mask_idx[0][140:142],)] = True
+    # seed_roi_mask = einops.rearrange(
+    #     s_roi,
+    #     "(z y x) -> 1 z y x",
+    #     z=seed_roi_mask.shape[1],
+    #     y=seed_roi_mask.shape[2],
+    # )
+    # #!
+    seed_mask = (1 + seed_mask) * seed_roi_mask
 
 elif dataset_selection.casefold() == "fibercup".casefold():
     # select_vox_idx = lobe_vox_idx["unipole_left_A_lobe_idx"]
@@ -316,58 +371,11 @@ print(seed_mask.shape)
 
 
 # %%
-# sphere = dipy.data.HemiSphere.from_sphere(
-#     dipy.data.get_sphere("repulsion724")
-# ).subdivide(1)
 seed_sphere = dipy.data.get_sphere("repulsion724")
-# sphere = dipy.data.HemiSphere.from_sphere(
-#     dipy.data.get_sphere("repulsion724")
-# ).subdivide(2)
 
 seed_theta, seed_phi = pitn.odf.get_torch_sample_sphere_coords(
     seed_sphere, coeffs.device, coeffs.dtype
 )
-
-# nearest_sphere_samples = pitn.odf.adjacent_sphere_points_idx(theta=theta, phi=phi)
-# nearest_sphere_samples_idx = nearest_sphere_samples[0]
-# nearest_sphere_samples_valid_mask = nearest_sphere_samples[1]
-
-# %%
-max_sh_order = 8
-
-# Seed creation.
-peaks_per_seed_vox = 2
-# Total seeds per voxel will be `seeds_per_vox_axis`^3
-seeds_per_vox_axis = 1
-# seed_batch_size = 20
-seed_batch_size = 2  #!DEBUG
-
-# Threshold parameter for peak finding in the seed voxels.
-# Element-wise filtering of sphere samples.
-fodf_sample_min_val = 0.005
-fodf_sample_min_quantile_thresh = 0.001
-dipy_relative_peak_threshold = 0.2
-dipy_min_separation_angle = 20
-
-# RK4 estimation
-step_size = 0.4
-alpha_exponential_moving_avg = 1.0
-tracking_fodf_sample_min_val = 0.01
-grad_descent_kwargs = dict(
-    tol=1e-4,
-    stepsize=0.1,
-    acceleration=True,
-    implicit_diff=True,
-    # jit=False,  #!DEBUG
-    # unroll=True,
-    # verbose=True,  #!DEBUG
-)
-
-# Stopping & invalidation criteria.
-min_streamline_len = 40
-max_streamline_len = 200
-gfa_min_threshold = 0.4
-max_angular_thresh_rad = torch.pi / 3
 
 # %% [markdown]
 # ### Tractography Reconstruction Loop - Trilinear Interpolation
@@ -395,42 +403,6 @@ peak_finder_fn_theta_phi_c2theta_phi = pitn.tract.peak.get_grad_descent_peak_fin
     min_sphere_val=tracking_fodf_sample_min_val,
     **grad_descent_kwargs,
 )
-
-# %% [markdown]
-# ---
-
-# %%
-# @partial(jax.vmap, in_axes=(0, None))
-# def f(a, b):
-#     print("Hitting f")
-#     return a + b
-# def g(a, b, fn):
-#     print("Hitting g")
-#     return fn(a, b), fn(b, a)
-
-# g_ = partial(g, fn=f)
-# a = jnp.arange(1, 10).reshape(3, 3)
-# b = jnp.arange(1, 4) / 10
-
-
-# g_(a, b)
-
-# %%
-# n = jnp.arange(0, max_sh_order+1, step=2)
-# m = jnp.concatenate([jnp.arange(-n_, n_ + 1) for n_ in n])
-# n = jnp.concatenate([(jnp.arange(-n_, n_ + 1) * 0) + n_ for n_ in n])
-# ic(m)
-# ic(n);
-# az = jnp.linspace(0.01, 1.75*jnp.pi, 5).reshape(-1, 1)
-# pol = jnp.linspace(0.01, 0.87*jnp.pi, 5).reshape(-1, 1)
-
-# print(jax.vmap(jax.scipy.special.sph_harm, in_axes=(None, None, 0, 0))(m, n, az, pol).shape)
-# print(jax.scipy.special.sph_harm(m, n, az, pol).shape)
-
-# %% [markdown]
-# ---
-
-# %%
 
 # %%
 def _fn_linear_interp_zyx_tangent_t2theta_phi(
@@ -472,6 +444,531 @@ fn_linear_interp_zyx_tangent_t2theta_phi = partial(
 )
 
 # %%
+# INR Interpolator
+# Encoding model
+class INREncoder(torch.nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        interior_channels: int,
+        out_channels: int,
+        n_res_units: int,
+        n_dense_units: int,
+        activate_fn,
+    ):
+        super().__init__()
+
+        self.init_kwargs = dict(
+            in_channels=in_channels,
+            interior_channels=interior_channels,
+            out_channels=out_channels,
+            n_res_units=n_res_units,
+            n_dense_units=n_dense_units,
+            activate_fn=activate_fn,
+        )
+
+        self.in_channels = in_channels
+        self.interior_channels = interior_channels
+        self.out_channels = out_channels
+
+        if isinstance(activate_fn, str):
+            activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
+
+        self._activation_fn_init = activate_fn
+        self.activate_fn = activate_fn()
+
+        # Pad to maintain the same input shape.
+        self.pre_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.in_channels,
+                self.in_channels,
+                kernel_size=1,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.in_channels,
+                self.interior_channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
+        )
+
+        # Construct the densely-connected cascading layers.
+        # Create n_dense_units number of dense units.
+        top_level_units = list()
+        for _ in range(n_dense_units):
+            # Create n_res_units number of residual units for every dense unit.
+            res_layers = list()
+            for _ in range(n_res_units):
+                res_layers.append(
+                    pitn.nn.layers.ResBlock3dNoBN(
+                        self.interior_channels,
+                        kernel_size=3,
+                        activate_fn=activate_fn,
+                        padding="same",
+                        padding_mode="reflect",
+                    )
+                )
+            top_level_units.append(
+                pitn.nn.layers.DenseCascadeBlock3d(self.interior_channels, *res_layers)
+            )
+
+        # Wrap everything into a densely-connected cascade.
+        self.cascade = pitn.nn.layers.DenseCascadeBlock3d(
+            self.interior_channels, *top_level_units
+        )
+
+        self.post_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.interior_channels,
+                self.interior_channels,
+                kernel_size=5,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.interior_channels,
+                self.out_channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.ReplicationPad3d((1, 0, 1, 0, 1, 0)),
+            torch.nn.AvgPool3d(kernel_size=2, stride=1),
+            torch.nn.Conv3d(
+                self.out_channels,
+                self.out_channels,
+                kernel_size=1,
+                padding="same",
+                padding_mode="reflect",
+            ),
+        )
+        # self.post_conv = torch.nn.Conv3d(
+        #     self.interior_channels,
+        #     self.out_channels,
+        #     kernel_size=3,
+        #     padding="same",
+        #     padding_mode="reflect",
+        # )
+
+    def forward(self, x: torch.Tensor):
+        y = self.pre_conv(x)
+        y = self.activate_fn(y)
+        y = self.cascade(y)
+        y = self.activate_fn(y)
+        y = self.post_conv(y)
+
+        return y
+
+
+class ReducedDecoder(torch.nn.Module):
+    def __init__(
+        self,
+        context_v_features: int,
+        out_features: int,
+        m_encode_num_freqs: int,
+        sigma_encode_scale: float,
+        in_features=None,
+    ):
+        super().__init__()
+        self.init_kwargs = dict(
+            context_v_features=context_v_features,
+            out_features=out_features,
+            m_encode_num_freqs=m_encode_num_freqs,
+            sigma_encode_scale=sigma_encode_scale,
+            in_features=in_features,
+        )
+
+        # Determine the number of input features needed for the MLP.
+        # The order for concatenation is
+        # 1) ctx feats over the low-res input space, unfolded over a 3x3x3 window
+        # ~~2) target voxel shape~~
+        # 3) absolute coords of this forward pass' prediction target
+        # 4) absolute coords of the high-res target voxel
+        # ~~5) relative coords between high-res target coords and this forward pass'
+        #    prediction target, normalized by low-res voxel shape~~
+        # 6) encoding of relative coords
+        self.context_v_features = context_v_features
+        self.ndim = 3
+        self.m_encode_num_freqs = m_encode_num_freqs
+        self.sigma_encode_scale = torch.as_tensor(sigma_encode_scale)
+        self.n_encode_features = self.ndim * 2 * self.m_encode_num_freqs
+        self.n_coord_features = 2 * self.ndim + self.n_encode_features
+        self.internal_features = self.context_v_features + self.n_coord_features
+
+        self.in_features = in_features
+        self.out_features = out_features
+
+        # "Swish" function, recommended in MeshFreeFlowNet
+        activate_cls = torch.nn.SiLU
+        self.activate_fn = activate_cls(inplace=True)
+        # Optional resizing linear layer, if the input size should be different than
+        # the hidden layer size.
+        if self.in_features is not None:
+            self.lin_pre = torch.nn.Linear(self.in_features, self.context_v_features)
+            self.norm_pre = None
+        else:
+            self.lin_pre = None
+            self.norm_pre = None
+        self.norm_pre = None
+
+        # Internal hidden layers are two res MLPs.
+        self.internal_res_repr = torch.nn.ModuleList(
+            [
+                pitn.nn.inr.SkipMLPBlock(
+                    n_context_features=self.context_v_features,
+                    n_coord_features=self.n_coord_features,
+                    n_dense_layers=3,
+                    activate_fn=activate_cls,
+                )
+                for _ in range(2)
+            ]
+        )
+        self.lin_post = torch.nn.Linear(self.context_v_features, self.out_features)
+
+    def encode_relative_coord(self, coords):
+        c = einops.rearrange(coords, "b d x y z -> (b x y z) d")
+        sigma = self.sigma_encode_scale.expand_as(c).to(c)[..., None]
+        encode_pos = pitn.nn.inr.fourier_position_encoding(
+            c, sigma_scale=sigma, m_num_freqs=self.m_encode_num_freqs
+        )
+
+        encode_pos = einops.rearrange(
+            encode_pos,
+            "(b x y z) d -> b d x y z",
+            x=coords.shape[2],
+            y=coords.shape[3],
+            z=coords.shape[4],
+        )
+        return encode_pos
+
+    def sub_grid_forward(
+        self,
+        context_val,
+        context_coord,
+        query_coord,
+        context_vox_size,
+        # query_vox_size,
+        return_rel_context_coord=False,
+    ):
+        # Take relative coordinate difference between the current context
+        # coord and the query coord.
+        rel_context_coord = query_coord - context_coord
+        # Also normalize to [0, 1) by subtracting the lower bound of differences
+        # (- voxel size) and dividing by 2xupper bound (2 x voxel size).
+        rel_norm_context_coord = (rel_context_coord - -context_vox_size) / (
+            2 * context_vox_size
+        )
+        assert (rel_norm_context_coord >= 0).all() and (
+            rel_norm_context_coord <= 1.0
+        ).all()
+        encoded_rel_norm_context_coord = self.encode_relative_coord(
+            rel_norm_context_coord
+        )
+
+        # Perform forward pass of the MLP.
+        if self.norm_pre is not None:
+            context_val = self.norm_pre(context_val)
+        context_feats = einops.rearrange(context_val, "b c x y z -> (b x y z) c")
+
+        # q_vox_size = query_vox_size.expand_as(rel_norm_context_coord)
+        coord_feats = (
+            # q_vox_size,
+            context_coord,
+            query_coord,
+            # rel_norm_context_coord,
+            encoded_rel_norm_context_coord,
+        )
+        coord_feats = torch.cat(coord_feats, dim=1)
+        spatial_layout = {
+            "b": coord_feats.shape[0],
+            "x": coord_feats.shape[2],
+            "y": coord_feats.shape[3],
+            "z": coord_feats.shape[4],
+        }
+
+        coord_feats = einops.rearrange(coord_feats, "b c x y z -> (b x y z) c")
+        x_coord = coord_feats
+        sub_grid_pred = context_feats
+
+        if self.lin_pre is not None:
+            sub_grid_pred = self.lin_pre(sub_grid_pred)
+            sub_grid_pred = self.activate_fn(sub_grid_pred)
+
+        for l in self.internal_res_repr:
+            sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
+        sub_grid_pred = self.lin_post(sub_grid_pred)
+        sub_grid_pred = einops.rearrange(
+            sub_grid_pred, "(b x y z) c -> b c x y z", **spatial_layout
+        )
+        if return_rel_context_coord:
+            ret = (sub_grid_pred, rel_context_coord)
+        else:
+            ret = sub_grid_pred
+        return ret
+
+    def forward(
+        self,
+        context_v,
+        context_spatial_extent,
+        affine_context_vox2mm,
+        # query_vox_size,
+        query_coord,
+    ) -> torch.Tensor:
+        # if query_vox_size.ndim == 2:
+        #     query_vox_size = query_vox_size[:, :, None, None, None]
+        context_vox_size = torch.abs(
+            context_spatial_extent[..., 1, 1, 1] - context_spatial_extent[..., 0, 0, 0]
+        )
+        context_vox_size = context_vox_size[:, :, None, None, None]
+
+        batch_size = query_coord.shape[0]
+
+        query_coord_in_context_fov = query_coord - torch.amin(
+            context_spatial_extent, (2, 3, 4), keepdim=True
+        )
+        query_bottom_back_left_corner_coord = (
+            query_coord_in_context_fov - (query_coord_in_context_fov % context_vox_size)
+        ) + torch.amin(context_spatial_extent, (2, 3, 4), keepdim=True)
+        context_vox_bottom_back_left_corner = pitn.affine.coord_transform_3d(
+            query_bottom_back_left_corner_coord.movedim(1, -1),
+            torch.linalg.inv(affine_context_vox2mm),
+        )
+        context_vox_bottom_back_left_corner = (
+            context_vox_bottom_back_left_corner.movedim(-1, 1)
+        )
+        batch_vox_idx = einops.repeat(
+            torch.arange(
+                batch_size,
+                dtype=context_vox_bottom_back_left_corner.dtype,
+                device=context_vox_bottom_back_left_corner.device,
+            ),
+            "idx_b -> idx_b 1 i j k",
+            idx_b=batch_size,
+            i=query_coord.shape[2],
+            j=query_coord.shape[3],
+            k=query_coord.shape[4],
+        )
+        #     (context_vox_bottom_back_left_corner.shape[0], 1)
+        #     + tuple(context_vox_bottom_back_left_corner.shape[2:])
+        # )
+        context_vox_bottom_back_left_corner = torch.cat(
+            [batch_vox_idx, context_vox_bottom_back_left_corner], dim=1
+        )
+        context_vox_bottom_back_left_corner = (
+            context_vox_bottom_back_left_corner.floor().long()
+        )
+        # Slice with a range to keep the "1" dimension in place.
+        batch_vox_idx = context_vox_bottom_back_left_corner[:, 0:1]
+
+        y_weighted_accumulate = None
+        # Build the low-res representation one sub-window voxel index at a time.
+        # The indicators specify if the current voxel index that surrounds the
+        # query coordinate should be "off the center voxel" or not. If not, then
+        # the center voxel (read: no voxel offset from the center) is selected
+        # (for that dimension).
+        for (
+            corner_offset_i,
+            corner_offset_j,
+            corner_offset_k,
+        ) in itertools.product((0, 1), (0, 1), (0, 1)):
+            # Rebuild indexing tuple for each element of the sub-window
+            sub_window_offset_ijk = query_bottom_back_left_corner_coord.new_tensor(
+                [corner_offset_i, corner_offset_j, corner_offset_k]
+            ).reshape(1, -1, 1, 1, 1)
+            corner_offset_mm = sub_window_offset_ijk * context_vox_size
+
+            i_idx = context_vox_bottom_back_left_corner[:, 1:2] + corner_offset_i
+            j_idx = context_vox_bottom_back_left_corner[:, 2:3] + corner_offset_j
+            k_idx = context_vox_bottom_back_left_corner[:, 3:4] + corner_offset_k
+            context_val = context_v[
+                batch_vox_idx.flatten(),
+                :,
+                i_idx.flatten(),
+                j_idx.flatten(),
+                k_idx.flatten(),
+            ]
+            context_val = einops.rearrange(
+                context_val,
+                "(b x y z) c -> b c x y z",
+                b=batch_size,
+                x=query_coord.shape[2],
+                y=query_coord.shape[3],
+                z=query_coord.shape[4],
+            )
+            context_coord = query_bottom_back_left_corner_coord + corner_offset_mm
+
+            sub_grid_pred_ijk = self.sub_grid_forward(
+                context_val=context_val,
+                context_coord=context_coord,
+                query_coord=query_coord,
+                context_vox_size=context_vox_size,
+                # query_vox_size=query_vox_size,
+                return_rel_context_coord=False,
+            )
+            # Initialize the accumulated prediction after finding the
+            # output size; easier than trying to pre-compute it.
+            if y_weighted_accumulate is None:
+                y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
+
+            sub_window_offset_ijk_compliment = torch.abs(1 - sub_window_offset_ijk)
+            sub_window_context_coord_compliment = (
+                query_bottom_back_left_corner_coord
+                + (sub_window_offset_ijk_compliment * context_vox_size)
+            )
+            w_sub_window_cube = torch.abs(
+                sub_window_context_coord_compliment - query_coord
+            )
+            w_sub_window = einops.reduce(
+                w_sub_window_cube, "b side_len i j k -> b 1 i j k", reduction="prod"
+            ) / einops.reduce(
+                context_vox_size, "b size 1 1 1 -> b 1 1 1 1", reduction="prod"
+            )
+
+            # Weigh this cell's prediction by the inverse of the distance
+            # from the cell physical coordinate to the true target
+            # physical coordinate. Normalize the weight by the inverse
+            # "sum of the inverse distances" found before.
+
+            # Accumulate weighted cell predictions to eventually create
+            # the final prediction.
+            y_weighted_accumulate += w_sub_window * sub_grid_pred_ijk
+            # del sub_grid_pred_ijk
+
+        y = y_weighted_accumulate
+
+        return y
+
+
+class INR_Interpolator:
+    def __init__(
+        self,
+        dwi_brain_vol,
+        brain_mask_vol,
+        encoder,
+        decoder,
+        affine_vox2mm,
+        fn_peak_finder,
+    ):
+
+        self.affine_vox2mm = affine_vox2mm.to(torch.float32)
+        # Network was trained with xyz orientations, but there are zyx orientations in
+        # the tractography code. So, all coordinates and images need to be rearranged
+        # and flipped, then again for the output
+        self.affine_vox2mm[:3, 3] = torch.flip(self.affine_vox2mm[:3, 3], dims=(-1,))
+        self.decoder = decoder
+        self.fn_peak_finder = fn_peak_finder
+
+        if dwi_brain_vol.ndim == 4:
+            dwi_brain_vol = dwi_brain_vol[None]
+        dwi_brain_vol = dwi_brain_vol.to(torch.float32)
+        if brain_mask_vol.ndim == 4:
+            brain_mask_vol = brain_mask_vol[None]
+        dwi_brain_vol = einops.rearrange(dwi_brain_vol, "b c z y x -> b c x y z")
+        brain_mask_vol = einops.rearrange(brain_mask_vol, "b c z y x -> b c x y z")
+        with torch.no_grad():
+            self.encoded_ctx = encoder(dwi_brain_vol)
+            self.encoded_ctx = self.encoded_ctx * brain_mask_vol
+            self.ctx_spatial_extent = pitn.data.datasets._get_extent_world(
+                brain_mask_vol[:, 0], self.affine_vox2mm
+            )
+            self.ctx_spatial_extent = self.ctx_spatial_extent[None].to(torch.float32)
+
+    def __call__(
+        self,
+        target_coords_mm_zyx: torch.Tensor,
+        init_direction_theta_phi: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Initial interpolation of fodf coefficients at the target points.
+        with torch.no_grad():
+            volumetric_target_coords = einops.rearrange(
+                target_coords_mm_zyx, "b c -> 1 c 1 b 1"
+            ).to(torch.float32)
+            volumetric_target_coords = torch.flip(volumetric_target_coords, (1,))
+            pred_sample_fodf_coeffs = self.decoder(
+                context_v=self.encoded_ctx,
+                context_spatial_extent=self.ctx_spatial_extent,
+                affine_context_vox2mm=self.affine_vox2mm,
+                query_coord=volumetric_target_coords,
+            )
+        pred_sample_fodf_coeffs = einops.rearrange(
+            pred_sample_fodf_coeffs, "1 coeff 1 b 1 -> b coeff"
+        ).to(target_coords_mm_zyx)
+
+        # The previous outgoing direction is not really the true "incoming" direction in
+        # the new voxel, but it is located on the opposite hemisphere in the new voxel.
+        # However, the peak finding locates the peak nearest the given initialization
+        # direction, so it would just be two consecutive mirrorings on the sphere, which
+        # is obviously identity.
+        outgoing_theta, outgoing_phi = (
+            init_direction_theta_phi[..., 0],
+            init_direction_theta_phi[..., 1],
+        )
+        init_direction_theta_phi = (outgoing_theta, outgoing_phi)
+        # result_direction_theta_phi = self.fn_peak_finder(
+        #     pred_sample_fodf_coeffs, init_direction_theta_phi
+        # )
+        #!DEBUG
+        result_direction_theta_phi = self.fn_peak_finder(
+            pred_sample_fodf_coeffs[
+                (torch.tensor([50, 23, 71]).to(pred_sample_fodf_coeffs).long(),)
+            ],
+            (
+                init_direction_theta_phi[0][
+                    (torch.tensor([50, 23, 71]).to(pred_sample_fodf_coeffs).long(),)
+                ],
+                init_direction_theta_phi[1][
+                    (torch.tensor([50, 23, 71]).to(pred_sample_fodf_coeffs).long(),)
+                ],
+            ),
+        )
+        #!
+        return result_direction_theta_phi
+
+
+#!
+encoder_init_kwargs = dict(
+    in_channels=189,
+    interior_channels=80,
+    out_channels=128,
+    n_res_units=3,
+    n_dense_units=3,
+    activate_fn="relu",
+)
+decoder_init_kwargs = dict(
+    context_v_features=128,
+    in_features=encoder_init_kwargs["out_channels"],
+    out_features=45,
+    m_encode_num_freqs=36,
+    sigma_encode_scale=3.0,
+)
+inr_system_state_dict = torch.load(network_weights_f)
+
+encoder = INREncoder(**encoder_init_kwargs)
+encoder.load_state_dict(inr_system_state_dict["encoder"])
+encoder = encoder.to(device).eval()
+
+decoder = ReducedDecoder(**decoder_init_kwargs)
+decoder.load_state_dict(inr_system_state_dict["decoder"])
+decoder = decoder.to(device).eval()
+del inr_system_state_dict
+fn_inr_interp_zyx_tangent_t2theta_phi = INR_Interpolator(
+    dwi_brain_vol=dwi,
+    brain_mask_vol=brain_mask,
+    encoder=encoder,
+    decoder=decoder,
+    affine_vox2mm=affine_sar_vox2sar_mm,
+    fn_peak_finder=peak_finder_fn_theta_phi_c2theta_phi,
+)
+del encoder
+#!
+
+# %%
 # Reduced version of the full interpolation function, to be called only when expanding
 # the seed points at the start of streamline estimation.
 def _dipy_peak_finder_fn_linear_interp_zyx(
@@ -484,10 +981,6 @@ def _dipy_peak_finder_fn_linear_interp_zyx(
     fodf_sample_min_val: float,
     fodf_sample_min_quantile_thresh: float,
     **dipy_peak_directions_kwargs,
-    # fodf_pdf_thresh_min: float,
-    # fmls_lobe_merge_ratio: float,
-    # lobe_fodf_pdf_filter_kwargs: dict,
-    # lobe_peak_to_max_peak_ratio: float,
 ) -> pitn.tract.peak.PeaksContainer:
     # Initial interpolation of fodf coefficients at the target points.
     pred_sample_fodf_coeffs = pitn.odf.sample_odf_coeffs_lin_interp(
@@ -521,6 +1014,9 @@ def _dipy_peak_finder_fn_linear_interp_zyx(
 
     np_sphere_samples = target_sphere_samples.detach().cpu().numpy()
 
+    # Set size to 50 arbitrarily; seems unlikely a real-world point would have 50 unique
+    # peaks...can be set to the number of sphere samples, but that will almost certainly
+    # never be used, and would be wasteful of memory.
     peak_vals = target_sphere_samples.new_zeros(target_sphere_samples.shape[0], 50)
     peak_theta = torch.clone(peak_vals)
     peak_phi = torch.clone(peak_vals)
@@ -569,14 +1065,6 @@ dipy_peak_finder_fn_linear_interp_zyx = partial(
 
 # %%
 # Create initial seeds and tangent/direction vectors.
-# #!DEBUG
-# seed_mask[:, 1, 39, 53] = True
-# seed_mask[:, 1, 46, 50] = True
-# seed_mask[:, 1, 46, 32] = True
-# seed_mask[:, 1, 39, 23] = True
-# seed_mask[:, 1, 40, 13] = True
-# seed_mask[:, 1, 25, 18] = True
-#!
 seeds_t_neg1 = pitn.tract.seed.seeds_from_mask(
     seed_mask,
     seeds_per_vox_axis=seeds_per_vox_axis,
@@ -593,46 +1081,9 @@ seed_peaks = dipy_peak_finder_fn_linear_interp_zyx(seeds_t_neg1)
     phi_peak=seed_peaks.phi,
     valid_peak_mask=seed_peaks.valid_peak_mask,
     step_size=step_size,
-    fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
+    # fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
+    fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
 )
-
-# %%
-# Handle stopping conditions.
-with torch.no_grad():
-    gfa_sampling_sphere = dipy.data.get_sphere("repulsion724")
-
-    gfa_theta, gfa_phi = pitn.odf.get_torch_sample_sphere_coords(
-        gfa_sampling_sphere, coeffs.device, coeffs.dtype
-    )
-    # Function applies non-negativity constraint.
-    gfa_sphere_samples = pitn.odf.sample_sphere_coords(
-        coeffs.cpu(),
-        theta=gfa_theta.cpu(),
-        phi=gfa_phi.cpu(),
-        sh_order=8,
-        sh_order_dim=0,
-        mask=brain_mask.cpu(),
-    )
-
-    gfa = pitn.odf.gfa(gfa_sphere_samples, sphere_samples_idx=0).to(device)
-    # Also, mask out only the white matter in the gfa! Otherwise, gfa can be high in
-    # most places...
-    gfa = gfa * wm_mask
-    del gfa_sphere_samples, gfa_theta, gfa_phi, gfa_sampling_sphere
-
-# %%
-# #!DEBUG
-
-
-def fn_only_right_zyx2theta_phi(
-    target_coords_mm_zyx: torch.Tensor, init_direction_theta_phi: Optional[torch.Tensor]
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    results_shape = tuple(target_coords_mm_zyx.shape[:-1])
-    theta = target_coords_mm_zyx.new_ones(results_shape) * (torch.pi / 2)
-    phi = torch.zeros_like(theta)
-
-    return (theta, phi)
-
 
 # %%
 # Primary tracrography loop.
@@ -643,7 +1094,13 @@ seed_batch_start_idx = (
 )
 
 for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
-    print("Batch ", i_batch)
+    print(
+        "\n",
+        "=" * 10,
+        f"Batch {i_batch} ",
+        f"Seeds {seed_batch_start}-{seed_batch_start + seed_batch_size}/{n_seeds}",
+        "=" * 10,
+    )
     seed_batch_t_neg1_to_0 = seeds_t_neg1_to_0[
         :, seed_batch_start : seed_batch_start + seed_batch_size
     ]
@@ -686,8 +1143,8 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
         tangent_tp1_zyx = pitn.tract.local.gen_tract_step_rk4(
             points_t,
             init_direction_theta_phi=tangent_t_theta_phi,
-            fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
-            # fn_zyx_direction_t2theta_phi=fn_only_right_zyx2theta_phi, #!DEBUG
+            # fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
+            fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
             step_size=step_size,
         )
         ema_tangent_tp1_zyx = (
@@ -711,11 +1168,11 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
         tmp_len = streamline_len + step_size
         statuses_tp1 = list()
         statuses_tp1.append(
-            pitn.tract.stopping.gfa_threshold(
+            pitn.tract.stopping.scalar_vol_threshold(
                 status_t,
                 sample_coords_mm_zyx=points_tp1,
-                gfa_min_threshold=gfa_min_threshold,
-                gfa_vol=gfa,
+                scalar_min_threshold=fa_min_threshold,
+                vol=fa,
                 affine_vox2mm=affine_sar_vox2sar_mm,
             )
         )
@@ -763,7 +1220,7 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
         streamlines.append(full_points_tp1)
 
         # t <- t + 1
-        print(t, end=" ")
+        print(t, end=" ", flush=(t % 10) == 0)
         t += 1
         if t > t_max:
             break
@@ -826,17 +1283,18 @@ if selected_seed_vox_name is None:
             break
 fiber_fname = f"/tmp/{dataset_selection}_{selected_seed_vox_name}_test_trax.tck"
 # fiber_fname = f"/tmp/fibercup_single_vox_seed_test_trax.tck"
+print("Saving tractogram", flush=True)
 dipy.io.streamline.save_tck(tracto, fiber_fname)
 
 # %%
-for ax in range(3):
-    sts_on_ax = [s[:, ax] for s in tracto.streamlines]
-    plt.figure(dpi=120)
-    for i, s in enumerate(sts_on_ax):
-        plt.plot(s, label=i, lw=0.4, alpha=0.7)
-    plt.ylabel(("x", "y", "z")[ax])
-    # plt.legend()
-    plt.show()
+# for ax in range(3):
+#     sts_on_ax = [s[:, ax] for s in tracto.streamlines]
+#     plt.figure(dpi=120)
+#     for i, s in enumerate(sts_on_ax):
+#         plt.plot(s, label=i, lw=0.4, alpha=0.7)
+#     plt.ylabel(("x", "y", "z")[ax])
+#     # plt.legend()
+#     plt.show()
 
 # %%
 

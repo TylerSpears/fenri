@@ -89,6 +89,36 @@ def gfa_threshold(
     return st_new
 
 
+def scalar_vol_threshold(
+    streamline_status: torch.Tensor,
+    sample_coords_mm_zyx: torch.Tensor,
+    scalar_min_threshold: float,
+    vol: torch.Tensor,
+    affine_vox2mm: torch.Tensor,
+) -> torch.Tensor:
+    # Filter coordinates by only the valid streamlines, to save computation.
+    coords = sample_coords_mm_zyx[streamline_status == CONTINUE]
+    if coords.numel() == 0:
+        samples = -vol.new_ones(1)
+    else:
+        samples = pitn.affine.sample_3d(
+            vol=vol,
+            coords_mm_zyx=coords,
+            affine_vox2mm=affine_vox2mm,
+            mode="bilinear",
+            align_corners=True,
+            override_out_of_bounds_val=scalar_min_threshold - 1.0,
+        )
+        samples.squeeze_(-1)
+    null_samples = -torch.ones_like(streamline_status, dtype=samples.dtype)
+    null_samples = torch.where(streamline_status == CONTINUE, samples, null_samples)
+    samples = null_samples
+    st_new = streamline_status.masked_fill(
+        (streamline_status == CONTINUE) & (samples < scalar_min_threshold), STOP
+    )
+    return st_new
+
+
 def angular_threshold(
     streamline_status: torch.Tensor,
     coords_mm_tm1: torch.Tensor,

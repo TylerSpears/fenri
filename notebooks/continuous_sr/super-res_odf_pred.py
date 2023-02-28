@@ -162,7 +162,7 @@ p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.test.subj_ids = ["299154"]
 p.model_weight_f = str(
-    Path(p.tmp_results_dir) / "2023-02-21T16_46_25/state_dict_epoch_199_step_40000.pt"
+    Path(p.tmp_results_dir) / "2023-02-22T01_29_25/state_dict_epoch_249_step_50000.pt"
 )
 # p.model_weight_f = str(
 #     Path(p.tmp_results_dir) / "2023-02-09T21_09_47/state_dict_epoch_174_step_35000.pt"
@@ -798,7 +798,7 @@ for batch_dict in test_dataloader:
         pred_super_fodf = monai.inferers.sliding_window_inference(
             super_coords.cpu(),
             # roi_size=(48, 48, 48),
-            roi_size=(64, 64, 64),
+            roi_size=(96, 96, 96),
             sw_batch_size=super_coords.shape[0],
             predictor=lambda q: decoder(
                 query_coord=q.to(device),
@@ -840,6 +840,9 @@ for batch_dict in test_dataloader:
         nib.Nifti1Image(super_mask, affine=new_aff),
         tmp_res_dir / f"{subj_id}_mask-super-res_{p.target_vox_size}mm.nii.gz",
     )
+
+# %%
+exit()
 
 # %% [markdown]
 # ### Tri-Linear Interp
