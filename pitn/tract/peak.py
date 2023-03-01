@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import jaxopt
 import numpy as np
 import torch
+from icecream import ic
 from jax import lax
 
 import pitn
@@ -508,15 +509,50 @@ def remove_fodf_labels_by_rel_peak(
     return remapped_ll.to(lobe_labels.dtype)
 
 
-@partial(jax.jit, static_argnums=(2, 3, 4))
+@jax.jit
+def _jax_zyx2azimuth_polar(
+    coords_zyx: jax.Array,
+) -> Tuple[jax.Array, jax.Array]:
+    #! Inputs to this function should generally be 64-bit floats! Precision is poor for
+    #! 32-bit floats.
+    z = coords_zyx[..., 0]
+    y = coords_zyx[..., 1]
+    x = coords_zyx[..., 2]
+    r = jnp.linalg.norm(coords_zyx, ord=2, axis=-1, keepdims=False)
+    polar = jnp.arccos(z / r)
+    # Azimuth is arbitrary if polar angle is 0, so just set to spherical origin.
+    azimuth = jnp.where(
+        (polar != 0.0) & (polar != jnp.pi),
+        jnp.arctan2(y, x),
+        0 + jnp.finfo(polar.dtype).tiny,
+    )
+    # The discontinuities of atan2 means we have to shift and cycle some values, but
+    # not others.
+    # Shift the negative values by 2*pi to bring into the range and shape of the
+    # azimuth angle back to (0, 2*pi].
+    azimuth = jnp.where(azimuth < 0, azimuth + 2 * jnp.pi, azimuth)
+
+    return (azimuth, polar)
+
+
+@jax.jit
+def _jax_azimuth_polar2zyx(azimuth: jax.Array, polar: jax.Array) -> jax.Array:
+    #! Inputs to this function should generally be 64-bit floats! Precision is poor for
+    #! 32-bit floats.
+    # r = 1 on the unit sphere.
+    x = jnp.sin(polar) * jnp.cos(azimuth)
+    y = jnp.sin(polar) * jnp.sin(azimuth)
+    z = jnp.cos(polar)
+
+    return jnp.stack([z, y, x], axis=-1)
+
+
 def _jax_unbatched_sh_basis_mrtrix3(
     azimuth: jax.Array,
     polar: jax.Array,
-    m: tuple,
-    n: tuple,
-    # m: jax.Array,
-    # n: jax.Array,
-    n_max: int,
+    # m: tuple,
+    # n: tuple,
+    # n_max: int,
 ) -> jax.Array:
     """Spherical harmonic basis functions for given (azimuth, polar), used in MRtrix3.
 
@@ -546,52 +582,88 @@ def _jax_unbatched_sh_basis_mrtrix3(
     # <https://github.com/dipy/dipy/blob/13af40fec09fb23a3692cb0bfdcb91d08acfd766/dipy/reconst/shm.py#L299>
     # When m < 0, we use the SH from Y^{|m|}, as defined by Descoteaux, et al, 2007 and
     # MRtrix3.
-    m = np.array(m)
-    n = np.array(n)
+    with jax.ensure_compile_time_eval():
+        degree_max = 8
+        degree = np.arange(0, degree_max + 1, step=2)
+        order = np.concatenate([np.arange(-n_, n_ + 1) for n_ in degree])
+        degree = np.concatenate([(np.arange(-n_, n_ + 1) * 0) + n_ for n_ in degree])
+
     Y_m_abs = jax.scipy.special.sph_harm(
-        m=jnp.abs(m), n=n, theta=azimuth, phi=polar, n_max=n_max
+        m=jnp.abs(order), n=degree, theta=azimuth, phi=polar, n_max=degree_max
     )
-    Y_m_abs = jnp.where(m < 0, jnp.sqrt(2) * Y_m_abs.imag, Y_m_abs)
-    Y_m_abs = jnp.where(m > 0, jnp.sqrt(2) * Y_m_abs.real, Y_m_abs)
+    Y_m_abs = jnp.where(order < 0, jnp.sqrt(2) * Y_m_abs.imag, Y_m_abs)
+    Y_m_abs = jnp.where(order > 0, jnp.sqrt(2) * Y_m_abs.real, Y_m_abs)
 
     return Y_m_abs.real
 
 
-# @partial(jax.jit, static_argnames=("degree_max", "min_sphere_val"), inline=True)
-@partial(jax.jit, static_argnums=(2, 3, 4, 5))
+_jax_sh_basis_mrtrix3 = jax.vmap(_jax_unbatched_sh_basis_mrtrix3)
+
+
+def sh_basis_mrtrix3(
+    theta: torch.Tensor, phi: torch.Tensor, batch_size: int
+) -> torch.Tensor:
+    if theta.ndim == 1:
+        theta = theta.unsqueeze(-1)
+    if phi.ndim == 1:
+        phi = phi.unsqueeze(-1)
+    polar = _t2j(theta)
+    azimuth = _t2j(phi + torch.pi)
+    if polar.shape[0] < batch_size or azimuth.shape[0] < batch_size:
+        unpadded_max_idx = azimuth.shape[0]
+        azimuth_pad_shape = ((0, max(0, batch_size - azimuth.shape[0])),) + (
+            ((0, 0),) * (azimuth.ndim - 1)
+        )
+        azimuth = jnp.pad(
+            azimuth, azimuth_pad_shape, mode="constant", constant_values=0.0
+        )
+
+        polar_pad_shape = ((0, max(0, batch_size - polar.shape[0])),) + (
+            ((0, 0),) * (polar.ndim - 1)
+        )
+        polar = jnp.pad(polar, polar_pad_shape, mode="constant", constant_values=0.0)
+    else:
+        unpadded_max_idx = None
+
+    Y_basis = _jax_sh_basis_mrtrix3(azimuth, polar)
+    Y_basis = _j2t(Y_basis, delete_from_jax=True)
+
+    if unpadded_max_idx is not None:
+        Y_basis = Y_basis[:unpadded_max_idx]
+
+    return Y_basis
+
+
 def _jax_unbatched_negated_odf_sample(
-    params_azimuth_polar,
+    params_zyx: jax.Array,
     odf_coeffs: jax.Array,
-    # sh_orders: jax.Array,
-    # sh_degrees: jax.Array,
-    sh_orders: tuple,
-    sh_degrees: tuple,
-    degree_max: int,
     min_sphere_val: float,
+    # sh_orders: tuple,
+    # sh_degrees: tuple,
+    # degree_max: int,
 ) -> jax.Array:
-    # Modulo params to cycle values back if the optimizer chooses parameters outside
-    # the set ranges for the azimuth and polar coordinates. Not the same as a
-    # constrained optimization, though, as the circular numbering is naturally how the
-    # coordinate spaces operate.
-    azimuth = params_azimuth_polar[0] % (2 * jnp.pi)
-    azimuth = jnp.clip(azimuth, a_min=jnp.finfo(azimuth.dtype).tiny)
-    polar = params_azimuth_polar[1] % jnp.pi
+
+    norm_zyx = params_zyx / jnp.linalg.norm(params_zyx, ord=2, axis=-1, keepdims=True)
+    azimuth, polar = _jax_zyx2azimuth_polar(norm_zyx)
+
     Y_basis = _jax_unbatched_sh_basis_mrtrix3(
-        azimuth, polar, sh_orders, sh_degrees, degree_max
+        azimuth, polar  # , sh_orders, sh_degrees, degree_max
     )
-    # sphere_sample = jnp.dot(Y_basis, odf_coeffs)
-    # sphere_sample = jnp.dot(odf_coeffs, Y_basis)
     sphere_sample = jnp.matmul(odf_coeffs, Y_basis)
-    # sphere_sample = jnp.where(sphere_sample < min_sphere_val, 0.0, sphere_sample)
+    sphere_sample = jnp.where(sphere_sample < min_sphere_val, 0.0, sphere_sample)
 
     sphere_sample = -sphere_sample
-    jax.debug.print(
-        "===Az {az} Pol {pol} fodf val {fodf}",
-        az=azimuth,
-        pol=polar,
-        fodf=sphere_sample,
-        ordered=True,
-    )
+    # print(
+    #     f"===Az {str(azimuth)} Pol {str(polar)} fodf val {str(sphere_sample)}",
+    #     flush=True,
+    # )
+    # jax.debug.print(
+    #     "===Az {az} Pol {pol} fodf val {fodf}",
+    #     az=str(azimuth),
+    #     pol=str(polar),
+    #     fodf=str(sphere_sample),
+    #     ordered=True,
+    # )
     print("Not jitted optimization function!", type(sphere_sample))
     return sphere_sample
 
@@ -607,51 +679,79 @@ def get_grad_descent_peak_finder_fn(
 ) -> Callable[
     [Tuple[torch.Tensor, torch.Tensor], torch.Tensor], Tuple[torch.Tensor, torch.Tensor]
 ]:
-    m = _t2j(sh_orders)
-    m = tuple(m.tolist())
-    n = _t2j(sh_degrees)
-    n = tuple(n.tolist())
-    objective_fn = lambda az_pol, coeffs: _jax_unbatched_negated_odf_sample(
-        az_pol, coeffs, m, n, degree_max, min_sphere_val
-    )
+    # objective_fn = lambda az_pol, coeffs: _jax_unbatched_negated_odf_sample(
+    #     az_pol, coeffs, m, n, degree_max, min_sphere_val
+    # )
 
-    # @partial(jax.vmap, in_axes=((0, 0), 0, None), out_axes=(0, 0))
-    # @partial(jax.jit, static_argnums=(2,), inline=True)
-    def run_solver(azimuth_polar, coeffs, jaxopt_solver):
-        solution = jaxopt_solver.run(
-            azimuth_polar,
-            coeffs,
-        )
-        jax.debug.print(
-            "Error: {error}, Iter {iteration}, Step size: {step_size}, Az {az} Pol {pol}",
-            error=solution.state.error,
-            step_size=solution.state.stepsize,
-            az=solution.params[0],
-            pol=solution.params[1],
-            iteration=solution.state.iter_num,
-            ordered=True,
-        )
-        sol_azimuth, sol_polar = solution.params
-        sol_azimuth = sol_azimuth % (2 * jnp.pi)
-        sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
-        sol_polar = sol_polar % jnp.pi
-        return (sol_azimuth, sol_polar)
+    # m = _t2j(sh_orders)
+    # m = tuple(m.tolist())
+    # n = _t2j(sh_degrees)
+    # n = tuple(n.tolist())
 
     solver = jaxopt.GradientDescent(
-        fun=objective_fn, *grad_descent_args, **grad_descent_kwargs
+        fun=_jax_unbatched_negated_odf_sample,
+        *grad_descent_args,
+        **grad_descent_kwargs,
     )
-    # solver = jaxopt.ProjectedGradient(
-    #     fun=objective_fn,
-    #     projection=jaxopt.projection.projection_box,
-    #     *grad_descent_args,
-    #     **grad_descent_kwargs,
-    # )
-    #!DEBUG
-    vrun_solver = jax.jit(
-        jax.vmap(run_solver, in_axes=((0, 0), 0, None)),
-        static_argnums=(2,),
-        inline=True,
+
+    _debug_solver = jaxopt.GradientDescent(
+        fun=_jax_unbatched_negated_odf_sample,
+        *grad_descent_args,
+        **{**grad_descent_kwargs, **{"verbose": True, "jit": False}},
     )
+
+    def _debug_run_solver(az_pol, c):
+        with jax.disable_jit():
+            init_zyx_coord = _jax_azimuth_polar2zyx(az_pol[0], az_pol[1])
+            solution = _debug_solver.run(init_zyx_coord, c, min_sphere_val)
+            jax.debug.print(
+                "Error: {error}, Iter {iteration}, Step size: {step_size}, zyx {zyx}",
+                error=solution.state.error,
+                step_size=solution.state.stepsize,
+                zyx=solution.params,
+                iteration=solution.state.iter_num,
+                ordered=True,
+            )
+            sol_zyx = solution.params
+            sol_azimuth, sol_polar = _jax_zyx2azimuth_polar(sol_zyx)
+            # sol_azimuth = sol_azimuth % (2 * jnp.pi)
+            sol_polar = jnp.clip(
+                sol_polar,
+                a_min=jnp.finfo(sol_polar.dtype).tiny,
+                a_max=jnp.pi - jnp.finfo(sol_polar.dtype).tiny,
+            )
+            sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
+            # sol_polar = sol_polar % jnp.pi
+        return (sol_azimuth, sol_polar)
+
+    @jax.jit
+    @jax.vmap
+    def run_solver(azimuth_polar, coeffs):  # , sh_orders, sh_degrees, degree_max
+        init_zyx_coord = _jax_azimuth_polar2zyx(azimuth_polar[0], azimuth_polar[1])
+        solution = solver.run(
+            init_zyx_coord, coeffs, min_sphere_val
+        )  # , sh_orders, sh_degrees, degree_max
+        # jax.debug.print(
+        #     "Error: {error}, Iter {iteration}, Step size: {step_size}, Az {az} Pol {pol}",
+        #     error=solution.state.error,
+        #     step_size=solution.state.stepsize,
+        #     az=solution.params[0],
+        #     pol=solution.params[1],
+        #     iteration=solution.state.iter_num,
+        #     ordered=True,
+        # )
+        sol_zyx = solution.params
+        sol_azimuth, sol_polar = _jax_zyx2azimuth_polar(sol_zyx)
+        # sol_azimuth = sol_azimuth % (2 * jnp.pi)
+        sol_polar = jnp.clip(
+            sol_polar,
+            a_min=jnp.finfo(sol_polar.dtype).tiny,
+            a_max=jnp.pi - jnp.finfo(sol_polar.dtype).tiny,
+        )
+        sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
+        # sol_polar = sol_polar % jnp.pi
+        return (sol_azimuth, sol_polar)
+
     # def fake_vmap(az_pol, c, solv):
     #     b = c.shape[0]
     #     azs = list()
@@ -669,17 +769,22 @@ def get_grad_descent_peak_finder_fn(
     # )
     #!
 
-    batch_run_solver = lambda az_pol, coeffs: vrun_solver(az_pol, coeffs, solver)
-
     def pt_vrun(
-        coeffs, init_theta_phi, jax_fn, batch_size: int
+        coeffs,
+        init_theta_phi,
+        jax_fn,
+        # jaxopt_solver,
+        batch_size: int,
+        # sh_orders: Tuple,
+        # sh_degrees: Tuple,
+        # degree_max: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Offset phi to be between (0, 2\pi] instead of (-\pi, \pi]
         polar = init_theta_phi[0]
         if polar.ndim == 1:
             polar = polar[..., None]
         polar = _t2j(polar)
 
+        # Offset phi to be between (0, 2\pi] instead of (-\pi, \pi]
         azimuth = init_theta_phi[1] + torch.pi
         if azimuth.ndim == 1:
             azimuth = azimuth[..., None]
@@ -714,8 +819,14 @@ def get_grad_descent_peak_finder_fn(
         else:
             azimuth_valid_max_idx = None
             polar_valid_max_idx = None
+        _debug_solver
+        _debug_run_solver
 
-        jax_res = jax_fn((azimuth, polar), c)
+        jax_res = jax_fn(
+            (azimuth, polar), c  # , jaxopt_solver
+        )  # , sh_orders, sh_degrees, degree_max
+        # )
+
         t_res_azimuth = _j2t(jax_res[0], delete_from_jax=True)
         t_res_polar = _j2t(jax_res[1], delete_from_jax=True)
         if azimuth_valid_max_idx is not None:
@@ -730,5 +841,28 @@ def get_grad_descent_peak_finder_fn(
 
         return (res_theta, res_phi)
 
-    peak_finder_fn = partial(pt_vrun, jax_fn=batch_run_solver, batch_size=batch_size)
+    peak_finder_fn = partial(
+        pt_vrun,
+        jax_fn=run_solver,
+        # jaxopt_solver=solver,
+        batch_size=batch_size,
+        # sh_degrees=n,
+        # sh_orders=m,
+        # degree_max=degree_max,
+    )
     return peak_finder_fn
+
+
+def __debug_update_loop(iters: int, params, solver, *args, **kwargs):
+    with jax.disable_jit():
+        state_i = solver.init_state(params, *args, **kwargs)
+        v_grad_i = solver._value_and_grad_fun(params, *args, **kwargs)
+        params_i = params
+        ic(state_i._asdict())
+        ic(v_grad_i)
+        for i in range(iters):
+            v_grad_i = solver._value_and_grad_fun(params, *args, **kwargs)
+            params_i, state_i = solver.update(params_i, state_i, *args, **kwargs)
+            ic(v_grad_i)
+            ic([p for p in params_i])
+            ic(state_i._asdict())

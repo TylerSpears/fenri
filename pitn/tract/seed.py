@@ -137,7 +137,7 @@ def seeds_from_mask(
             torch.linspace(
                 -0.5,
                 0.5,
-                steps=seeds_per_vox_axis,
+                steps=seeds_per_vox_axis + 2,
                 dtype=affine_vox2mm.dtype,
                 device=affine_vox2mm.device,
             )
@@ -146,6 +146,10 @@ def seeds_from_mask(
         indexing="ij",
     )
 
+    # Remove the endpoints to avoid intersection with neighboring voxels.
+    within_vox_offsets = tuple(
+        offsets[1:-1, 1:-1, 1:-1] for offsets in within_vox_offsets
+    )
     within_vox_offsets = torch.stack(within_vox_offsets, -1).reshape(1, -1, 3)
     # If only 1 seed is requested per voxel, give the 0,0,0 offset instead. The linspace
     # function would return -0.5 if there is only 'steps=1'

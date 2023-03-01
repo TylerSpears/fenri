@@ -30,8 +30,9 @@ from typing import Optional, Tuple
 
 # Change default behavior of jax GPU memory allocation.
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".20"
+# Disable cuda blocking **for debugging only!**
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 # visualization libraries
 # %matplotlib inline
@@ -71,7 +72,7 @@ import pitn
 # jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_infs", True)
 
-# jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_default_matmul_precision", 32)
 
 
@@ -84,12 +85,16 @@ plt.rcParams.update({"image.interpolation": "antialiased"})
 np.set_printoptions(suppress=True, threshold=100, linewidth=88)
 torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
 
+MODEL_SELECTION = "inr"
+# MODEL_SELECTION = "tri-linear"
+
 # %%
 # torch setup
 # allow for CUDA usage, if available
 if torch.cuda.is_available():
     # Pick only one device for the default, may use multiple GPUs for training later.
-    dev_idx = 0
+    dev_idx = 0 if MODEL_SELECTION.casefold() == "inr" else 1
+    # dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -145,8 +150,8 @@ max_sh_order = 8
 # Seed creation.
 peaks_per_seed_vox = 2
 # Total seeds per voxel will be `seeds_per_vox_axis`^3
-seeds_per_vox_axis = 3
-seed_batch_size = 2
+seeds_per_vox_axis = 5
+seed_batch_size = 10000
 
 # Threshold parameter for peak finding in the seed voxels.
 # Element-wise filtering of sphere samples.
@@ -157,26 +162,26 @@ dipy_min_separation_angle = 20
 
 # RK4 estimation
 step_size = 0.4
-alpha_exponential_moving_avg = 0.6
-tracking_fodf_sample_min_val = 0.01
+alpha_exponential_moving_avg = 0.9
+tracking_fodf_sample_min_val = 0.05
 # Seems that MRtrix's Newton optimization also has a tolerance value of 0.001, max
 # iterations of 100.
 # <https://github.com/MRtrix3/mrtrix3/blob/f633dfd7e9080f71877ea6a4619dabdde99a0fb6/src/dwi/tractography/SIFT2/coeff_optimiser.cpp#L369>
 grad_descent_kwargs = dict(
     tol=1e-3,
-    stepsize=0.2,
-    # maxiter=100,
+    stepsize=0.4,
+    maxiter=100,
     acceleration=True,
-    # implicit_diff=True,
-    implicit_diff=False,
+    implicit_diff=True,
+    # implicit_diff=False,
     jit=True,
     # jit=False,  #!DEBUG
-    unroll=True,
+    # unroll=True,
     # verbose=True,  #!DEBUG
 )
 
 # Stopping & invalidation criteria.
-min_streamline_len = 30
+min_streamline_len = 50
 max_streamline_len = 300
 fa_min_threshold = 0.1
 max_angular_thresh_rad = torch.pi / 4
@@ -339,8 +344,8 @@ if dataset_selection.casefold() == "HCP".casefold():
 
     selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
     # #!DEBUG
-    seed_roi_mask = 0 * seed_roi_mask
-    seed_roi_mask[:, 16:17, 38:39, 33:34] = True
+    # seed_roi_mask = 0 * seed_roi_mask
+    # seed_roi_mask[:, 16:17, 38:39, 33:34] = True
     # roi_shape = seed_roi_mask.shape
     # s_roi = einops.rearrange(seed_roi_mask, "1 z y x -> (z y x)")
     # mask_idx = torch.where(s_roi)
@@ -405,6 +410,7 @@ peak_finder_fn_theta_phi_c2theta_phi = pitn.tract.peak.get_grad_descent_peak_fin
 )
 
 # %%
+# Tri-linear interpolation functions.
 def _fn_linear_interp_zyx_tangent_t2theta_phi(
     target_coords_mm_zyx: torch.Tensor,
     init_direction_theta_phi: Optional[torch.Tensor],
@@ -441,6 +447,41 @@ fn_linear_interp_zyx_tangent_t2theta_phi = partial(
     fodf_coeffs_brain_vol=coeffs,
     affine_vox2mm=affine_sar_vox2sar_mm,
     fn_peak_finder=peak_finder_fn_theta_phi_c2theta_phi,
+)
+
+
+def _fn_linear_interp_spatial_fodf_sample(
+    coords_zyx: torch.Tensor,
+    directions_theta_phi: torch.Tensor,
+    fodf_coeffs_brain_vol: torch.Tensor,
+    affine_vox2mm: torch.Tensor,
+    batch_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # Initial interpolation of fodf coefficients at the target points.
+    pred_sample_fodf_coeffs = pitn.odf.sample_odf_coeffs_lin_interp(
+        coords_zyx,
+        fodf_coeff_vol=fodf_coeffs_brain_vol,
+        affine_vox2mm=affine_vox2mm,
+    )
+    theta = directions_theta_phi[..., 0]
+    phi = directions_theta_phi[..., 1]
+    Y_basis = pitn.tract.peak.sh_basis_mrtrix3(
+        theta=theta, phi=phi, batch_size=batch_size
+    )
+    Y_basis = einops.rearrange(Y_basis, "b sh_idx -> b sh_idx 1")
+    pred_sample_fodf_coeffs = einops.rearrange(
+        pred_sample_fodf_coeffs, "b sh_idx -> b 1 sh_idx"
+    )
+    samples = torch.bmm(pred_sample_fodf_coeffs, Y_basis)
+    samples.squeeze_()
+
+    return samples
+
+
+fn_linear_interp_spatial_fodf_sample = partial(
+    _fn_linear_interp_spatial_fodf_sample,
+    fodf_coeffs_brain_vol=coeffs,
+    affine_vox2mm=affine_sar_vox2sar_mm,
 )
 
 # %%
@@ -664,6 +705,7 @@ class ReducedDecoder(torch.nn.Module):
         rel_norm_context_coord = (rel_context_coord - -context_vox_size) / (
             2 * context_vox_size
         )
+        rel_norm_context_coord.round_(decimals=5)
         assert (rel_norm_context_coord >= 0).all() and (
             rel_norm_context_coord <= 1.0
         ).all()
@@ -879,6 +921,43 @@ class INR_Interpolator:
             )
             self.ctx_spatial_extent = self.ctx_spatial_extent[None].to(torch.float32)
 
+    def spatial_fodf_sample(
+        self,
+        coords_mm_zyx: torch.Tensor,
+        directions_theta_phi: Optional[torch.Tensor],
+        batch_size: int,
+    ) -> torch.Tensor:
+        theta = directions_theta_phi[..., 0]
+        phi = directions_theta_phi[..., 1]
+        Y_basis = pitn.tract.peak.sh_basis_mrtrix3(
+            theta=theta, phi=phi, batch_size=batch_size
+        )
+
+        # Interpolation of fodf coefficients at the target points.
+        with torch.no_grad():
+            volumetric_target_coords = einops.rearrange(
+                coords_mm_zyx, "b c -> 1 c 1 b 1"
+            ).to(torch.float32)
+            volumetric_target_coords = torch.flip(volumetric_target_coords, (1,))
+            pred_sample_fodf_coeffs = self.decoder(
+                context_v=self.encoded_ctx,
+                context_spatial_extent=self.ctx_spatial_extent,
+                affine_context_vox2mm=self.affine_vox2mm,
+                query_coord=volumetric_target_coords,
+            )
+        pred_sample_fodf_coeffs = einops.rearrange(
+            pred_sample_fodf_coeffs, "1 coeff 1 b 1 -> b coeff"
+        ).to(coords_mm_zyx)
+
+        Y_basis = einops.rearrange(Y_basis, "b sh_idx -> b sh_idx 1")
+        pred_sample_fodf_coeffs = einops.rearrange(
+            pred_sample_fodf_coeffs, "b sh_idx -> b 1 sh_idx"
+        )
+        samples = torch.bmm(pred_sample_fodf_coeffs, Y_basis)
+        samples.squeeze_()
+
+        return samples
+
     def __call__(
         self,
         target_coords_mm_zyx: torch.Tensor,
@@ -910,23 +989,24 @@ class INR_Interpolator:
             init_direction_theta_phi[..., 1],
         )
         init_direction_theta_phi = (outgoing_theta, outgoing_phi)
-        # result_direction_theta_phi = self.fn_peak_finder(
-        #     pred_sample_fodf_coeffs, init_direction_theta_phi
-        # )
-        #!DEBUG
         result_direction_theta_phi = self.fn_peak_finder(
-            pred_sample_fodf_coeffs[
-                (torch.tensor([50, 23, 71]).to(pred_sample_fodf_coeffs).long(),)
-            ],
-            (
-                init_direction_theta_phi[0][
-                    (torch.tensor([50, 23, 71]).to(pred_sample_fodf_coeffs).long(),)
-                ],
-                init_direction_theta_phi[1][
-                    (torch.tensor([50, 23, 71]).to(pred_sample_fodf_coeffs).long(),)
-                ],
-            ),
+            pred_sample_fodf_coeffs, init_direction_theta_phi
         )
+        #!DEBUG
+        # bugged_idx = (35, 728, 4570)
+        # result_direction_theta_phi = self.fn_peak_finder(
+        #     pred_sample_fodf_coeffs[
+        #         (torch.tensor(bugged_idx).to(pred_sample_fodf_coeffs).long(),)
+        #     ],
+        #     (
+        #         init_direction_theta_phi[0][
+        #             (torch.tensor(bugged_idx).to(pred_sample_fodf_coeffs).long(),)
+        #         ],
+        #         init_direction_theta_phi[1][
+        #             (torch.tensor(bugged_idx).to(pred_sample_fodf_coeffs).long(),)
+        #         ],
+        #     ),
+        # )
         #!
         return result_direction_theta_phi
 
@@ -1073,6 +1153,12 @@ seeds_t_neg1 = pitn.tract.seed.seeds_from_mask(
 # seed_peaks = peaks_only_fn_linear_interp_zyx(seeds_t_neg1)
 seed_peaks = dipy_peak_finder_fn_linear_interp_zyx(seeds_t_neg1)
 
+fn_zyx2theta_phi_seed_expansion = (
+    fn_inr_interp_zyx_tangent_t2theta_phi
+    if MODEL_SELECTION.casefold() == "inr"
+    else fn_linear_interp_zyx_tangent_t2theta_phi
+)
+
 (seeds_t_neg1_to_0, tangent_t0_zyx) = pitn.tract.seed.expand_seeds_from_topk_peaks_rk4(
     seeds_t_neg1,
     max_peaks_per_voxel=peaks_per_seed_vox,
@@ -1081,12 +1167,33 @@ seed_peaks = dipy_peak_finder_fn_linear_interp_zyx(seeds_t_neg1)
     phi_peak=seed_peaks.phi,
     valid_peak_mask=seed_peaks.valid_peak_mask,
     step_size=step_size,
+    fn_zyx_direction_t2theta_phi=fn_zyx2theta_phi_seed_expansion,
     # fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
-    fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
+    # fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
 )
+
+# #!
+# seeds_t_neg1_to_0 = seeds_t_neg1_to_0[:, 15000:]  #!DEBUG
+# seeds_t_neg1_to_0 = seeds_t_neg1_to_0[:, :1000]
+# tangent_t0_zyx = tangent_t0_zyx[15000:]  #!DEBUG
+# tangent_t0_zyx = tangent_t0_zyx[:1000]  #!DEBUG
+# #!
 
 # %%
 # Primary tracrography loop.
+
+fn_direction_estimate = (
+    fn_inr_interp_zyx_tangent_t2theta_phi
+    if MODEL_SELECTION.casefold() == "inr"
+    else fn_linear_interp_zyx_tangent_t2theta_phi
+)
+
+fn_fod_ampl_estimate = (
+    fn_inr_interp_zyx_tangent_t2theta_phi.spatial_fodf_sample
+    if MODEL_SELECTION.casefold() == "inr"
+    else fn_linear_interp_spatial_fodf_sample
+)
+
 all_tracts = list()
 n_seeds = seeds_t_neg1_to_0.shape[1]
 seed_batch_start_idx = (
@@ -1143,10 +1250,31 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
         tangent_tp1_zyx = pitn.tract.local.gen_tract_step_rk4(
             points_t,
             init_direction_theta_phi=tangent_t_theta_phi,
+            fn_zyx_direction_t2theta_phi=fn_direction_estimate,
             # fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
-            fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
+            # fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
             step_size=step_size,
         )
+        tangent_tp1_theta_phi = torch.stack(
+            pitn.tract.local.zyx2unit_sphere_theta_phi(tangent_tp1_zyx), -1
+        )
+
+        fodf_sample_point_t_direction_tp1 = fn_fod_ampl_estimate(
+            points_t,
+            directions_theta_phi=tangent_tp1_theta_phi,
+            batch_size=seed_batch_size,
+        )
+        # fodf_sample_point_t_direction_tp1 = fn_linear_interp_spatial_fodf_sample(
+        #     points_t, directions_theta_phi=tangent_tp1_theta_phi, batch_size=seed_batch_size
+        # )
+        # fodf_sample_point_t_direction_tp1 = (
+        #     fn_inr_interp_zyx_tangent_t2theta_phi.spatial_fodf_sample(
+        #         points_t,
+        #         directions_theta_phi=tangent_tp1_theta_phi,
+        #         batch_size=seed_batch_size,
+        #     )
+        # )
+
         ema_tangent_tp1_zyx = (
             alpha_exponential_moving_avg * tangent_tp1_zyx
             + (1 - alpha_exponential_moving_avg) * tangent_t_zyx
@@ -1160,9 +1288,6 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
         points_tp1 = points_t + ema_tangent_tp1_zyx
 
         tangent_tp1_zyx = ema_tangent_tp1_zyx
-        tangent_tp1_theta_phi = torch.stack(
-            pitn.tract.local.zyx2unit_sphere_theta_phi(tangent_tp1_zyx), -1
-        )
 
         # Update state variables based upon new streamline statuses.
         tmp_len = streamline_len + step_size
@@ -1187,6 +1312,13 @@ for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
                 tmp_len,
                 min_len=min_streamline_len,
                 max_len=max_streamline_len,
+            )
+        )
+        statuses_tp1.append(
+            pitn.tract.stopping.scalar_vec_threshold(
+                status_t,
+                fodf_sample_point_t_direction_tp1,
+                scalar_min_threshold=tracking_fodf_sample_min_val,
             )
         )
         status_tp1 = pitn.tract.stopping.merge_status(status_t, *statuses_tp1)
@@ -1281,7 +1413,9 @@ if selected_seed_vox_name is None:
         if select_vox_idx is v:
             selected_seed_vox_name = k
             break
-fiber_fname = f"/tmp/{dataset_selection}_{selected_seed_vox_name}_test_trax.tck"
+fiber_fname = (
+    f"/tmp/{dataset_selection}_{selected_seed_vox_name}_{MODEL_SELECTION}_test_trax.tck"
+)
 # fiber_fname = f"/tmp/fibercup_single_vox_seed_test_trax.tck"
 print("Saving tractogram", flush=True)
 dipy.io.streamline.save_tck(tracto, fiber_fname)

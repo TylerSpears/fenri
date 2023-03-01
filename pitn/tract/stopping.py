@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import collections
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import dipy
 import einops
@@ -87,6 +87,25 @@ def gfa_threshold(
         (streamline_status == CONTINUE) & (samples < gfa_min_threshold), STOP
     )
     return st_new
+
+
+def scalar_vec_threshold(
+    streamline_status: torch.Tensor,
+    v: torch.Tensor,
+    scalar_min_threshold: Optional[float] = None,
+    scalar_max_threshold: Optional[float] = None,
+) -> torch.Tensor:
+
+    to_stop_mask = torch.zeros_like(streamline_status).bool()
+    if scalar_min_threshold is not None:
+        to_stop_mask[v < scalar_min_threshold] = True
+    if scalar_max_threshold is not None:
+        to_stop_mask[v > scalar_max_threshold] = True
+
+    new_status = torch.where(
+        (streamline_status == CONTINUE) & to_stop_mask, STOP, streamline_status
+    )
+    return new_status
 
 
 def scalar_vol_threshold(
