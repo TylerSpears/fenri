@@ -596,4 +596,3 @@ dependencies:
   - conda-forge/noarch::jax==0.4.1=pyhd8ed1ab_0
   - pyg/linux-64::pyg==2.2.0=py310_torch_1.13.0_cu117
   - conda-forge/noarch::torchio==0.18.84=pyhd8ed1ab_1
-  - conda-forge/noarch::jaxopt==0.5.5=pyhd8ed1ab_0

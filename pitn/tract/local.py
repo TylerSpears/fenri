@@ -75,14 +75,7 @@ def gen_tract_step_rk4(
     init_direction_theta_phi: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
 
-    # # Allow for a different initial direction vector than that found by the derivative
-    # # function.
-    # if (init_direction_theta_phi is None) or (
-    #     torch.as_tensor(init_direction_theta_phi) == 0
-    # ).all():
     k1 = fn_zyx_direction_t2theta_phi(start_point_zyx, init_direction_theta_phi)
-    # else:
-    #     k1 = (init_direction_theta_phi[..., 0], init_direction_theta_phi[..., 1])
     k1_theta, k1_phi = k1
     k1_zyx_tangent = _unit_sphere2zyx(k1_theta, k1_phi)
 
@@ -117,9 +110,6 @@ def gen_tract_step_rk4(
         / torch.linalg.vector_norm(weighted_summed_tangent, ord=2, dim=-1, keepdim=True)
     )
 
-    # tangent_tp1 = (step_size / 6) * (
-    #     k1_zyx_tangent + 2 * k2_zyx_tangent + 2 * k3_zyx_tangent + k4_zyx_tangent
-    # )
     # Return the tangent vector rather than point_{t+1}, for ease of passing this
     # tangent as a new tangent_{t}.
     return tangent_tp1

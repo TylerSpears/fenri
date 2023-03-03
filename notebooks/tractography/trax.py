@@ -220,7 +220,7 @@ if dataset_selection.casefold() == "hcp".casefold():
     fa_im = nib.as_closest_canonical(fa_im)
 
     ##
-    SEED_MASK_FNAME = "L_CST_aligned_seed-roi.nii.gz"
+    SEED_MASK_FNAME = "R_CST_aligned_seed-roi.nii.gz"
     ##
     seed_roi_mask_f = sample_fod_f.parent / "rois" / SEED_MASK_FNAME
     seed_roi_mask_im = nib.load(seed_roi_mask_f)

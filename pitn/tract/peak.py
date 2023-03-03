@@ -679,9 +679,6 @@ def get_grad_descent_peak_finder_fn(
 ) -> Callable[
     [Tuple[torch.Tensor, torch.Tensor], torch.Tensor], Tuple[torch.Tensor, torch.Tensor]
 ]:
-    # objective_fn = lambda az_pol, coeffs: _jax_unbatched_negated_odf_sample(
-    #     az_pol, coeffs, m, n, degree_max, min_sphere_val
-    # )
 
     # m = _t2j(sh_orders)
     # m = tuple(m.tolist())
@@ -714,23 +711,19 @@ def get_grad_descent_peak_finder_fn(
             )
             sol_zyx = solution.params
             sol_azimuth, sol_polar = _jax_zyx2azimuth_polar(sol_zyx)
-            # sol_azimuth = sol_azimuth % (2 * jnp.pi)
             sol_polar = jnp.clip(
                 sol_polar,
                 a_min=jnp.finfo(sol_polar.dtype).tiny,
                 a_max=jnp.pi - jnp.finfo(sol_polar.dtype).tiny,
             )
             sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
-            # sol_polar = sol_polar % jnp.pi
         return (sol_azimuth, sol_polar)
 
     @jax.jit
     @jax.vmap
-    def run_solver(azimuth_polar, coeffs):  # , sh_orders, sh_degrees, degree_max
+    def run_solver(azimuth_polar, coeffs):
         init_zyx_coord = _jax_azimuth_polar2zyx(azimuth_polar[0], azimuth_polar[1])
-        solution = solver.run(
-            init_zyx_coord, coeffs, min_sphere_val
-        )  # , sh_orders, sh_degrees, degree_max
+        solution = solver.run(init_zyx_coord, coeffs, min_sphere_val)
         # jax.debug.print(
         #     "Error: {error}, Iter {iteration}, Step size: {step_size}, Az {az} Pol {pol}",
         #     error=solution.state.error,
@@ -742,14 +735,12 @@ def get_grad_descent_peak_finder_fn(
         # )
         sol_zyx = solution.params
         sol_azimuth, sol_polar = _jax_zyx2azimuth_polar(sol_zyx)
-        # sol_azimuth = sol_azimuth % (2 * jnp.pi)
         sol_polar = jnp.clip(
             sol_polar,
             a_min=jnp.finfo(sol_polar.dtype).tiny,
             a_max=jnp.pi - jnp.finfo(sol_polar.dtype).tiny,
         )
         sol_azimuth = jnp.clip(sol_azimuth, a_min=jnp.finfo(sol_azimuth.dtype).tiny)
-        # sol_polar = sol_polar % jnp.pi
         return (sol_azimuth, sol_polar)
 
     # def fake_vmap(az_pol, c, solv):
@@ -773,11 +764,7 @@ def get_grad_descent_peak_finder_fn(
         coeffs,
         init_theta_phi,
         jax_fn,
-        # jaxopt_solver,
         batch_size: int,
-        # sh_orders: Tuple,
-        # sh_degrees: Tuple,
-        # degree_max: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         polar = init_theta_phi[0]
         if polar.ndim == 1:
@@ -822,10 +809,7 @@ def get_grad_descent_peak_finder_fn(
         _debug_solver
         _debug_run_solver
 
-        jax_res = jax_fn(
-            (azimuth, polar), c  # , jaxopt_solver
-        )  # , sh_orders, sh_degrees, degree_max
-        # )
+        jax_res = jax_fn((azimuth, polar), c)
 
         t_res_azimuth = _j2t(jax_res[0], delete_from_jax=True)
         t_res_polar = _j2t(jax_res[1], delete_from_jax=True)
@@ -844,11 +828,7 @@ def get_grad_descent_peak_finder_fn(
     peak_finder_fn = partial(
         pt_vrun,
         jax_fn=run_solver,
-        # jaxopt_solver=solver,
         batch_size=batch_size,
-        # sh_degrees=n,
-        # sh_orders=m,
-        # degree_max=degree_max,
     )
     return peak_finder_fn
 
