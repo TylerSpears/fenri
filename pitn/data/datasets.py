@@ -6,7 +6,7 @@ import itertools
 import math
 from functools import partial
 from pathlib import Path
-from typing import Dict, Hashable, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, Hashable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import einops
 import monai
@@ -14,6 +14,18 @@ import nibabel as nib
 import numpy as np
 import skimage
 import torch
+from monai.config import DtypeLike, KeysCollection, SequenceStr
+from monai.data.meta_obj import get_track_meta
+from monai.utils import (
+    GridSampleMode,
+    GridSamplePadMode,
+    InterpolateMode,
+    NumpyPadMode,
+    convert_to_tensor,
+    ensure_tuple,
+    ensure_tuple_rep,
+    fall_back_tuple,
+)
 
 import pitn
 
@@ -513,6 +525,104 @@ def _get_extent_world(x_pre_img: torch.Tensor, affine: torch.Tensor) -> torch.Te
     return world_extent
 
 
+class RandIsotropicResampleAffineInteriord(
+    monai.transforms.RandomizableTransform,
+    monai.transforms.MapTransform,
+    monai.transforms.InvertibleTransform,
+):
+    backend = monai.transforms.Affined.backend
+
+    def __init__(
+        self,
+        keys,
+        prob: float,
+        isotropic_scale_range: Tuple[float, float],
+        # rotate_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
+        # shear_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
+        # translate_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
+        # scale_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
+        mode: SequenceStr = GridSampleMode.BILINEAR,
+        padding_mode: SequenceStr = GridSamplePadMode.REFLECTION,
+        device: Optional[torch.device] = None,
+        allow_missing_keys: bool = False,
+    ) -> None:
+
+        monai.transforms.MapTransform.__init__(self, keys, allow_missing_keys)
+        monai.transforms.RandomizableTransform.__init__(self, prob)
+
+        self._rand_iso_scale_param = None
+        self.isotopic_scale_range = ensure_tuple(isotropic_scale_range)
+        self.mode = monai.utils.ensure_tuple_rep(mode, len(self.keys))
+        self.padding_mode = monai.utils.ensure_tuple_rep(padding_mode, len(self.keys))
+
+    def randomize(self, data: Optional[Any] = None) -> None:
+        self._rand_iso_scale_param = self.R.uniform(
+            self.isotopic_scale_range[0], self.isotopic_scale_range[1]
+        )
+        super().randomize(None)
+
+    @staticmethod
+    def interior_spatial_shape(
+        input_to_target_scale: float, float, fov_shape
+    ) -> Tuple[float]:
+        target_space_in_input_space = np.floor(input_to_target_scale / 2)
+        target_shape = tuple(np.asarray(2 * target_space_in_input_space).tolist())
+        return target_shape
+
+    def __call__(self, data: dict) -> dict:
+        d = dict(data)
+        first_key: Hashable = self.first_key(d)
+        if first_key == ():
+            out = convert_to_tensor(d, track_meta=get_track_meta())
+            return out
+
+        self.randomize(None)
+
+        # do random transform?
+        do_resampling = self._do_transform
+
+        # do the transform
+        if do_resampling:
+            spatial_size = d[first_key].shape[1:]
+
+            scale_params = (self._rand_iso_scale_param,) * len(spatial_size)
+            target_shape = self.interior_spatial_shape(
+                self._rand_iso_scale_param, fov_shape=np.asarray(spatial_size)
+            )
+            affine_tf = monai.transforms.Affined(
+                self.keys,
+                scale_params=scale_params,
+                spatial_size=target_shape,
+                mode=self.mode,
+                padding_mode=self.padding_mode,
+                device=self.device,
+                dtype=self.dtype,
+                allow_missing_keys=self.allow_missing_keys,
+            )
+
+            d = affine_tf(d)
+
+        for key in self.key_iterator(d):
+            if not do_resampling:
+                d[key] = convert_to_tensor(
+                    d[key], track_meta=get_track_meta(), dtype=torch.float32
+                )
+            if get_track_meta():
+                for key in self.key_iterator(d):
+                    xform = (
+                        self.pop_transform(d[key], check=False) if do_resampling else {}
+                    )
+                    self.push_transform(
+                        d[key],
+                        extra_info={
+                            "do_resampling": do_resampling,
+                            "rand_affine_info": xform,
+                        },
+                    )
+
+        return d
+
+
 class HCPfODFINRPatchDataset(monai.data.PatchDataset):
 
     _SAMPLE_KEYS = (
@@ -602,9 +712,27 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         return _EfficientRandWeightedCropd(keys=keys, w_key=w_key, **sample_tf_kwargs)
 
     @staticmethod
-    def default_feature_tf(patch_size: tuple):
+    def default_feature_tf(
+        # patch_size: tuple, #!Need to dynamically find this now that we have rand sizes
+        patch_scale_range: Optional[Tuple[float, float]] = None,
+        patch_scale_prob: Optional[float] = None,
+    ):
         # Transforms for extracting features for the network.
         feat_tfs = list()
+
+        if patch_scale_range is not None and patch_scale_prob is not None:
+            rand_lr_patch_resample_tf = RandIsotropicResampleAffineInteriord(
+                [
+                    "lr_dwi",
+                    "lr_fodf",
+                    "lr_mask",
+                ],
+                prob=patch_scale_prob,
+                isotropic_scale_range=patch_scale_range,
+                mode=["bilinear", "bilinear", "nearest"],
+                padding_mode="zeros",
+            )
+            feat_tfs.append(rand_lr_patch_resample_tf)
 
         # Extract the new LR patch affine matrix.
         feat_tfs.append(

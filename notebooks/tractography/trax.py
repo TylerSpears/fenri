@@ -20,6 +20,7 @@
 # %autoreload 2
 
 import collections
+import datetime
 import functools
 import itertools
 import math
@@ -85,15 +86,51 @@ plt.rcParams.update({"image.interpolation": "antialiased"})
 np.set_printoptions(suppress=True, threshold=100, linewidth=88)
 torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
 
-MODEL_SELECTION = "inr"
-# MODEL_SELECTION = "tri-linear"
+
+def plot_buffer(buffer: torch.Tensor):
+    streamlines = buffer.swapdims(1, 0).detach().cpu().numpy()
+    # remove_streamline_mask = np.isnan(streamlines).all(0).any(0)
+    # keep_streamline_mask = ~remove_streamline_mask
+    # streams = streamlines[keep_streamline_mask]
+    streams = list(streamlines)
+
+    fig, axs = plt.subplots(nrows=3, ncols=1, sharex=True, dpi=120)
+
+    t = list()
+    for s in streams:
+        s = s.squeeze()
+        if np.isnan(s).all():
+            continue
+        elif np.isnan(s).any():
+            end_idx = np.argwhere(np.isnan(s).any(-1)).min()
+            t.append(s[:end_idx])
+            if (~np.isnan(s)).sum() != len(t[-1]) * 3:
+                print("Warning: non-nans after nans in streamlines ", end="")
+                ic((~np.isnan(s)).sum(), len(t[-1]), s.shape)
+        else:
+            t.append(s)
+    for ax in range(3):
+        a = axs[ax]
+        sts_on_ax = [s[..., ax] for s in t]
+
+        for i, s in enumerate(sts_on_ax):
+            a.plot(s, label=i, alpha=0.7)
+            a.scatter(np.arange(len(s)), s, alpha=0.7)
+        a.set_ylabel(("x", "y", "z")[ax])
+
+    return fig
+
+
+# MODEL_SELECTION = "inr"
+MODEL_SELECTION = "tri-linear"
 
 # %%
 # torch setup
 # allow for CUDA usage, if available
 if torch.cuda.is_available():
     # Pick only one device for the default, may use multiple GPUs for training later.
-    dev_idx = 0 if MODEL_SELECTION.casefold() == "inr" else 1
+    dev_idx = 0
+    # dev_idx = 0 if MODEL_SELECTION.casefold() == "inr" else 1
     # dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
@@ -127,12 +164,20 @@ hcp_full_res_fodf_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
 hcp_low_res_data_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
 hcp_low_res_fodf_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
 fibercup_fodf_dir = Path("/data/srv/outputs/fibercup/fiberfox_replication/B1-3/fodf")
+tmp_results_dir = Path("/tmp") / Path("/data/srv/outputs/pitn/results/tmp")
 
 assert hcp_full_res_data_dir.exists()
 assert hcp_full_res_fodf_dir.exists()
 assert hcp_low_res_data_dir.exists()
 assert hcp_low_res_fodf_dir.exists()
 assert fibercup_fodf_dir.exists()
+assert tmp_results_dir.exists()
+
+# %%
+ts = datetime.datetime.now().replace(microsecond=0).isoformat()
+# Break ISO format because many programs don't like having colons ':' in a filename.
+ts = ts.replace(":", "_")
+tmp_res_dir = Path(tmp_results_dir) / f"{ts}__tractography_{MODEL_SELECTION}"
 
 # %%
 network_weights_f = (
@@ -144,46 +189,47 @@ network_weights_f = (
 assert network_weights_f.exists()
 
 # %%
+
 # Parameters
 max_sh_order = 8
 
 # Seed creation.
-peaks_per_seed_vox = 2
+peaks_per_seed_vox = 3
 # Total seeds per voxel will be `seeds_per_vox_axis`^3
-seeds_per_vox_axis = 5
-seed_batch_size = 10000
+seeds_per_vox_axis = 3
+# seed_batch_size = 20000
+seed_batch_size = 200
 
 # Threshold parameter for peak finding in the seed voxels.
 # Element-wise filtering of sphere samples.
 fodf_sample_min_val = 0.005
 fodf_sample_min_quantile_thresh = 0.001
-dipy_relative_peak_threshold = 0.2
+dipy_relative_peak_threshold = 0.3
 dipy_min_separation_angle = 20
 
 # RK4 estimation
 step_size = 0.4
-alpha_exponential_moving_avg = 0.9
+alpha_exponential_moving_avg = 1.0
 tracking_fodf_sample_min_val = 0.05
 # Seems that MRtrix's Newton optimization also has a tolerance value of 0.001, max
 # iterations of 100.
 # <https://github.com/MRtrix3/mrtrix3/blob/f633dfd7e9080f71877ea6a4619dabdde99a0fb6/src/dwi/tractography/SIFT2/coeff_optimiser.cpp#L369>
 grad_descent_kwargs = dict(
     tol=1e-3,
-    stepsize=0.4,
+    stepsize=1.0,
     maxiter=100,
-    acceleration=True,
+    # acceleration=True,
+    acceleration=False,
     implicit_diff=True,
     # implicit_diff=False,
     jit=True,
-    # jit=False,  #!DEBUG
     # unroll=True,
-    # verbose=True,  #!DEBUG
 )
 
 # Stopping & invalidation criteria.
-min_streamline_len = 50
-max_streamline_len = 300
-fa_min_threshold = 0.1
+min_streamline_len = 20
+max_streamline_len = 100
+fa_min_threshold = 0.05
 max_angular_thresh_rad = torch.pi / 4
 
 # %% [markdown]
@@ -195,59 +241,52 @@ max_angular_thresh_rad = torch.pi / 4
 # %%
 # HCP or fibercup
 dataset_selection = "HCP"
+SUBJECT_ID = "191336"
+SEED_MASK_FNAME = "postproc_5tt_parcellation.nii.gz"
 
 # %%
 # HCP Subject scan.
-if dataset_selection.casefold() == "hcp".casefold():
-    sample_fod_f = (
-        hcp_low_res_fodf_dir / "162329" / "T1w" / "postproc_wm_msmt_csd_fod.nii.gz"
-    )
-    fod_coeff_im = nib.load(sample_fod_f)
-    fod_coeff_im = nib.as_closest_canonical(fod_coeff_im)
-    print("Original shape", fod_coeff_im.shape)
-    print("Original affine", fod_coeff_im.affine)
+sample_fod_f = (
+    hcp_low_res_fodf_dir / SUBJECT_ID / "T1w" / "postproc_wm_msmt_csd_fod.nii.gz"
+)
+fod_coeff_im = nib.load(sample_fod_f)
+fod_coeff_im = nib.as_closest_canonical(fod_coeff_im)
+print("Original shape", fod_coeff_im.shape)
+print("Original affine", fod_coeff_im.affine)
 
-    sample_dwi_f = hcp_low_res_data_dir / "162329" / "T1w" / "Diffusion" / "data.nii.gz"
-    dwi_im = nib.load(sample_dwi_f)
-    dwi_im = nib.as_closest_canonical(dwi_im)
+sample_dwi_f = hcp_low_res_data_dir / SUBJECT_ID / "T1w" / "Diffusion" / "data.nii.gz"
+dwi_im = nib.load(sample_dwi_f)
+dwi_im = nib.as_closest_canonical(dwi_im)
 
-    mask_f = sample_fod_f.parent / "postproc_nodif_brain_mask.nii.gz"
-    mask_im = nib.load(mask_f)
-    mask_im = nib.as_closest_canonical(mask_im)
+mask_f = sample_fod_f.parent / "postproc_nodif_brain_mask.nii.gz"
+mask_im = nib.load(mask_f)
+mask_im = nib.as_closest_canonical(mask_im)
 
-    fa_f = sample_fod_f.parent / "postproc_dti-fa.nii.gz"
-    fa_im = nib.load(fa_f)
-    fa_im = nib.as_closest_canonical(fa_im)
+fa_f = sample_fod_f.parent / "dti-fa.nii.gz"
+fa_im = nib.load(fa_f)
+fa_im = nib.as_closest_canonical(fa_im)
 
-    ##
-    SEED_MASK_FNAME = "R_CST_aligned_seed-roi.nii.gz"
-    ##
-    seed_roi_mask_f = sample_fod_f.parent / "rois" / SEED_MASK_FNAME
-    seed_roi_mask_im = nib.load(seed_roi_mask_f)
-    seed_roi_mask_im = nib.as_closest_canonical(seed_roi_mask_im)
-
-elif dataset_selection.casefold() == "fibercup".casefold():
-    # Fibercup phantom data.
-    sample_fod_f = fibercup_fodf_dir / "B1-3_bval-1500_wm_fod_coeffs.nii.gz"
-    fod_coeff_im = nib.load(sample_fod_f)
-    fod_coeff_im = nib.as_closest_canonical(fod_coeff_im)
-    print("Original shape", fod_coeff_im.shape)
-    print("Original affine", fod_coeff_im.affine)
-    mask_f = fibercup_fodf_dir.parent / "dwi" / "B1-3_mask.nii.gz"
-    mask_im = nib.load(mask_f)
-    mask_im = nib.as_closest_canonical(mask_im)
-    white_matter_mask_f = mask_f
-    wm_mask_im = nib.load(white_matter_mask_f)
-    wm_mask_im = nib.as_closest_canonical(wm_mask_im)
-
-    # Pre-select voxels of interest in RAS+ space.
-    lobe_vox_idx = dict(
-        unipole_lr_c_lobe_idx=(51, 40, 1),
-        unipole_left_A_lobe_idx=(41, 34, 1),
-        bipole_lr_left_A_lobe_idx=(45, 24, 1),
-        two_crossing_center_A_lobe_idx=(32, 47, 1),
-        three_crossing_right_A_lobe_idx=(24, 39, 1),
-    )
+seed_roi_mask_f = sample_fod_f.parent / SEED_MASK_FNAME
+seed_roi_mask_im = nib.load(seed_roi_mask_f)
+seed_roi_mask_im = nib.as_closest_canonical(seed_roi_mask_im)
+seed_roi_mask_im = seed_roi_mask_im.slicer[..., 2]
+seed_roi_mask_data = seed_roi_mask_im.get_fdata().astype(bool)
+# Reduce white matter seed area with binary erosion to focus seeding towards the
+# center of the white matter tracts.
+seed_roi_mask_data = skimage.morphology.binary_erosion(
+    seed_roi_mask_data, skimage.morphology.octahedron(2)
+)
+# Randomly sub-select seed voxels.
+gen = np.random.default_rng(79723)
+random_select_mask = gen.uniform(0, 1, size=seed_roi_mask_data.shape)
+random_select_mask = random_select_mask < 0.05
+seed_roi_mask_data = seed_roi_mask_data * random_select_mask
+print("Num voxels in seed mask: ", seed_roi_mask_data.sum())
+seed_roi_mask_im = nib.Nifti1Image(
+    seed_roi_mask_data,
+    affine=seed_roi_mask_im.affine,
+    header=seed_roi_mask_im.header,
+)
 
 
 # %%
@@ -340,35 +379,24 @@ seed_roi_mask_im.uncache()
 # %%
 seed_mask = torch.zeros_like(brain_mask).bool()
 
-if dataset_selection.casefold() == "HCP".casefold():
+selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
+# #!DEBUG
+# seed_roi_mask = 0 * seed_roi_mask
+# seed_roi_mask[:, 16:17, 38:39, 33:34] = True
+# roi_shape = seed_roi_mask.shape
+# s_roi = einops.rearrange(seed_roi_mask, "1 z y x -> (z y x)")
+# mask_idx = torch.where(s_roi)
+# s_roi = s_roi * 0
+# s_roi[(mask_idx[0][140:142],)] = True
+# seed_roi_mask = einops.rearrange(
+#     s_roi,
+#     "(z y x) -> 1 z y x",
+#     z=seed_roi_mask.shape[1],
+#     y=seed_roi_mask.shape[2],
+# )
+# #!
+seed_mask = (1 + seed_mask) * seed_roi_mask
 
-    selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
-    # #!DEBUG
-    # seed_roi_mask = 0 * seed_roi_mask
-    # seed_roi_mask[:, 16:17, 38:39, 33:34] = True
-    # roi_shape = seed_roi_mask.shape
-    # s_roi = einops.rearrange(seed_roi_mask, "1 z y x -> (z y x)")
-    # mask_idx = torch.where(s_roi)
-    # s_roi = s_roi * 0
-    # s_roi[(mask_idx[0][140:142],)] = True
-    # seed_roi_mask = einops.rearrange(
-    #     s_roi,
-    #     "(z y x) -> 1 z y x",
-    #     z=seed_roi_mask.shape[1],
-    #     y=seed_roi_mask.shape[2],
-    # )
-    # #!
-    seed_mask = (1 + seed_mask) * seed_roi_mask
-
-elif dataset_selection.casefold() == "fibercup".casefold():
-    # select_vox_idx = lobe_vox_idx["unipole_left_A_lobe_idx"]
-    # select_vox_idx = lobe_vox_idx["unipole_lr_c_lobe_idx"]
-    # select_vox_idx = lobe_vox_idx['three_crossing_right_A_lobe_idx']
-    # select_vox_idx = lobe_vox_idx["bipole_lr_left_A_lobe_idx"]
-    select_vox_idx = lobe_vox_idx["two_crossing_center_A_lobe_idx"]
-    selected_seed_vox_name = None
-
-    seed_mask[0, select_vox_idx[0], select_vox_idx[1], select_vox_idx[2]] = True
 
 print(coeffs.shape)
 print(brain_mask.shape)
@@ -992,7 +1020,7 @@ class INR_Interpolator:
         result_direction_theta_phi = self.fn_peak_finder(
             pred_sample_fodf_coeffs, init_direction_theta_phi
         )
-        #!DEBUG
+        # #!DEBUG
         # bugged_idx = (35, 728, 4570)
         # result_direction_theta_phi = self.fn_peak_finder(
         #     pred_sample_fodf_coeffs[
@@ -1048,110 +1076,21 @@ fn_inr_interp_zyx_tangent_t2theta_phi = INR_Interpolator(
 del encoder
 #!
 
-# %%
-# Reduced version of the full interpolation function, to be called only when expanding
-# the seed points at the start of streamline estimation.
-def _dipy_peak_finder_fn_linear_interp_zyx(
-    target_coords_mm_zyx: torch.Tensor,
-    fodf_coeffs_brain_vol: torch.Tensor,
-    affine_vox2mm: torch.Tensor,
-    seed_sphere_theta: torch.Tensor,
-    seed_sphere_phi: torch.Tensor,
-    sh_order: int,
-    fodf_sample_min_val: float,
-    fodf_sample_min_quantile_thresh: float,
-    **dipy_peak_directions_kwargs,
-) -> pitn.tract.peak.PeaksContainer:
-    # Initial interpolation of fodf coefficients at the target points.
-    pred_sample_fodf_coeffs = pitn.odf.sample_odf_coeffs_lin_interp(
-        target_coords_mm_zyx,
-        fodf_coeff_vol=fodf_coeffs_brain_vol,
-        affine_vox2mm=affine_vox2mm,
-    )
-
-    # Transform to fodf spherical samples.
-    target_sphere_samples = pitn.odf.sample_sphere_coords(
-        pred_sample_fodf_coeffs,
-        theta=seed_sphere_theta,
-        phi=seed_sphere_phi,
-        sh_order=sh_order,
-    )
-
-    # Threshold spherical function values.
-    if fodf_sample_min_val is not None:
-        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_value(
-            target_sphere_samples, fodf_sample_min_val
-        )
-    if fodf_sample_min_quantile_thresh is not None:
-        target_sphere_samples = pitn.odf.thresh_fodf_samples_by_quantile(
-            target_sphere_samples, fodf_sample_min_quantile_thresh
-        )
-
-    dipy_sphere = dipy.data.Sphere(
-        theta=seed_sphere_theta.detach().cpu().numpy(),
-        phi=seed_sphere_phi.detach().cpu().numpy(),
-    )
-
-    np_sphere_samples = target_sphere_samples.detach().cpu().numpy()
-
-    # Set size to 50 arbitrarily; seems unlikely a real-world point would have 50 unique
-    # peaks...can be set to the number of sphere samples, but that will almost certainly
-    # never be used, and would be wasteful of memory.
-    peak_vals = target_sphere_samples.new_zeros(target_sphere_samples.shape[0], 50)
-    peak_theta = torch.clone(peak_vals)
-    peak_phi = torch.clone(peak_vals)
-    peak_valid_mask = torch.clone(peak_vals).bool()
-
-    n_max_peaks = 0
-    for i_sample in range(np_sphere_samples.shape[0]):
-        directions, vals, sphere_indices = dipy.direction.peak_directions(
-            np_sphere_samples[i_sample : i_sample + 1].flatten(),
-            dipy_sphere,
-            **dipy_peak_directions_kwargs,
-        )
-        n_peaks_i = directions.shape[0]
-
-        peak_vals[i_sample, :n_peaks_i] = torch.from_numpy(vals).to(peak_vals)
-        peak_idx_i = torch.from_numpy(sphere_indices).to(peak_vals.device).long()
-        peak_theta[i_sample, :n_peaks_i] = torch.take(seed_sphere_theta, peak_idx_i)
-        peak_phi[i_sample, :n_peaks_i] = torch.take(seed_sphere_phi, peak_idx_i)
-        peak_valid_mask[i_sample, :n_peaks_i] = True
-
-        n_max_peaks = max(n_max_peaks, n_peaks_i)
-
-    peak_vals = peak_vals[:, :n_max_peaks]
-    peak_theta = peak_theta[:, :n_max_peaks]
-    peak_phi = peak_phi[:, :n_max_peaks]
-    peak_valid_mask = peak_valid_mask[:, :n_max_peaks]
-
-    return pitn.tract.peak.PeaksContainer(
-        peak_vals, theta=peak_theta, phi=peak_phi, valid_peak_mask=peak_valid_mask
-    )
+# %% [markdown]
+# ### Seeding
 
 
-# Copy the static parameters from the full interplation function.
-dipy_peak_finder_fn_linear_interp_zyx = partial(
-    _dipy_peak_finder_fn_linear_interp_zyx,
-    fodf_coeffs_brain_vol=coeffs,
-    affine_vox2mm=affine_sar_vox2sar_mm,
-    seed_sphere_theta=seed_theta,
-    seed_sphere_phi=seed_phi,
-    sh_order=max_sh_order,
-    fodf_sample_min_val=fodf_sample_min_val,
-    fodf_sample_min_quantile_thresh=fodf_sample_min_quantile_thresh,
-    relative_peak_threshold=dipy_relative_peak_threshold,
-    min_separation_angle=dipy_min_separation_angle,
-)
+# %% [markdown]
+# ### Primary Tractography Loop
 
 # %%
+# #! debug
 # Create initial seeds and tangent/direction vectors.
-seeds_t_neg1 = pitn.tract.seed.seeds_from_mask(
+init_unique_seeds = pitn.tract.seed.seeds_from_mask(
     seed_mask,
     seeds_per_vox_axis=seeds_per_vox_axis,
     affine_vox2mm=affine_sar_vox2sar_mm,
 )
-# seed_peaks = peaks_only_fn_linear_interp_zyx(seeds_t_neg1)
-seed_peaks = dipy_peak_finder_fn_linear_interp_zyx(seeds_t_neg1)
 
 fn_zyx2theta_phi_seed_expansion = (
     fn_inr_interp_zyx_tangent_t2theta_phi
@@ -1159,28 +1098,30 @@ fn_zyx2theta_phi_seed_expansion = (
     else fn_linear_interp_zyx_tangent_t2theta_phi
 )
 
-(seeds_t_neg1_to_0, tangent_t0_zyx) = pitn.tract.seed.expand_seeds_from_topk_peaks_rk4(
-    seeds_t_neg1,
+print("*" * 20, "Generating seeds", "*" * 20, flush=True)
+seed_sampler = pitn.tract.seed.BatchSeedSequenceSampler(
+    max_batch_size=seed_batch_size,
     max_peaks_per_voxel=peaks_per_seed_vox,
-    seed_peak_vals=seed_peaks.peaks,
-    theta_peak=seed_peaks.theta,
-    phi_peak=seed_peaks.phi,
-    valid_peak_mask=seed_peaks.valid_peak_mask,
-    step_size=step_size,
+    unique_seed_coords_zyx_mm=init_unique_seeds,
+    tracking_step_size=step_size,
+    fodf_coeffs_brain_vol=coeffs,
+    affine_vox2mm=affine_sar_vox2sar_mm,
     fn_zyx_direction_t2theta_phi=fn_zyx2theta_phi_seed_expansion,
-    # fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
-    # fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
+    # dipy peak finder kwargs
+    seed_sphere_theta=seed_theta,
+    seed_sphere_phi=seed_phi,
+    fodf_sample_min_val=fodf_sample_min_val,
+    fodf_sample_min_quantile_thresh=fodf_sample_min_quantile_thresh,
+    relative_peak_threshold=dipy_relative_peak_threshold,
+    min_separation_angle=dipy_min_separation_angle,
 )
 
-# #!
-# seeds_t_neg1_to_0 = seeds_t_neg1_to_0[:, 15000:]  #!DEBUG
-# seeds_t_neg1_to_0 = seeds_t_neg1_to_0[:, :1000]
-# tangent_t0_zyx = tangent_t0_zyx[15000:]  #!DEBUG
-# tangent_t0_zyx = tangent_t0_zyx[:1000]  #!DEBUG
-# #!
+seeds_t_neg1_to_0, tangent_t0_zyx = seed_sampler.sample_direction_seeds_sequential(
+    0, seed_batch_size
+)
+# #! debug
 
-# %%
-# Primary tracrography loop.
+# Prep objects & initialize all state objects to t=0.
 
 fn_direction_estimate = (
     fn_inr_interp_zyx_tangent_t2theta_phi
@@ -1195,200 +1136,277 @@ fn_fod_ampl_estimate = (
 )
 
 all_tracts = list()
-n_seeds = seeds_t_neg1_to_0.shape[1]
-seed_batch_start_idx = (
-    torch.arange(0, n_seeds, seed_batch_size).to(seeds_t_neg1_to_0.device).int()
+streamlines = list()
+
+max_steps = math.ceil(max_streamline_len / step_size) + 1
+batch_size = tangent_t0_zyx.shape[0]
+streamline_buffer = (
+    torch.ones(
+        max_steps, batch_size, 3, device=seeds_t_neg1_to_0.device, dtype=torch.float32
+    )
+    * torch.nan
 )
 
-for i_batch, seed_batch_start in enumerate(seed_batch_start_idx):
-    print(
-        "\n",
-        "=" * 10,
-        f"Batch {i_batch} ",
-        f"Seeds {seed_batch_start}-{seed_batch_start + seed_batch_size}/{n_seeds}",
-        "=" * 10,
+v_t = torch.zeros(batch_size, dtype=torch.long, device=tangent_t0_zyx.device)
+streamline_buffer.index_put_((v_t,), seeds_t_neg1_to_0[0].to(streamline_buffer))
+v_t += 1
+streamline_buffer.index_put_((v_t,), seeds_t_neg1_to_0[1].to(streamline_buffer))
+v_t_diag_batch_selection = torch.arange(batch_size).to(v_t)
+
+# t_max = 1e8
+t_max = 1e6
+
+full_streamline_status = (
+    torch.ones(batch_size, dtype=torch.int8, device=seeds_t_neg1_to_0.device)
+    * pitn.tract.stopping.CONTINUE
+)
+# At least one step has been made.
+full_streamline_len = torch.zeros_like(full_streamline_status).float() + step_size
+full_points_t = streamline_buffer[1]
+full_tangent_t_theta_phi = torch.stack(
+    pitn.tract.local.zyx2unit_sphere_theta_phi(tangent_t0_zyx), dim=-1
+)
+full_tangent_t_zyx = tangent_t0_zyx
+full_points_tp1 = torch.zeros_like(full_points_t) * torch.nan
+
+sampler_empty = False
+curr_sampler_idx = batch_size
+
+seeds_completed = 0
+counter = 0
+print("*" * 20, "Starting tractography loop", "*" * 20, flush=True)
+
+while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
+    full_streamline_status
+).any():
+    # print(counter, end="|", flush=True)
+    counter += 1
+
+    to_continue = pitn.tract.stopping.to_continue_mask(full_streamline_status)
+
+    points_t = full_points_t[to_continue]
+    tangent_t_theta_phi = full_tangent_t_theta_phi[to_continue]
+    tangent_t_zyx = full_tangent_t_zyx[to_continue]
+    streamline_len = full_streamline_len[to_continue]
+    status_t = full_streamline_status[to_continue]
+
+    tangent_tp1_zyx = pitn.tract.local.gen_tract_step_rk4(
+        points_t,
+        init_direction_theta_phi=tangent_t_theta_phi,
+        fn_zyx_direction_t2theta_phi=fn_direction_estimate,
+        step_size=step_size,
     )
-    seed_batch_t_neg1_to_0 = seeds_t_neg1_to_0[
-        :, seed_batch_start : seed_batch_start + seed_batch_size
-    ]
-    seed_batch_tangent_t0_zyx = tangent_t0_zyx[
-        seed_batch_start : seed_batch_start + seed_batch_size
-    ]
-    batch_size = seed_batch_t_neg1_to_0.shape[1]
-    streamlines = list()
-    streamlines.append(seed_batch_t_neg1_to_0[0].clone())
-    streamlines.append(seed_batch_t_neg1_to_0[1].clone())
-
-    # t_max = 1e8
-    t_max = 1000
-    t = 1
-
-    full_streamline_status = (
-        torch.ones(batch_size, dtype=torch.int8, device=seeds_t_neg1_to_0.device)
-        * pitn.tract.stopping.CONTINUE
+    tangent_tp1_theta_phi = torch.stack(
+        pitn.tract.local.zyx2unit_sphere_theta_phi(tangent_tp1_zyx), -1
     )
-    # At least one step has been made.
-    full_streamline_len = torch.zeros_like(full_streamline_status).float() + step_size
-    full_points_t = seed_batch_t_neg1_to_0[1].clone()
-    full_tangent_t_theta_phi = torch.stack(
-        pitn.tract.local.zyx2unit_sphere_theta_phi(seed_batch_tangent_t0_zyx), dim=-1
+
+    fodf_sample_point_t_direction_tp1 = fn_fod_ampl_estimate(
+        points_t,
+        directions_theta_phi=tangent_tp1_theta_phi,
+        batch_size=seed_batch_size,
     )
-    full_tangent_t_zyx = seed_batch_tangent_t0_zyx
-    full_points_tp1 = torch.zeros_like(full_points_t) * torch.nan
-    # full_tangent_tp1_theta_phi = torch.zeros_like(full_tangent_t_theta_phi) * torch.nan
-    # full_tangent_tp1_zyx = torch.zeros_like(full_tangent_t_zyx) * torch.nan
-    while pitn.tract.stopping.to_continue_mask(full_streamline_status).any():
 
-        to_continue = pitn.tract.stopping.to_continue_mask(full_streamline_status)
+    ema_tangent_tp1_zyx = (
+        alpha_exponential_moving_avg * tangent_tp1_zyx
+        + (1 - alpha_exponential_moving_avg) * tangent_t_zyx
+    )
+    ema_tangent_tp1_zyx = (
+        step_size
+        * ema_tangent_tp1_zyx
+        / torch.linalg.vector_norm(ema_tangent_tp1_zyx, ord=2, dim=-1, keepdim=True)
+    )
 
-        points_t = full_points_t[to_continue]
-        tangent_t_theta_phi = full_tangent_t_theta_phi[to_continue]
-        tangent_t_zyx = full_tangent_t_zyx[to_continue]
-        streamline_len = full_streamline_len[to_continue]
-        status_t = full_streamline_status[to_continue]
+    points_tp1 = points_t + ema_tangent_tp1_zyx
 
-        tangent_tp1_zyx = pitn.tract.local.gen_tract_step_rk4(
-            points_t,
-            init_direction_theta_phi=tangent_t_theta_phi,
-            fn_zyx_direction_t2theta_phi=fn_direction_estimate,
-            # fn_zyx_direction_t2theta_phi=fn_linear_interp_zyx_tangent_t2theta_phi,
-            # fn_zyx_direction_t2theta_phi=fn_inr_interp_zyx_tangent_t2theta_phi,
-            step_size=step_size,
+    tangent_tp1_zyx = ema_tangent_tp1_zyx
+
+    # Update state variables based upon new streamline statuses.
+    tmp_len = streamline_len + step_size
+    statuses_tp1 = list()
+    statuses_tp1.append(
+        pitn.tract.stopping.scalar_vol_threshold(
+            status_t,
+            sample_coords_mm_zyx=points_tp1,
+            scalar_min_threshold=fa_min_threshold,
+            vol=fa,
+            affine_vox2mm=affine_sar_vox2sar_mm,
         )
-        tangent_tp1_theta_phi = torch.stack(
-            pitn.tract.local.zyx2unit_sphere_theta_phi(tangent_tp1_zyx), -1
+    )
+    statuses_tp1.append(
+        pitn.tract.stopping.angular_threshold(
+            status_t, points_t, points_tp1, max_angular_thresh_rad
         )
-
-        fodf_sample_point_t_direction_tp1 = fn_fod_ampl_estimate(
-            points_t,
-            directions_theta_phi=tangent_tp1_theta_phi,
-            batch_size=seed_batch_size,
+    )
+    statuses_tp1.append(
+        pitn.tract.stopping.streamline_len_mm(
+            status_t,
+            tmp_len,
+            min_len=min_streamline_len,
+            max_len=max_streamline_len,
         )
-        # fodf_sample_point_t_direction_tp1 = fn_linear_interp_spatial_fodf_sample(
-        #     points_t, directions_theta_phi=tangent_tp1_theta_phi, batch_size=seed_batch_size
-        # )
-        # fodf_sample_point_t_direction_tp1 = (
-        #     fn_inr_interp_zyx_tangent_t2theta_phi.spatial_fodf_sample(
-        #         points_t,
-        #         directions_theta_phi=tangent_tp1_theta_phi,
-        #         batch_size=seed_batch_size,
-        #     )
-        # )
-
-        ema_tangent_tp1_zyx = (
-            alpha_exponential_moving_avg * tangent_tp1_zyx
-            + (1 - alpha_exponential_moving_avg) * tangent_t_zyx
+    )
+    statuses_tp1.append(
+        pitn.tract.stopping.scalar_vec_threshold(
+            status_t,
+            fodf_sample_point_t_direction_tp1,
+            scalar_min_threshold=tracking_fodf_sample_min_val,
         )
-        ema_tangent_tp1_zyx = (
-            step_size
-            * ema_tangent_tp1_zyx
-            / torch.linalg.vector_norm(ema_tangent_tp1_zyx, ord=2, dim=-1, keepdim=True)
+    )
+    status_tp1 = pitn.tract.stopping.merge_status(status_t, *statuses_tp1)
+    status_tp1 = pitn.tract.stopping.merge_status(
+        status_tp1,
+        pitn.tract.stopping.streamline_len_mm(
+            status_tp1,
+            tmp_len,
+            min_len=min_streamline_len,
+            max_len=max_streamline_len,
+        ),
+    )
+
+    full_streamline_status_tp1 = full_streamline_status.masked_scatter(
+        to_continue, status_tp1
+    )
+
+    # Remove any stopped tracks from the tp1 variables. We want the number of
+    # elements in the "x_tp1" variables to equal the number of "True" values in
+    # the "to_continue_tp1" array! Otherwise, the masked_scatter() will not put
+    # the masked values where we want them.
+    tp1_props_filter_mask = pitn.tract.stopping.to_continue_mask(status_tp1)
+    points_tp1 = points_tp1[tp1_props_filter_mask]
+    tangent_tp1_theta_phi = tangent_tp1_theta_phi[tp1_props_filter_mask]
+    tangent_tp1_zyx = tangent_tp1_zyx[tp1_props_filter_mask]
+    streamline_len_tp1 = tmp_len
+    streamline_len_tp1 = streamline_len_tp1[tp1_props_filter_mask]
+    status_tp1 = status_tp1[tp1_props_filter_mask]
+
+    to_continue_tp1 = pitn.tract.stopping.to_continue_mask(full_streamline_status_tp1)
+
+    assert points_tp1.shape[0] == to_continue_tp1.sum()
+
+    full_points_tp1 = (full_points_tp1 * torch.nan).masked_scatter(
+        to_continue_tp1[..., None], points_tp1.to(full_points_tp1)
+    )
+
+    # t <- t + 1
+    v_t[to_continue_tp1] += 1
+    if v_t.max() > t_max:
+        break
+
+    # Only write into the streamline buffer those points that continue, at their
+    # timestep indices.
+    streamline_buffer.index_put_(
+        (v_t, v_t_diag_batch_selection),
+        torch.where(to_continue_tp1[..., None], full_points_tp1, full_points_t),
+    )
+
+    full_points_t = full_points_tp1
+    full_tangent_t_theta_phi = (full_tangent_t_theta_phi * torch.nan).masked_scatter(
+        to_continue_tp1[..., None], tangent_tp1_theta_phi
+    )
+    full_tangent_t_zyx = (full_tangent_t_zyx * torch.nan).masked_scatter(
+        to_continue_tp1[..., None], tangent_tp1_zyx
+    )
+    full_streamline_len.masked_scatter_(
+        to_continue_tp1,
+        streamline_len_tp1,
+    )
+    full_streamline_status_change = full_streamline_status != full_streamline_status_tp1
+    full_streamline_status = full_streamline_status_tp1
+
+    # If any streamlines have stopped when they previously were not stopped, then store
+    # those streamlines and sample more seeds to take their place.
+    # to_continue_tp1 indicates stopped streamlines, while the streamline status
+    # change indicates whether those buffer slots have been empty for more than one
+    # iteration.
+    if (~to_continue_tp1 & full_streamline_status_change).any():
+        to_free_mask = ~to_continue_tp1 & full_streamline_status_change
+        n_free = to_free_mask.sum().cpu().int().item()
+
+        # Only store the valid/stopped streamlines, but empty out all the `to_free`
+        # streamlines.
+        to_store_valid = to_free_mask & (
+            full_streamline_status != pitn.tract.stopping.INVALID
         )
+        n_to_store = to_store_valid.sum().cpu().int().item()
 
-        points_tp1 = points_t + ema_tangent_tp1_zyx
+        if n_to_store > 0:
+            seeds_completed += n_to_store
+            if (seeds_completed % 10) == 0:
+                tot_seeds = seed_sampler.tangent_buffer.shape[0]
+                print(
+                    f"Tracts {seeds_completed}: Seeds {curr_sampler_idx}/{tot_seeds}",
+                    end="...",
+                    flush=True,
+                )
 
-        tangent_tp1_zyx = ema_tangent_tp1_zyx
-
-        # Update state variables based upon new streamline statuses.
-        tmp_len = streamline_len + step_size
-        statuses_tp1 = list()
-        statuses_tp1.append(
-            pitn.tract.stopping.scalar_vol_threshold(
-                status_t,
-                sample_coords_mm_zyx=points_tp1,
-                scalar_min_threshold=fa_min_threshold,
-                vol=fa,
-                affine_vox2mm=affine_sar_vox2sar_mm,
+            stopped_streamlines = torch.tensor_split(
+                streamline_buffer[:, to_store_valid].cpu(), n_to_store, dim=1
             )
-        )
-        statuses_tp1.append(
-            pitn.tract.stopping.angular_threshold(
-                status_t, points_t, points_tp1, max_angular_thresh_rad
-            )
-        )
-        statuses_tp1.append(
-            pitn.tract.stopping.streamline_len_mm(
-                status_t,
-                tmp_len,
-                min_len=min_streamline_len,
-                max_len=max_streamline_len,
-            )
-        )
-        statuses_tp1.append(
-            pitn.tract.stopping.scalar_vec_threshold(
-                status_t,
-                fodf_sample_point_t_direction_tp1,
-                scalar_min_threshold=tracking_fodf_sample_min_val,
-            )
-        )
-        status_tp1 = pitn.tract.stopping.merge_status(status_t, *statuses_tp1)
+            streamlines.extend(stopped_streamlines)
 
-        full_streamline_status_tp1 = full_streamline_status.masked_scatter(
-            to_continue, status_tp1
-        )
+        full_streamline_len[to_free_mask] = 0.0
+        full_points_t.masked_fill_(to_free_mask[:, None], torch.nan)
+        full_tangent_t_theta_phi[to_free_mask] = torch.nan
+        full_tangent_t_zyx.masked_fill_(to_free_mask[:, None], torch.nan)
+        full_streamline_status[to_free_mask] = pitn.tract.stopping.STOP
+        v_t[to_free_mask] = 0
+        streamline_buffer.masked_fill_(to_free_mask[None, ..., None], torch.nan)
 
-        # Remove any stopped tracks from the tp1 variables. We want the number of
-        # elements in the "x_tp1" variables to equal the number of "True" values in
-        # the "to_continue_tp1" array! Otherwise, the masked_scatter() will not put
-        # the masked values where we want them.
-        tp1_props_filter_mask = pitn.tract.stopping.to_continue_mask(status_tp1)
-        points_tp1 = points_tp1[tp1_props_filter_mask]
-        tangent_tp1_theta_phi = tangent_tp1_theta_phi[tp1_props_filter_mask]
-        tangent_tp1_zyx = tangent_tp1_zyx[tp1_props_filter_mask]
-        streamline_len_tp1 = tmp_len
-        streamline_len_tp1 = streamline_len_tp1[tp1_props_filter_mask]
-        status_tp1 = status_tp1[tp1_props_filter_mask]
+        # Only initialize new seeds if there are any to be sampled.
+        if not sampler_empty:
+            try:
+                (
+                    new_seeds_tneg1_to_t0,
+                    new_tangent_t0_zyx,
+                ) = seed_sampler.sample_direction_seeds_sequential(
+                    curr_sampler_idx, curr_sampler_idx + n_free
+                )
+            except IndexError:
+                sampler_empty = True
+            else:
+                n_new_seeds = new_tangent_t0_zyx.shape[0]
+                curr_sampler_idx += n_new_seeds
+                # It may be the case that the number of new seeds is less than the
+                # number of available slots.
+                to_refill_mask = to_free_mask.clone()
+                to_refill_mask[torch.argwhere(to_refill_mask)[n_new_seeds:]] = False
+                streamline_buffer[0, to_refill_mask] = new_seeds_tneg1_to_t0[0].to(
+                    streamline_buffer
+                )
+                streamline_buffer[1, to_refill_mask] = new_seeds_tneg1_to_t0[1].to(
+                    streamline_buffer
+                )
+                full_streamline_status[to_refill_mask] = pitn.tract.stopping.CONTINUE
 
-        to_continue_tp1 = pitn.tract.stopping.to_continue_mask(
-            full_streamline_status_tp1
-        )
+                full_points_t[to_refill_mask] = new_seeds_tneg1_to_t0[1].to(
+                    full_points_t
+                )
+                full_tangent_t_zyx[to_refill_mask] = new_tangent_t0_zyx
+                full_tangent_t_theta_phi[to_refill_mask] = torch.stack(
+                    pitn.tract.local.zyx2unit_sphere_theta_phi(new_tangent_t0_zyx), -1
+                )
+                v_t[to_refill_mask] = 1
+                full_streamline_len[to_refill_mask] = step_size
 
-        assert points_tp1.shape[0] == to_continue_tp1.sum()
+print("*" * 20, "Finished tractography loop", "*" * 20, flush=True)
 
-        # full_points_tp1 = torch.where(to_continue_tp1[..., None], points_tp1, torch.nan)
-        full_points_tp1 = (full_points_tp1 * torch.nan).masked_scatter(
-            to_continue_tp1[..., None], points_tp1
-        )
-        streamlines.append(full_points_tp1)
+# Collect all valid streamlines and cut them at the stopping point.
+streamlines = torch.stack(streamlines, 1).squeeze(2)
+remove_streamline_mask = torch.isnan(streamlines).all(dim=1).any(dim=1)
+keep_streamline_mask = ~remove_streamline_mask
+streams = streamlines[keep_streamline_mask].detach().cpu().numpy()
+# tract_end_idx = np.argwhere(np.isnan(streams).any(2))[:, 1]
+batch_stream_list = np.split(streams, streams.shape[1], axis=1)
+all_tracts = list()
+for s in batch_stream_list:
+    s = s.squeeze()
+    if np.isnan(s).any():
+        end_idx = np.argwhere(np.isnan(s).any(-1)).min()
+        all_tracts.append(s[:end_idx])
+    else:
+        all_tracts.append(s)
 
-        # t <- t + 1
-        print(t, end=" ", flush=(t % 10) == 0)
-        t += 1
-        if t > t_max:
-            break
-
-        full_points_t = full_points_tp1
-        # full_tangent_t_theta_phi = torch.where(to_continue_tp1[..., None], tangent_tp1_theta_phi, torch.nan)
-        full_tangent_t_theta_phi = (
-            full_tangent_t_theta_phi * torch.nan
-        ).masked_scatter(to_continue_tp1[..., None], tangent_tp1_theta_phi)
-        # full_tangent_t_zyx = torch.where(to_continue_tp1[..., None], tangent_tp1_zyx, torch.nan)
-        full_tangent_t_zyx = (full_tangent_t_zyx * torch.nan).masked_scatter(
-            to_continue_tp1[..., None], tangent_tp1_zyx
-        )
-        # full_streamline_len = torch.where(to_continue_tp1, streamline_len_tp1, )
-        full_streamline_len.masked_scatter_(
-            to_continue_tp1,
-            streamline_len_tp1,
-        )
-        full_streamline_status = full_streamline_status_tp1
-
-    # Collect all valid streamlines and cut them at the stopping point.
-    streamlines = torch.stack(streamlines, 1)
-    remove_streamline_mask = (
-        full_streamline_status == pitn.tract.stopping.INVALID
-    ) | torch.isnan(streamlines).all(dim=1).any(dim=1)
-    keep_streamline_mask = ~remove_streamline_mask
-    streams = streamlines[keep_streamline_mask].detach().cpu().numpy()
-    tract_end_idx = np.argwhere(np.isnan(streams).any(2))[:, 1]
-    batch_stream_list = np.split(streams, streams.shape[0], axis=0)
-    batch_tracts = list()
-    for s in batch_stream_list:
-        end_idx = np.argwhere(np.isnan(s.squeeze()).any(-1)).min()
-        batch_tracts.append(s.squeeze()[:end_idx])
-    all_tracts.extend(batch_tracts)
-
-    print("", end="", flush=True)
+print("", end="", flush=True)
 
 tracts = all_tracts
 
@@ -1407,18 +1425,20 @@ tracto = dipy.io.streamline.StatefulTractogram(
     reference=ref_header,
 )
 
+
 # %%
-if selected_seed_vox_name is None:
-    for k, v in lobe_vox_idx.items():
-        if select_vox_idx is v:
-            selected_seed_vox_name = k
-            break
+
+# %%
 fiber_fname = (
-    f"/tmp/{dataset_selection}_{selected_seed_vox_name}_{MODEL_SELECTION}_test_trax.tck"
+    f"{SUBJECT_ID}_{dataset_selection}_"
+    + f"{selected_seed_vox_name}_{MODEL_SELECTION}_test_trax.tck"
 )
+tmp_res_dir.mkdir(parents=True)
+fiber_fname = str(tmp_res_dir / fiber_fname)
 # fiber_fname = f"/tmp/fibercup_single_vox_seed_test_trax.tck"
 print("Saving tractogram", flush=True)
 dipy.io.streamline.save_tck(tracto, fiber_fname)
+
 
 # %%
 # for ax in range(3):
