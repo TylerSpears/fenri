@@ -183,7 +183,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "test_second-attempt-trilin-weight_long-run"
+p.experiment_name = "test_tri-linear-output"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -201,7 +201,7 @@ p.train = dict(
     in_patch_size=(24, 24, 24),
     batch_size=4,
     samples_per_subj_per_epoch=40,
-    max_epochs=250,
+    max_epochs=200,
     dwi_recon_epoch_proportion=0.05,
 )
 # Optimizer kwargs for training.
@@ -209,7 +209,7 @@ p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=16, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=8, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
@@ -680,8 +680,10 @@ class ReducedDecoder(torch.nn.Module):
             sub_grid_pred = self.lin_pre(sub_grid_pred)
             sub_grid_pred = self.activate_fn(sub_grid_pred)
 
+        res_sub_grid_pred = sub_grid_pred
         for l in self.internal_res_repr:
-            sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
+            res_sub_grid_pred, x_coord = l(res_sub_grid_pred, x_coord)
+        # The SkipMLPBlock contains the residual addition, so no need to add here.
         sub_grid_pred = self.lin_post(sub_grid_pred)
         sub_grid_pred = einops.rearrange(
             sub_grid_pred, "(b x y z) c -> b c x y z", **spatial_layout

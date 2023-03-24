@@ -3,10 +3,28 @@ import collections
 from pathlib import Path
 from typing import Sequence, Tuple, Union
 
+import dipy
+import dipy.io
+import dipy.io.streamline
 import nibabel as nib
 import numpy as np
 import torch
 from more_itertools import collapse
+
+
+def dipy_save_trk2tck(
+    trk_f,
+    target_tck_f,
+    trk_reference="same",
+    load_trk_kwargs=dict(),
+    save_tck_kwargs=dict(),
+):
+    trk_f = str(Path(trk_f).resolve())
+    trk = dipy.io.streamline.load_trk(trk_f, trk_reference, **load_trk_kwargs)
+    trk.to_rasmm()
+    tck_f = str(Path(target_tck_f).resolve())
+    dipy.io.streamline.save_tck(trk, tck_f, **save_tck_kwargs)
+    return trk
 
 
 def flatten(

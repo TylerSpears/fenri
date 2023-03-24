@@ -40,6 +40,7 @@ def mrtrix_fit_fodf(
     # Looking at other data, it seems that for the actual fod estimation, the
     # white matter gets an l_max of 8, while grey matter and CSF get an l_max of 0.
     # This seems overly restrictive on grey matter, but I'm not the expert here...
+
     script = rf"""\
     set -eou pipefail
     mrconvert -info -fslgrad \
@@ -69,8 +70,7 @@ def mrtrix_fit_fodf(
         {target_dir / "gm_response.txt"} {target_dir / "gm_msmt_csd_fod.nii.gz"} \
         {target_dir / "csf_response.txt"} {target_dir / "csf_msmt_csd_fod.nii.gz"} \
         -force
-    rm {dwi_mif_f}
-    """
+    rm {dwi_mif_f}"""
 
     script = textwrap.dedent(script)
     script = pitn.utils.proc_runner.multiline_script2docker_cmd(script)
@@ -96,7 +96,6 @@ def postproc_ground_truth(
     out_nodif_mask_f: Path,
     out_5tt_f: Path,
     out_freesurfer_aseg_f: Path,
-    sh_coeff_min: float = 1e-8,
 ) -> Tuple[Path]:
 
     wm = nib.load(wm_fodf_f)
@@ -200,11 +199,18 @@ def postproc_ground_truth(
 
 if __name__ == "__main__":
 
-    hcp_root_dir = Path("/data/srv/data/pitn/hcp")
-    output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
-    ids_file = Path("/home/tas6hh/Projects/pitn/notebooks/data/HCP_unique_ids.txt")
-    # hcp_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
-    # output_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
+    # hcp_root_dir = Path("/data/srv/data/pitn/hcp")
+    # output_root_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
+    # output_root_dir = Path("/data/srv/outputs/pitn/hcp/7T/fodf")
+    ids_file = Path(
+        "/home/tas6hh/Projects/pitn/notebooks/data/HCP_7T_subsample_idx.txt"
+    )
+    # ids_file = Path("/home/tas6hh/Projects/pitn/notebooks/data/HCP_unique_ids.txt")
+    # ids_file = Path(
+    #     "/home/tas6hh/Projects/pitn/notebooks/data/HCP_split_04-05_new_ids.txt"
+    # )
+    hcp_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
+    output_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
 
     with open(ids_file, "r") as f:
         subj_ids = list(map(lambda x: str(x).strip(), f.readlines()))
@@ -217,6 +223,10 @@ if __name__ == "__main__":
         target_dir = output_root_dir / sid / "T1w"
         target_dir.mkdir(exist_ok=True, parents=True)
 
+        # dwi_f = src_dir / "Diffusion" / "data.nii.gz"
+        # bval_f = src_dir / "Diffusion" / "bvals"
+        # bvec_f = src_dir / "Diffusion" / "bvecs"
+        # mask_f = src_dir / "Diffusion" / "nodif_brain_mask.nii.gz"
         dwi_f = src_dir / "Diffusion" / "data.nii.gz"
         bval_f = src_dir / "Diffusion" / "bvals"
         bvec_f = src_dir / "Diffusion" / "bvecs"
@@ -224,15 +234,14 @@ if __name__ == "__main__":
         freesurfer_seg_f = src_dir / "aparc.a2009s+aseg.nii.gz"
         target_postproc_fodf_f = target_dir / "postproc_wm_msmt_csd_fod.nii.gz"
 
-        #!Override
         # Determine if all processing can be skipped.
-        # if target_postproc_fodf_f.exists():
-        #     print(
-        #         "====Processed fODF coefficients found in",
-        #         f"{target_dir} for subject {sid}",
-        #         "skipping subject.====\n",
-        #     )
-        #     continue
+        if target_postproc_fodf_f.exists():
+            print(
+                "====Processed fODF coefficients found in",
+                f"{target_dir} for subject {sid}",
+                "skipping subject.====\n",
+            )
+            continue
 
         target_fodf_f = target_dir / "wm_msmt_csd_fod.nii.gz"
         # Determine if fodf estimation with mrtrix can be skipped.
@@ -248,7 +257,7 @@ if __name__ == "__main__":
                 bvec_f=bvec_f,
                 freesurfer_seg_f=freesurfer_seg_f,
                 target_fodf_f=target_fodf_f,
-                n_threads=17,
+                n_threads=5,
             )
 
         # Post-process the WM fodf and associated label/mask files.

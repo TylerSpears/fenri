@@ -133,7 +133,9 @@ if __name__ == "__main__":
     b0_max = 100
     hcp_root_dir = Path("/data/srv/data/pitn/hcp")
     output_root_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
-    ids_file = Path("../data/HCP_unique_ids.txt").resolve()
+    # ids_file = Path("../data/HCP_unique_ids.txt").resolve()
+    # ids_file = Path("../data/HCP_split_04-05_new_ids.txt").resolve()
+    ids_file = Path("../data/HCP_7T_subsample_idx.txt").resolve()
 
     with open(ids_file, "r") as f:
         subj_ids = list(map(lambda x: str(x).strip(), f.readlines()))

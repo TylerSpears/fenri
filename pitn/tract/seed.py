@@ -140,6 +140,7 @@ class BatchSeedSequenceSampler:
         max_peaks_per_voxel: int,
         tracking_step_size: float,
         fn_zyx_direction_t2theta_phi,
+        pytorch_device="cpu",
         sh_order=8,
         **dipy_peak_finder_kwargs,
     ):
@@ -176,18 +177,24 @@ class BatchSeedSequenceSampler:
             fn_zyx_direction_t2theta_phi=self.fn_zyx_direction_t2theta_phi,
         )
 
+        self.device = pytorch_device
         self.seed_buffer = list()
         self.tangent_buffer = list()
 
-        self._init_buffers()
+        self._init_buffers(self.device)
 
-    def _init_buffers(self):
+    def _init_buffers(self, device):
 
         for b_start_idx in range(
             0,
             self.unique_seed_coords_zyx_mm.shape[0],
             self._max_peak_expansion_batch_size,
         ):
+            print(
+                f"{b_start_idx}/{self.unique_seed_coords_zyx_mm.shape[0]}",
+                end=" | ",
+                flush=True,
+            )
             b_end_idx = b_start_idx + self._max_peak_expansion_batch_size
             unique_seed_batch = self.unique_seed_coords_zyx_mm[b_start_idx:b_end_idx]
             batch_peaks = self._fn_dipy_peak_finder_trilinear(unique_seed_batch)
@@ -200,14 +207,14 @@ class BatchSeedSequenceSampler:
                 valid_peak_mask=batch_peaks.valid_peak_mask,
             )
             self.seed_buffer.append(
-                seeds_expanded_t_to_tp1.detach().cpu().to(torch.float32)
+                seeds_expanded_t_to_tp1.detach().to(device=device, dtype=torch.float32)
             )
             self.tangent_buffer.append(
-                tangent_expanded_tp1.detach().cpu().to(torch.float32)
+                tangent_expanded_tp1.detach().to(device=device, dtype=torch.float32)
             )
 
-        self.seed_buffer = torch.cat(self.seed_buffer, dim=1)
-        self.tangent_buffer = torch.cat(self.tangent_buffer, dim=0)
+        self.seed_buffer = torch.cat(self.seed_buffer, dim=1).to(device)
+        self.tangent_buffer = torch.cat(self.tangent_buffer, dim=0).to(device)
 
     @staticmethod
     def _dipy_peak_finder_fn_linear_interp_zyx(

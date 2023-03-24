@@ -138,7 +138,7 @@ class HCPfODFINRDataset(monai.data.Dataset):
         data = dict(
             subj_id=sid,
             fodf=pitn.utils.system.get_file_glob_unique(
-                d, "postproc_*msmt*fod*.nii.gz"
+                d, "postproc_*wm*csd*fod*.nii.gz"
             ),
             mask=d / "postproc_nodif_brain_mask.nii.gz",
             fivett=pitn.utils.system.get_file_glob_unique(d, "postproc*5tt*.nii.gz"),
@@ -713,26 +713,26 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
 
     @staticmethod
     def default_feature_tf(
-        # patch_size: tuple, #!Need to dynamically find this now that we have rand sizes
-        patch_scale_range: Optional[Tuple[float, float]] = None,
-        patch_scale_prob: Optional[float] = None,
+        patch_size: tuple,  #!Need to dynamically find this now that we have rand sizes
+        # patch_scale_range: Optional[Tuple[float, float]] = None,
+        # patch_scale_prob: Optional[float] = None,
     ):
         # Transforms for extracting features for the network.
         feat_tfs = list()
 
-        if patch_scale_range is not None and patch_scale_prob is not None:
-            rand_lr_patch_resample_tf = RandIsotropicResampleAffineInteriord(
-                [
-                    "lr_dwi",
-                    "lr_fodf",
-                    "lr_mask",
-                ],
-                prob=patch_scale_prob,
-                isotropic_scale_range=patch_scale_range,
-                mode=["bilinear", "bilinear", "nearest"],
-                padding_mode="zeros",
-            )
-            feat_tfs.append(rand_lr_patch_resample_tf)
+        # if patch_scale_range is not None and patch_scale_prob is not None:
+        #     rand_lr_patch_resample_tf = RandIsotropicResampleAffineInteriord(
+        #         [
+        #             "lr_dwi",
+        #             "lr_fodf",
+        #             "lr_mask",
+        #         ],
+        #         prob=patch_scale_prob,
+        #         isotropic_scale_range=patch_scale_range,
+        #         mode=["bilinear", "bilinear", "nearest"],
+        #         padding_mode="zeros",
+        #     )
+        #     feat_tfs.append(rand_lr_patch_resample_tf)
 
         # Extract the new LR patch affine matrix.
         feat_tfs.append(

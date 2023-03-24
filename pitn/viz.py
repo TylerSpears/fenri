@@ -387,6 +387,58 @@ def plot_vol_slices(
     fig=None,
     **imshow_kwargs,
 ):
+    """Plot 2D slices of a full 3D volume, supports multi-channel and multi-batch vols.
+
+    Parameters
+    ----------
+    slice_idx : tuple, optional
+        Tuple of ints, floats, or Nones to select vol slices, by default (0.5, 0.5, 0.5)
+
+        Indices that correspond to each spatial dimension in the input volumes. Given
+            the slice value `s = slice_idx[i]`:
+                * If `s` is a float, then the spatial dimension `i` will be sliced at
+                  (approximately) `s`% of the size of that dimension. For example, if
+                  `s` is 0.5, then the slice that will be visualized will be 50% of the
+                  way through dimension `i`.
+                * If `s` is an integer, then the spatial dimension `i` will be an index.
+                * If `s` is None, then the spatial dimension `i` will not be sliced
+                  or visualized.
+
+        `slice_idx` should always be a 3-tuple.
+
+    title : Optional[str], optional
+        The `suptitle` of the image grid, by default None
+    vol_labels : Optional[List[str]], optional
+        Labels for each volume in the batch of volumes, by default None
+    slice_labels : Optional[List[str]], optional
+        Labels for each spatial slice according to `slice_idx`, by default None
+    channel_labels : Optional[List[str]], optional
+        Labels for each channel in `vols`, by default None
+    colorbars : Optional[str], optional
+        Set the type of colorbar and intensity normalization to use, by default None
+
+        Valid options are:
+            None - no colorbar or intensity normalization.
+            "global" - one colorbar is created for the entire grid, and all images are
+                normalized to have color intensity ranges match.
+            "each" - every image has its own colorbar with no intensity normalization.
+            "col", "cols", "column", "columns" - Every column is normalized and
+                given a colorbar.
+            "row", "rows" - Every row is normalized and given a colorbar.
+    fig : Figure, optional
+        Figure to plot into, by default None
+    imshow_kwargs :
+        Kwargs to pass to the `.imshow()` function call of each image.
+
+    Returns
+    -------
+    Figure
+
+    Raises
+    ------
+    ValueError
+        Invalid option value for `colorbars`
+    """
 
     # Canonical format of vols.
     # Enforce a B x C x D x H x W shape.

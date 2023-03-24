@@ -127,7 +127,16 @@ def _t2j(t_tensor: torch.Tensor) -> jax.Array:
         )
     else:
         to_expand = None
+
+    if t.device.type.casefold() == "cuda":
+        target_dev_idx = t.device.index
+        jax_dev = list(filter(lambda d: d.id == target_dev_idx, jax.devices()))[0]
+    else:
+        jax_dev = None
+
     j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(t))
+    if jax_dev is not None:
+        j = jax.device_put(j, jax_dev)
     j = j.astype(bool) if to_bool else j
 
     if to_expand is not None:
@@ -144,10 +153,21 @@ def _j2t(j_tensor: jax.Array, delete_from_jax: bool = False) -> torch.Tensor:
     else:
         to_bool = False
 
+    if j.device().platform.casefold() == "gpu":
+        target_dev_idx = j.device().id
+        torch_dev = f"cuda:{target_dev_idx}"
+        if target_dev_idx > (torch.cuda.device_count() - 1):
+            torch_dev = None
+    else:
+        torch_dev = None
+
     t = torch.utils.dlpack.from_dlpack(
         jax.dlpack.to_dlpack(j, take_ownership=delete_from_jax)
     )
+    if torch_dev is not None:
+        t = t.to(torch_dev)
     t = t.bool() if to_bool else t
+
     return t
 
 
@@ -630,6 +650,7 @@ def sh_basis_mrtrix3(
 
     if unpadded_max_idx is not None:
         Y_basis = Y_basis[:unpadded_max_idx]
+    Y_basis = Y_basis.to(theta)
 
     return Y_basis
 
@@ -778,6 +799,16 @@ def get_grad_descent_peak_finder_fn(
         azimuth = _t2j(azimuth)
         c = _t2j(coeffs)
 
+        # Sneak in a few more compilations to save on padding computational time...
+        all_batch_sizes = max(c.shape[0], polar.shape[0], azimuth.shape[0])
+        orig_batch_size = batch_size
+        if all_batch_sizes < batch_size // 8:
+            batch_size = batch_size // 8
+        elif all_batch_sizes < batch_size // 4:
+            batch_size = batch_size // 4
+        elif all_batch_sizes < batch_size // 2:
+            batch_size = batch_size // 2
+
         if (
             c.shape[0] < batch_size
             or polar.shape[0] < batch_size
@@ -822,6 +853,9 @@ def get_grad_descent_peak_finder_fn(
         res_phi = t_res_azimuth - torch.pi
         res_phi = res_phi.reshape(init_theta_phi[1].shape)
         res_theta = t_res_polar.reshape(init_theta_phi[0].shape)
+
+        res_theta = res_theta.to(init_theta_phi[0].dtype)
+        res_phi = res_phi.to(init_theta_phi[1].dtype)
 
         return (res_theta, res_phi)
 

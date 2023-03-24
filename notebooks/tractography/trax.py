@@ -19,6 +19,9 @@
 # %load_ext autoreload
 # %autoreload 2
 
+MODEL_SELECTION = "inr"
+# MODEL_SELECTION = "tri-linear"
+
 import collections
 import datetime
 import functools
@@ -74,6 +77,9 @@ import pitn
 # jax.config.update("jax_debug_infs", True)
 
 jax.config.update("jax_enable_x64", True)
+# if MODEL_SELECTION.casefold() != "inr":
+#     jax.config.update("jax_default_device", jax.devices()[1])
+jax.config.update("jax_default_device", jax.devices()[1])
 # jax.config.update("jax_default_matmul_precision", 32)
 
 
@@ -85,6 +91,53 @@ plt.rcParams.update({"image.interpolation": "antialiased"})
 # Set print options for ndarrays/tensors.
 np.set_printoptions(suppress=True, threshold=100, linewidth=88)
 torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
+
+
+def save_streamlines_to_tck(
+    streamlines: list,
+    affine_to_rasmm: torch.Tensor,
+    save_dir: Path,
+    tck_fname: str,
+    ref_header,
+):
+
+    # Collect all valid streamlines and cut them at the stopping point.
+    streamlines = torch.stack(streamlines, 1).squeeze(2)
+    remove_streamline_mask = torch.isnan(streamlines).all(dim=1).any(dim=1)
+    keep_streamline_mask = ~remove_streamline_mask
+    streams = streamlines[keep_streamline_mask].detach().cpu().numpy()
+    # tract_end_idx = np.argwhere(np.isnan(streams).any(2))[:, 1]
+    batch_stream_list = np.split(streams, streams.shape[1], axis=1)
+    all_tracts = list()
+    for s in batch_stream_list:
+        s = s.squeeze()
+        if np.isnan(s).any():
+            end_idx = np.argwhere(np.isnan(s).any(-1)).min()
+            all_tracts.append(s[:end_idx])
+        else:
+            all_tracts.append(s)
+
+    tracts = all_tracts
+
+    # Create tractogram and save.
+    sar_tracts = dipy.io.dpy.Streamlines(tracts)
+    sar_tracto = dipy.io.streamline.Tractogram(
+        sar_tracts, affine_to_rasmm=affine_sar2ras.cpu().numpy()
+    )
+    tracto = sar_tracto.to_world()
+    # Get the header from an "un-re-oriented" fod volume and give to the tractogram.
+
+    tracto = dipy.io.streamline.StatefulTractogram(
+        tracto.streamlines,
+        space=dipy.io.stateful_tractogram.Space.RASMM,
+        reference=ref_header,
+    )
+
+    save_dir.mkdir(exist_ok=True, parents=True)
+    fiber_fname = str(save_dir / tck_fname)
+    # fiber_fname = f"/tmp/fibercup_single_vox_seed_test_trax.tck"
+    print("Saving tractogram", flush=True)
+    dipy.io.streamline.save_tck(tracto, fiber_fname)
 
 
 def plot_buffer(buffer: torch.Tensor):
@@ -121,17 +174,14 @@ def plot_buffer(buffer: torch.Tensor):
     return fig
 
 
-# MODEL_SELECTION = "inr"
-MODEL_SELECTION = "tri-linear"
-
 # %%
 # torch setup
 # allow for CUDA usage, if available
 if torch.cuda.is_available():
     # Pick only one device for the default, may use multiple GPUs for training later.
-    dev_idx = 0
+    # dev_idx = 0
     # dev_idx = 0 if MODEL_SELECTION.casefold() == "inr" else 1
-    # dev_idx = 1
+    dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -194,32 +244,31 @@ assert network_weights_f.exists()
 max_sh_order = 8
 
 # Seed creation.
-peaks_per_seed_vox = 3
+peaks_per_seed_vox = 1
 # Total seeds per voxel will be `seeds_per_vox_axis`^3
 seeds_per_vox_axis = 3
-# seed_batch_size = 20000
-seed_batch_size = 200
+seed_batch_size = 10000
 
 # Threshold parameter for peak finding in the seed voxels.
 # Element-wise filtering of sphere samples.
-fodf_sample_min_val = 0.005
+fodf_sample_min_val = 0.05
 fodf_sample_min_quantile_thresh = 0.001
-dipy_relative_peak_threshold = 0.3
-dipy_min_separation_angle = 20
+dipy_relative_peak_threshold = 0.5
+dipy_min_separation_angle = 25
 
 # RK4 estimation
-step_size = 0.4
-alpha_exponential_moving_avg = 1.0
+step_size = 0.2
+alpha_exponential_moving_avg = 0.9
 tracking_fodf_sample_min_val = 0.05
 # Seems that MRtrix's Newton optimization also has a tolerance value of 0.001, max
 # iterations of 100.
 # <https://github.com/MRtrix3/mrtrix3/blob/f633dfd7e9080f71877ea6a4619dabdde99a0fb6/src/dwi/tractography/SIFT2/coeff_optimiser.cpp#L369>
 grad_descent_kwargs = dict(
     tol=1e-3,
-    stepsize=1.0,
+    # stepsize=4.0,
     maxiter=100,
-    # acceleration=True,
-    acceleration=False,
+    acceleration=True,
+    # acceleration=False,
     implicit_diff=True,
     # implicit_diff=False,
     jit=True,
@@ -228,9 +277,9 @@ grad_descent_kwargs = dict(
 
 # Stopping & invalidation criteria.
 min_streamline_len = 20
-max_streamline_len = 100
-fa_min_threshold = 0.05
-max_angular_thresh_rad = torch.pi / 4
+max_streamline_len = 300
+fa_min_threshold = 0.1
+max_angular_thresh_rad = torch.pi / 3
 
 # %% [markdown]
 # ## Seed-Based Tractography Test
@@ -241,8 +290,12 @@ max_angular_thresh_rad = torch.pi / 4
 # %%
 # HCP or fibercup
 dataset_selection = "HCP"
-SUBJECT_ID = "191336"
-SEED_MASK_FNAME = "postproc_5tt_parcellation.nii.gz"
+SUBJECT_ID = "200210"
+FIVETT_MASK_FNAME = "postproc_5tt_parcellation.nii.gz"
+# SEED_MASK_FNAME = "postproc_5tt_parcellation.nii.gz"
+# selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
+SEED_GM_WM_FNAME = "postproc_gm-wm-interface_seed-mask.nii.gz"
+selected_seed_vox_name = SEED_GM_WM_FNAME.replace(".nii.gz", "")
 
 # %%
 # HCP Subject scan.
@@ -251,8 +304,6 @@ sample_fod_f = (
 )
 fod_coeff_im = nib.load(sample_fod_f)
 fod_coeff_im = nib.as_closest_canonical(fod_coeff_im)
-print("Original shape", fod_coeff_im.shape)
-print("Original affine", fod_coeff_im.affine)
 
 sample_dwi_f = hcp_low_res_data_dir / SUBJECT_ID / "T1w" / "Diffusion" / "data.nii.gz"
 dwi_im = nib.load(sample_dwi_f)
@@ -266,21 +317,16 @@ fa_f = sample_fod_f.parent / "dti-fa.nii.gz"
 fa_im = nib.load(fa_f)
 fa_im = nib.as_closest_canonical(fa_im)
 
-seed_roi_mask_f = sample_fod_f.parent / SEED_MASK_FNAME
+# If selecting GM-WM interface seeding:
+seed_roi_mask_f = sample_fod_f.parent / SEED_GM_WM_FNAME
 seed_roi_mask_im = nib.load(seed_roi_mask_f)
 seed_roi_mask_im = nib.as_closest_canonical(seed_roi_mask_im)
-seed_roi_mask_im = seed_roi_mask_im.slicer[..., 2]
-seed_roi_mask_data = seed_roi_mask_im.get_fdata().astype(bool)
-# Reduce white matter seed area with binary erosion to focus seeding towards the
-# center of the white matter tracts.
-seed_roi_mask_data = skimage.morphology.binary_erosion(
-    seed_roi_mask_data, skimage.morphology.octahedron(2)
-)
-# Randomly sub-select seed voxels.
-gen = np.random.default_rng(79723)
+seed_roi_mask_data = seed_roi_mask_im.get_fdata() > 0
+gen = np.random.default_rng(13796759340811)
 random_select_mask = gen.uniform(0, 1, size=seed_roi_mask_data.shape)
-random_select_mask = random_select_mask < 0.05
+random_select_mask = random_select_mask < 1.0
 seed_roi_mask_data = seed_roi_mask_data * random_select_mask
+
 print("Num voxels in seed mask: ", seed_roi_mask_data.sum())
 seed_roi_mask_im = nib.Nifti1Image(
     seed_roi_mask_data,
@@ -288,6 +334,40 @@ seed_roi_mask_im = nib.Nifti1Image(
     header=seed_roi_mask_im.header,
 )
 
+##### *If selecting white matter seed masks:*
+# seed_roi_mask_f = sample_fod_f.parent / SEED_MASK_FNAME
+# seed_roi_mask_im = nib.load(seed_roi_mask_f)
+# seed_roi_mask_im = nib.as_closest_canonical(seed_roi_mask_im)
+# fa_roa_csf_mask = seed_roi_mask_im.slicer[..., 3]
+# # Negate to *exclude* the mask, rather than *include*
+# fa_roa_csf_mask_data = ~(fa_roa_csf_mask.get_fdata().astype(bool))
+# seed_roi_mask_im = seed_roi_mask_im.slicer[..., 2]
+# seed_roi_mask_data = seed_roi_mask_im.get_fdata().astype(bool)
+# # Reduce white matter seed area with binary opening to focus seeding towards the
+# # center of the white matter tracts.
+# seed_roi_mask_data = (
+#     skimage.morphology.binary_opening(seed_roi_mask_data, skimage.morphology.ball(1))
+#     * seed_roi_mask_data
+# )
+# # Randomly sub-select seed voxels.
+# gen = np.random.default_rng(4900255)
+# random_select_mask = gen.uniform(0, 1, size=seed_roi_mask_data.shape)
+# random_select_mask = random_select_mask < 1.0
+# seed_roi_mask_data = seed_roi_mask_data * random_select_mask
+# print("Num voxels in seed mask: ", seed_roi_mask_data.sum())
+# seed_roi_mask_im = nib.Nifti1Image(
+#     seed_roi_mask_data,
+#     affine=seed_roi_mask_im.affine,
+#     header=seed_roi_mask_im.header,
+# )
+
+# CSF zeroing
+fa_roa_f = sample_fod_f.parent / FIVETT_MASK_FNAME
+fa_roa_im = nib.load(fa_roa_f)
+fa_roa_im = nib.as_closest_canonical(fa_roa_im)
+fa_roa_csf_mask = fa_roa_im.slicer[..., 3]
+# Negate to *exclude* the mask, rather than *include*
+fa_roa_csf_mask_data = ~(fa_roa_csf_mask.get_fdata().astype(bool))
 
 # %%
 # Re-orient volumes from RAS to SAR (xyz -> zyx)
@@ -327,6 +407,15 @@ mask_im = nib.Nifti1Image(
     header=mask_im.header,
 )
 sar_fa = einops.rearrange(fa_im.get_fdata(), "x y z -> z y x")
+# The FA may have nans from MRtrix...
+if np.isnan(sar_fa).any():
+    if np.isnan(sar_fa).sum() > 100:
+        raise RuntimeError("ERROR: Too many nans in FA!")
+    sar_fa = np.nan_to_num(sar_fa, nan=0)
+# Zero-out CSF regions in the FA map to help reduce poor tracking due to partial volume
+# effects.
+sar_csf_roa = einops.rearrange(fa_roa_csf_mask_data, "x y z -> z y x")
+sar_fa = sar_fa * sar_csf_roa
 fa_im = nib.Nifti1Image(
     sar_fa,
     affine=affine_sar_vox2sar_mm.cpu().numpy(),
@@ -342,10 +431,6 @@ seed_roi_mask_im = nib.Nifti1Image(
     header=seed_roi_mask_im.header,
 )
 
-print(fod_coeff_im.affine)
-print(fod_coeff_im.shape)
-print(mask_im.affine)
-print(mask_im.shape)
 
 # %%
 coeffs = fod_coeff_im.get_fdata()
@@ -379,7 +464,6 @@ seed_roi_mask_im.uncache()
 # %%
 seed_mask = torch.zeros_like(brain_mask).bool()
 
-selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
 # #!DEBUG
 # seed_roi_mask = 0 * seed_roi_mask
 # seed_roi_mask[:, 16:17, 38:39, 33:34] = True
@@ -396,11 +480,6 @@ selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
 # )
 # #!
 seed_mask = (1 + seed_mask) * seed_roi_mask
-
-
-print(coeffs.shape)
-print(brain_mask.shape)
-print(seed_mask.shape)
 
 
 # %%
@@ -499,7 +578,7 @@ def _fn_linear_interp_spatial_fodf_sample(
     Y_basis = einops.rearrange(Y_basis, "b sh_idx -> b sh_idx 1")
     pred_sample_fodf_coeffs = einops.rearrange(
         pred_sample_fodf_coeffs, "b sh_idx -> b 1 sh_idx"
-    )
+    ).to(Y_basis)
     samples = torch.bmm(pred_sample_fodf_coeffs, Y_basis)
     samples.squeeze_()
 
@@ -975,12 +1054,15 @@ class INR_Interpolator:
             )
         pred_sample_fodf_coeffs = einops.rearrange(
             pred_sample_fodf_coeffs, "1 coeff 1 b 1 -> b coeff"
-        ).to(coords_mm_zyx)
+        )
 
         Y_basis = einops.rearrange(Y_basis, "b sh_idx -> b sh_idx 1")
         pred_sample_fodf_coeffs = einops.rearrange(
             pred_sample_fodf_coeffs, "b sh_idx -> b 1 sh_idx"
         )
+        common_t = torch.promote_types(Y_basis.dtype, pred_sample_fodf_coeffs.dtype)
+        Y_basis = Y_basis.to(common_t)
+        pred_sample_fodf_coeffs = pred_sample_fodf_coeffs.to(common_t)
         samples = torch.bmm(pred_sample_fodf_coeffs, Y_basis)
         samples.squeeze_()
 
@@ -1107,6 +1189,7 @@ seed_sampler = pitn.tract.seed.BatchSeedSequenceSampler(
     fodf_coeffs_brain_vol=coeffs,
     affine_vox2mm=affine_sar_vox2sar_mm,
     fn_zyx_direction_t2theta_phi=fn_zyx2theta_phi_seed_expansion,
+    pytorch_device=device,
     # dipy peak finder kwargs
     seed_sphere_theta=seed_theta,
     seed_sphere_phi=seed_phi,
@@ -1119,7 +1202,6 @@ seed_sampler = pitn.tract.seed.BatchSeedSequenceSampler(
 seeds_t_neg1_to_0, tangent_t0_zyx = seed_sampler.sample_direction_seeds_sequential(
     0, seed_batch_size
 )
-# #! debug
 
 # Prep objects & initialize all state objects to t=0.
 
@@ -1174,8 +1256,12 @@ curr_sampler_idx = batch_size
 
 seeds_completed = 0
 counter = 0
+total_seeds = seed_sampler.tangent_buffer.shape[0]
+tracks_so_far = 0
+prev_print_tracks = 0
+streamline_save_counter = 0
 print("*" * 20, "Starting tractography loop", "*" * 20, flush=True)
-
+print("Total Seeds: ", total_seeds, flush=True)
 while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
     full_streamline_status
 ).any():
@@ -1252,6 +1338,15 @@ while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
             scalar_min_threshold=tracking_fodf_sample_min_val,
         )
     )
+    # ad-hoc NaN catcher.
+    statuses_tp1.append(
+        torch.where(
+            tangent_tp1_zyx.isnan().any(-1)
+            & (status_t == pitn.tract.stopping.CONTINUE),
+            pitn.tract.stopping.STOP,
+            status_t,
+        )
+    )
     status_tp1 = pitn.tract.stopping.merge_status(status_t, *statuses_tp1)
     status_tp1 = pitn.tract.stopping.merge_status(
         status_tp1,
@@ -1321,6 +1416,7 @@ while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
     if (~to_continue_tp1 & full_streamline_status_change).any():
         to_free_mask = ~to_continue_tp1 & full_streamline_status_change
         n_free = to_free_mask.sum().cpu().int().item()
+        seeds_completed += n_free
 
         # Only store the valid/stopped streamlines, but empty out all the `to_free`
         # streamlines.
@@ -1330,11 +1426,15 @@ while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
         n_to_store = to_store_valid.sum().cpu().int().item()
 
         if n_to_store > 0:
-            seeds_completed += n_to_store
-            if (seeds_completed % 10) == 0:
+            tracks_so_far += n_to_store
+
+            if ((tracks_so_far % 10000) == 0) or (
+                (tracks_so_far - prev_print_tracks) > 10000
+            ):
+                prev_print_tracks = tracks_so_far
                 tot_seeds = seed_sampler.tangent_buffer.shape[0]
                 print(
-                    f"Tracts {seeds_completed}: Seeds {curr_sampler_idx}/{tot_seeds}",
+                    f"Tracts {tracks_so_far}, Seeds {seeds_completed}/{tot_seeds}",
                     end="...",
                     flush=True,
                 )
@@ -1343,6 +1443,24 @@ while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
                 streamline_buffer[:, to_store_valid].cpu(), n_to_store, dim=1
             )
             streamlines.extend(stopped_streamlines)
+
+            if len(streamlines) > 1000000:
+                streamline_save_counter += 1
+
+                ref_header = nib.as_closest_canonical(nib.load(sample_fod_f)).header
+                fiber_fname = (
+                    f"{SUBJECT_ID}_{dataset_selection}_"
+                    + f"{selected_seed_vox_name}_{MODEL_SELECTION}"
+                    + f"_trax_{streamline_save_counter:03d}.tck"
+                )
+                save_streamlines_to_tck(
+                    streamlines,
+                    affine_sar2ras,
+                    save_dir=tmp_res_dir,
+                    tck_fname=fiber_fname,
+                    ref_header=ref_header,
+                )
+                streamlines.clear()
 
         full_streamline_len[to_free_mask] = 0.0
         full_points_t.masked_fill_(to_free_mask[:, None], torch.nan)
@@ -1388,6 +1506,7 @@ while (not sampler_empty) or pitn.tract.stopping.to_continue_mask(
                 v_t[to_refill_mask] = 1
                 full_streamline_len[to_refill_mask] = step_size
 
+print()
 print("*" * 20, "Finished tractography loop", "*" * 20, flush=True)
 
 # Collect all valid streamlines and cut them at the stopping point.
@@ -1429,11 +1548,15 @@ tracto = dipy.io.streamline.StatefulTractogram(
 # %%
 
 # %%
+streamline_save_counter += 1
+
+ref_header = nib.as_closest_canonical(nib.load(sample_fod_f)).header
 fiber_fname = (
     f"{SUBJECT_ID}_{dataset_selection}_"
-    + f"{selected_seed_vox_name}_{MODEL_SELECTION}_test_trax.tck"
+    + f"{selected_seed_vox_name}_{MODEL_SELECTION}"
+    + f"_trax_{streamline_save_counter:03d}.tck"
 )
-tmp_res_dir.mkdir(parents=True)
+tmp_res_dir.mkdir(parents=True, exist_ok=True)
 fiber_fname = str(tmp_res_dir / fiber_fname)
 # fiber_fname = f"/tmp/fibercup_single_vox_seed_test_trax.tck"
 print("Saving tractogram", flush=True)

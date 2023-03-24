@@ -16,6 +16,25 @@ import pitn.affine
 import pitn.tract.direction
 
 
+def quick_sphere_sample(fodf_coeffs: torch.Tensor, dipy_sphere=None):
+    if dipy_sphere is None:
+        dipy_sphere = dipy.data.get_sphere("repulsion724")
+    fodf_coeffs = fodf_coeffs.flatten()[None]
+    assert fodf_coeffs.numel() == 45
+    theta = torch.from_numpy(dipy_sphere.theta).to(fodf_coeffs)
+    phi = torch.from_numpy(dipy_sphere.phi).to(fodf_coeffs)
+    s = sample_sphere_coords(
+        fodf_coeffs,
+        theta=theta,
+        phi=phi,
+        sh_order=8,
+        sh_order_dim=1,
+        force_nonnegative=True,
+    )
+
+    return s, theta, phi
+
+
 def gfa(fodf_samples: torch.Tensor, sphere_samples_idx=1) -> torch.Tensor:
     s = fodf_samples.movedim(sphere_samples_idx, -1)
     s = einops.rearrange(s, "... samples -> (...) samples", samples=s.shape[-1])
