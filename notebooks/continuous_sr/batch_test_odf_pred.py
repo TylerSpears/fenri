@@ -641,9 +641,8 @@ class ReducedDecoder(torch.nn.Module):
             sub_grid_pred = self.lin_pre(sub_grid_pred)
             sub_grid_pred = self.activate_fn(sub_grid_pred)
 
-        res_sub_grid_pred = sub_grid_pred
         for l in self.internal_res_repr:
-            res_sub_grid_pred, x_coord = l(res_sub_grid_pred, x_coord)
+            sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
         # The SkipMLPBlock contains the residual addition, so no need to add here.
         sub_grid_pred = self.lin_post(sub_grid_pred)
         sub_grid_pred = einops.rearrange(
@@ -920,7 +919,7 @@ with torch.no_grad():
         pred_fodf = pred_fodf * y_mask_broad
 
         superres_pred = pred_fodf.detach().cpu().numpy().astype(np.float32).squeeze()
-        odf_coeffs = np.moveaxis(superres_pred, 1, -1).squeeze()
+        odf_coeffs = np.moveaxis(superres_pred, 0, -1).squeeze()
         ic(f"Saving predicted fodf coeffs {subj_id}.")
         output_affine = y_affine_vox2mm.detach().cpu().numpy()
         nib.save(

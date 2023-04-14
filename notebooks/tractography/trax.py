@@ -247,7 +247,7 @@ max_sh_order = 8
 peaks_per_seed_vox = 1
 # Total seeds per voxel will be `seeds_per_vox_axis`^3
 seeds_per_vox_axis = 3
-seed_batch_size = 10000
+seed_batch_size = 2500
 
 # Threshold parameter for peak finding in the seed voxels.
 # Element-wise filtering of sphere samples.
@@ -290,11 +290,11 @@ max_angular_thresh_rad = torch.pi / 3
 # %%
 # HCP or fibercup
 dataset_selection = "HCP"
-SUBJECT_ID = "200210"
+SUBJECT_ID = "581450"
 FIVETT_MASK_FNAME = "postproc_5tt_parcellation.nii.gz"
 # SEED_MASK_FNAME = "postproc_5tt_parcellation.nii.gz"
 # selected_seed_vox_name = SEED_MASK_FNAME.replace(".nii.gz", "")
-SEED_GM_WM_FNAME = "postproc_gm-wm-interface_seed-mask.nii.gz"
+SEED_GM_WM_FNAME = "postproc_gm-wm-interface.nii.gz"
 selected_seed_vox_name = SEED_GM_WM_FNAME.replace(".nii.gz", "")
 
 # %%
@@ -313,7 +313,7 @@ mask_f = sample_fod_f.parent / "postproc_nodif_brain_mask.nii.gz"
 mask_im = nib.load(mask_f)
 mask_im = nib.as_closest_canonical(mask_im)
 
-fa_f = sample_fod_f.parent / "dti-fa.nii.gz"
+fa_f = sample_fod_f.parent / "fa.nii.gz"
 fa_im = nib.load(fa_f)
 fa_im = nib.as_closest_canonical(fa_im)
 
@@ -322,7 +322,7 @@ seed_roi_mask_f = sample_fod_f.parent / SEED_GM_WM_FNAME
 seed_roi_mask_im = nib.load(seed_roi_mask_f)
 seed_roi_mask_im = nib.as_closest_canonical(seed_roi_mask_im)
 seed_roi_mask_data = seed_roi_mask_im.get_fdata() > 0
-gen = np.random.default_rng(13796759340811)
+gen = np.random.default_rng(1563972931212)
 random_select_mask = gen.uniform(0, 1, size=seed_roi_mask_data.shape)
 random_select_mask = random_select_mask < 1.0
 seed_roi_mask_data = seed_roi_mask_data * random_select_mask

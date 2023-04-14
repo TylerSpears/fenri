@@ -529,7 +529,7 @@ def remove_fodf_labels_by_rel_peak(
     return remapped_ll.to(lobe_labels.dtype)
 
 
-@jax.jit
+# @jax.jit
 def _jax_zyx2azimuth_polar(
     coords_zyx: jax.Array,
 ) -> Tuple[jax.Array, jax.Array]:
@@ -555,7 +555,7 @@ def _jax_zyx2azimuth_polar(
     return (azimuth, polar)
 
 
-@jax.jit
+# @jax.jit
 def _jax_azimuth_polar2zyx(azimuth: jax.Array, polar: jax.Array) -> jax.Array:
     #! Inputs to this function should generally be 64-bit floats! Precision is poor for
     #! 32-bit floats.

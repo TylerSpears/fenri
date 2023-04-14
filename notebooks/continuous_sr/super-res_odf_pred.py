@@ -160,14 +160,89 @@ p = Box(default_box=True)
 
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
-p.test.subj_ids = ["299154"]
+# p.test.subj_ids = ["299154"]
+p.test.subj_ids = list(
+    map(
+        str,
+        [
+            100307,
+            104820,
+            110613,
+            118730,
+            121618,
+            122317,
+            122822,
+            123925,
+            124422,
+            127933,
+            131924,
+            133827,
+            144428,
+            145127,
+            147737,
+            149236,
+            154532,
+            164939,
+            165032,
+            169545,
+            173536,
+            173940,
+            178849,
+            179346,
+            180836,
+            185038,
+            195647,
+            195849,
+            202113,
+            204016,
+            275645,
+            293748,
+            298051,
+            300618,
+            353740,
+            385450,
+            419239,
+            445543,
+            465852,
+            495255,
+            500222,
+            510225,
+            518746,
+            529549,
+            645450,
+            654350,
+            749058,
+            767464,
+            800941,
+            803240,
+            812746,
+            825048,
+            843151,
+            849971,
+            896778,
+            929464,
+            933253,
+            965367,
+            987074,
+            993675,
+            994273,
+            581450,
+            251833,
+            191336,
+            126426,
+            859671,
+            200210,
+            360030,
+        ],
+    )
+)
 p.model_weight_f = str(
     Path(p.tmp_results_dir) / "2023-02-22T01_29_25/state_dict_epoch_249_step_50000.pt"
 )
 # p.model_weight_f = str(
 #     Path(p.tmp_results_dir) / "2023-02-09T21_09_47/state_dict_epoch_174_step_35000.pt"
 # )
-p.target_vox_size = 0.374
+p.target_vox_size = 1.25
 ###############################################
 # Network/model parameters.
 p.encoder = dict(
@@ -239,7 +314,7 @@ with warnings.catch_warnings(record=True) as warn_list:
 
     # Validation dataset.
     test_paths_dataset = pitn.data.datasets.HCPfODFINRDataset(
-        subj_ids=p.test.subj_ids,
+        subj_ids=p.test.subj_ids[:2],  #!DEBUG
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         lr_dwi_root_dir=hcp_low_res_data_dir,
@@ -568,6 +643,7 @@ class ReducedDecoder(torch.nn.Module):
 
         for l in self.internal_res_repr:
             sub_grid_pred, x_coord = l(sub_grid_pred, x_coord)
+        # The SkipMLPBlock contains the residual addition, so no need to add here.
         sub_grid_pred = self.lin_post(sub_grid_pred)
         sub_grid_pred = einops.rearrange(
             sub_grid_pred, "(b x y z) c -> b c x y z", **spatial_layout

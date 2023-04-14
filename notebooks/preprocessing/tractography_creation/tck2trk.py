@@ -11,7 +11,7 @@ import dipy.io.streamline
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
-        description="Convert tractography `.tck` files to `.trk` files with a reference space file."
+        description="Convert tractography mrtrix `.tck` files to `.trk` files with a reference space file."
     )
 
     parser.add_argument(
@@ -68,10 +68,13 @@ if __name__ == "__main__":
     for in_tck, out_trk in zip(input_tcks, output_trks):
         tck_fname = str(in_tck.resolve())
         trk_fname = str(out_trk)
+        print(f"Loading {str(in_tck)}", end="...", flush=True)
         tck = dipy.io.streamline.load_tractogram(tck_fname, reference=ref)
+        print("Transforming to RAS mm", end="...", flush=True)
         tck.to_rasmm()
-        print(f"Saving {str(in_tck)} -> {str(out_trk)}")
+        print(f"Saving {str(in_tck)} -> {str(out_trk)}", end="...", flush=True)
 
         dipy.io.streamline.save_trk(tck, filename=trk_fname)
+        print("Done", flush=True)
 
     parser.exit(status=0)

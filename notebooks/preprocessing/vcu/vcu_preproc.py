@@ -1027,8 +1027,7 @@ def vcu_dwi_preproc(
             -cost normmi -searchcost normmi \
             -interp sinc -sincwidth 7 -sincwindow hanning -verbose 1 \
             -in {str(postproc_skull_strip_t1w_path)} \
-            -ref MNI152_T1_1mm_brain.nii.gz -out P_
-01_mni-space_brain-T1.nii.gz -omat T1w2MNI_affine.txt
+            -ref MNI152_T1_1mm_brain.nii.gz -out P_01_mni-space_brain-T1.nii.gz -omat T1w2MNI_affine.txt
         # Reslice registered T1w and template to the DWI voxel size and image shape.
 
         # Register median b0 image to T1w with `epi_reg`
