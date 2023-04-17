@@ -296,6 +296,7 @@ https://conda.anaconda.org/conda-forge/noarch/distro-1.6.0-pyhd8ed1ab_0.tar.bz2
 # no URL for: docutils-0.16.dist-info
 https://conda.anaconda.org/conda-forge/noarch/einops-0.6.0-pyhd8ed1ab_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/entrypoints-0.4-py310h06a4308_0.conda
+https://conda.anaconda.org/conda-forge/noarch/exceptiongroup-1.1.1-pyhd8ed1ab_0.conda
 https://conda.anaconda.org/conda-forge/noarch/executing-0.10.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/ffmpeg-4.4.2-gpl_hfe78399_107.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/filelock-3.8.0-pyhd8ed1ab_0.tar.bz2
@@ -308,6 +309,7 @@ https://conda.anaconda.org/conda-forge/linux-64/glib-2.74.1-h6239696_1.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/gputil-1.4.0-pyh9f0ad1d_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/hdf5-1.12.1-nompi_h4df4325_104.tar.bz2
 https://repo.anaconda.com/pkgs/main/noarch/idna-3.3-pyhd3eb1b0_0.conda
+https://conda.anaconda.org/conda-forge/noarch/iniconfig-2.0.0-pyhd8ed1ab_0.conda
 https://repo.anaconda.com/pkgs/main/noarch/ipython_genutils-0.2.0-pyhd3eb1b0_1.conda
 https://conda.anaconda.org/conda-forge/noarch/jeepney-0.8.0-pyhd8ed1ab_0.tar.bz2
 # no URL for: jmespath-1.0.1.dist-info
@@ -510,6 +512,7 @@ https://conda.anaconda.org/conda-forge/linux-64/pulseaudio-16.1-ha8d29e2_1.conda
 https://conda.anaconda.org/conda-forge/linux-64/pydantic-1.9.2-py310h5764c6d_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pygments-2.13.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pyqt5-sip-12.11.0-py310hd8f1fbe_0.tar.bz2
+https://conda.anaconda.org/conda-forge/noarch/pytest-7.3.1-pyhd8ed1ab_0.conda
 https://conda.anaconda.org/pyg/linux-64/pytorch-cluster-1.6.0-py310_torch_1.13.0_cu117.tar.bz2
 https://conda.anaconda.org/pyg/linux-64/pytorch-scatter-2.1.0-py310_torch_1.13.0_cu117.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/ruamel.yaml-0.17.21-py310h5764c6d_1.tar.bz2
@@ -632,7 +635,7 @@ https://conda.anaconda.org/conda-forge/noarch/nibabel-4.0.1-pyhd8ed1ab_0.tar.bz2
 # no URL for: pitn-0.0.post1.dev258+g67cc03c.d20230208.dist-info
 https://repo.anaconda.com/pkgs/main/linux-64/pytables-3.7.0-py310h9da3b7f_0.conda
 https://conda.anaconda.org/pyg/linux-64/pytorch-sparse-0.6.15-py310_torch_1.13.0_cu117.tar.bz2
-https://conda.anaconda.org/conda-forge/noarch/pytransform3d-1.14.0-pyh8a188c0_0.tar.bz2
+https://conda.anaconda.org/conda-forge/noarch/pytransform3d-3.1.0-pyha21a80b_0.conda
 https://conda.anaconda.org/conda-forge/linux-64/scikit-image-0.19.3-py310h769672d_2.tar.bz2
 https://repo.anaconda.com/pkgs/main/linux-64/scikit-learn-1.1.3-py310h6a678d5_0.conda
 https://conda.anaconda.org/conda-forge/linux-64/statsmodels-0.13.2-py310hde88566_0.tar.bz2

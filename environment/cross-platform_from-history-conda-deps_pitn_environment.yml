@@ -587,7 +587,7 @@ dependencies:
   - conda-forge/noarch::nibabel==4.0.1=pyhd8ed1ab_0
   - defaults/linux-64::pytables==3.7.0=py310h9da3b7f_0
   - pyg/linux-64::pytorch-sparse==0.6.15=py310_torch_1.13.0_cu117
-  - conda-forge/noarch::pytransform3d==1.14.0=pyh8a188c0_0
+  - pytransform3d
   - conda-forge/linux-64::scikit-image==0.19.3=py310h769672d_2
   - defaults/linux-64::scikit-learn==1.1.3=py310h6a678d5_0
   - conda-forge/linux-64::statsmodels==0.13.2=py310hde88566_0
@@ -596,3 +596,4 @@ dependencies:
   - conda-forge/noarch::jax==0.4.1=pyhd8ed1ab_0
   - pyg/linux-64::pyg==2.2.0=py310_torch_1.13.0_cu117
   - conda-forge/noarch::torchio==0.18.84=pyhd8ed1ab_1
+  - pytest
