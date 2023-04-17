@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import einops
 import numpy as np
@@ -46,6 +46,117 @@ def coord_transform_3d(coords: torch.Tensor, affine_a2b: torch.Tensor) -> torch.
     p = p + affine[..., :3, -1]
 
     return p.reshape(coords.shape)
+
+
+def _canonicalize_coords_3d_affine(
+    coords_3d: torch.Tensor,
+    affine: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Reshape and/or repeat tensor elements to a compatible shape.
+
+    coords_3d : torch.Tensor
+        Coordinates in a coordinate-last format with shape `[B] x [s_1, s2, s3] x 3`.
+
+        The last dimension must always be size 3.
+        If coords_3d is 1D, then it will be expanded according to the common batch
+            size.
+        If coords_3d is 2D, then the first dimension is assumed to be a batch size.
+        If coords_3d is 3D, then the first dimension is assumed to be the batch size,
+            and the second is assumed to be a `within-batch` sample dimension.
+        If coords_3d is 4D, then the first 3 dimensions are assumed to be spatial
+            dimensions, and the batch size is assumed to be 1.
+        If coords_3D is 5D, then the first dimension is assumed to be the batch size,
+            and the next 3 dimensions are assumed to be spatial dimensions that
+            correspond to their respective batch indices.
+        Otherwise, a RuntimeError is raised.
+
+    affine : torch.Tensor
+        Affine matrix (or matrices) of shape `[B] x 4 x 4`.
+
+    Batch size will be determined as the broadcasted size of the batch sizes given
+        in the shapes of `coords_3d` and `affine`. If the determined batch sizes are
+        incompatible, a ValueError is raised. For example if coords_3d is `4 x 3`, and
+        `affine` is `4 x 4`, then the batch size is set to `broadcast_shape(4, 1) = 4`.
+        If `coords_3d` is `4 x 3` and `affine` is `2 x 4 x 4`, the batch sizes are
+        incompatible, and an error is raised.
+    """
+
+    c = coords_3d
+    if c.ndim < 1 or c.ndim > 5:
+        raise RuntimeError(
+            "ERROR: Expected coords_3d to have shape `[B] x [s_1, s2, s3] x 3`, but",
+            f"got shape {tuple(c.shape)}.",
+        )
+    if c.shape[-1] != 3:
+        raise RuntimeError(
+            "ERROR: Expected coords_3d to have the last dimension be a coordinate",
+            f"dimension of size 3, got {tuple(c.shape[-1])},",
+            f"with full shape {tuple(c.shape)}",
+        )
+
+    # Add a batch dimension.
+    if c.ndim == 1 or c.ndim == 4:
+        c = torch.unsqueeze(c, 0)
+
+    # Add or expand spatial dimensions, if necessary.
+    if c.ndim == 2:
+        c_spatial_shape = (1, 1, 1)
+    elif c.ndim == 3:
+        c_spatial_shape = (c.shape[1], 1, 1)
+    else:
+        c_spatial_shape = tuple(c.shape[1:-1])
+    c = c.reshape(c.shape[0], *c_spatial_shape, c.shape[-1])
+    batch_c = c.shape[0]
+
+    a = affine
+    if a.ndim < 2 or a.ndim > 3 or tuple(a.shape[-2:]) != (4, 4):
+        raise RuntimeError(
+            f"ERROR: Expected affine of shape `[B] x 4 x 4`, got {tuple(a.shape)}"
+        )
+    if a.ndim == 2:
+        a = torch.unsqueeze(a, 0)
+
+    batch_a = a.shape[0]
+
+    if batch_c != 1 and batch_a != 1 and batch_c != batch_a:
+        raise RuntimeError("ERROR: Batch sizes are not broadcastable")
+
+    common_batch_size = max(batch_c, batch_a)
+    if batch_c != batch_a:
+        if batch_c == 1:
+            c = einops.repeat(
+                c, "1 s1 s2 s3 coord -> b s1 s2 s3 coord", b=common_batch_size
+            )
+        elif batch_a == 1:
+            a = einops.repeat(
+                a,
+                "1 homog_aff_1 homog_aff_2 -> b homog_aff_1 homog_aff_2",
+                b=common_batch_size,
+            )
+
+    c = c.to(torch.result_type(c, a))
+    a = a.to(torch.result_type(c, a))
+
+    return c, a
+
+
+def transform_coords(coords_3d: torch.Tensor, affine_a2b: torch.Tensor) -> torch.Tensor:
+    c, a = _canonicalize_coords_3d_affine(coords_3d, affine_a2b)
+    # Expand the affine matrices to be broadcastable over the coordinate spatial
+    # dimensions.
+    a = a[:, None, None, None]
+    p = einops.einsum(a[..., :3, :3], c, "... i j, ... j -> ... i")
+    p += a[..., :3, -1]
+
+    if c.numel() != coords_3d.numel():
+        p = p.reshape(-1, *tuple(coords_3d.shape))
+    else:
+        p = p.reshape(coords_3d.shape)
+
+    if torch.is_floating_point(coords_3d) and p.dtype != coords_3d.dtype:
+        p = p.to(dtype=coords_3d.dtype)
+
+    return p
 
 
 def sample_3d(
