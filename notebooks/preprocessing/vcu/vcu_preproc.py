@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# In[1]:
-
 
 # Automatically re-import project-specific modules.
 # imports
@@ -12,6 +10,7 @@ import io
 import json
 import multiprocessing
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -68,6 +67,7 @@ def vcu_dwi_preproc(
     t = time.time()
     t0 = t
     print(f"{subj_id} Start time {t}", flush=True)
+    step_num = 0
     # Organize inputs
     # Set some fields to None as placeholders for later.
     subj_input = Box(
@@ -101,21 +101,199 @@ def vcu_dwi_preproc(
 
     # Keep track of all output files for final output.
     subj_output = Box(default_box=True)
+    subj_output.tmp_dir = subj_input.output_path / "tmp"
+    subj_output.tmp_dir.mkdir(exist_ok=True, parents=True)
+
+    # ###### 0.5 Create highly inclusive initial DWI mask.
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
+    n_procs = 5
+    uncorrected_dwi_mask_path = (
+        subj_input.output_path / f"{step_prefix}_initial_dwi_mask"
+    )
+    uncorrected_dwi_mask_path.mkdir(exist_ok=True, parents=True)
+    docker_img = "mrtrix3/mrtrix3:3.0.3"
+
+    uncorrected_dwi_mask_f = uncorrected_dwi_mask_path / "uncorrected-dwi_mask.nii.gz"
+    rerun = pitn.utils.rerun_indicator_from_mtime(
+        input_files=[
+            subj_input.ap.dwi_f,
+            subj_input.ap.bval_f,
+            subj_input.ap.bvec_f,
+            subj_input.pa.dwi_f,
+            subj_input.pa.bval_f,
+            subj_input.pa.bvec_f,
+        ],
+        output_files=[uncorrected_dwi_mask_f],
+    )
+    if rerun:
+
+        # Convert AP and PA scans to .mif files
+        dwi_ap_mif_f = subj_output.tmp_dir / "ap_dwi.mif"
+        create_ap_mif_script = pitn.mrtrix.mr_convert_cmd(
+            subj_input.ap.dwi_f,
+            dwi_ap_mif_f,
+            fslgrad=(subj_input.ap.bvec_f, subj_input.ap.bval_f),
+            nthreads=n_procs,
+            force=True,
+        )
+        dwi_pa_mif_f = subj_output.tmp_dir / "pa_dwi.mif"
+        create_pa_mif_script = pitn.mrtrix.mr_convert_cmd(
+            subj_input.pa.dwi_f,
+            dwi_pa_mif_f,
+            fslgrad=(subj_input.pa.bvec_f, subj_input.pa.bval_f),
+            nthreads=n_procs,
+            force=True,
+        )
+        # Calculate masks for each AP and PA batch.
+        mask_ap_f = subj_output.tmp_dir / "ap_mask.nii.gz"
+        mask_ap_script = pitn.mrtrix.dwi2mask_cmd(
+            dwi_ap_mif_f, mask_ap_f, clean_scale=2, nthreads=n_procs, force=True
+        )
+        mask_pa_f = subj_output.tmp_dir / "pa_mask.nii.gz"
+        mask_pa_script = pitn.mrtrix.dwi2mask_cmd(
+            dwi_pa_mif_f, mask_pa_f, clean_scale=2, nthreads=n_procs, force=True
+        )
+        # Merge AP-PA masks by hand.
+        # Binary open (4) -> binary dilate (2)
+        dilate_1_script = pitn.mrtrix.mask_filter_cmd(
+            uncorrected_dwi_mask_f,
+            "dilate",
+            uncorrected_dwi_mask_f,
+            npass=4,
+            force=True,
+        )
+        erode_1_script = pitn.mrtrix.mask_filter_cmd(
+            uncorrected_dwi_mask_f,
+            "erode",
+            uncorrected_dwi_mask_f,
+            npass=4,
+            force=True,
+        )
+        dilate_2_script = pitn.mrtrix.mask_filter_cmd(
+            uncorrected_dwi_mask_f,
+            "dilate",
+            uncorrected_dwi_mask_f,
+            npass=2,
+            force=True,
+        )
+        keep_largest_cc_script = pitn.mrtrix.mask_filter_cmd(
+            uncorrected_dwi_mask_f,
+            "connect",
+            uncorrected_dwi_mask_f,
+            largest=True,
+            force=True,
+        )
+
+        vols = pitn.utils.union_parent_dirs(
+            subj_input.ap.dwi_f,
+            subj_input.ap.bval_f,
+            subj_input.ap.bvec_f,
+            subj_input.pa.dwi_f,
+            subj_input.pa.bval_f,
+            subj_input.pa.bvec_f,
+            dwi_ap_mif_f,
+            dwi_pa_mif_f,
+            mask_ap_f,
+            mask_pa_f,
+            uncorrected_dwi_mask_f,
+        )
+        vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
+        docker_config = dict(volumes=vols)
+
+        # Run commands.
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["condition"].wait_for(
+                    lambda: shared_resources["cpus"].value >= n_procs
+                )
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value - n_procs
+                )
+        # Run all scripts in order.
+        # Create .mif files for masking, mask AP and PA individually.
+        for script in (
+            create_ap_mif_script,
+            create_pa_mif_script,
+            mask_ap_script,
+            mask_pa_script,
+        ):
+            result = pitn.utils.proc_runner.call_docker_run(
+                img=docker_img, cmd=script, run_config=docker_config
+            )
+        # Merge AP-PA masks.
+        mask_ap_nib = nib.as_closest_canonical(nib.load(mask_ap_f))
+        mask_ap = mask_ap_nib.get_fdata().astype(bool)
+        mask_pa = nib.as_closest_canonical(nib.load(mask_pa_f)).get_fdata().astype(bool)
+        uncorrected_dwi_mask = mask_ap | mask_pa
+        # Fill back in bottom voxels, if some are absent from the mask.
+        mask_presence_z = np.amax(uncorrected_dwi_mask, axis=(0, 1))
+        if (mask_presence_z[:5] < 1).any():
+            min_slice_present_idx = np.argmax(mask_presence_z)
+            for to_fill_idx in range(min_slice_present_idx):
+                uncorrected_dwi_mask[..., to_fill_idx] = uncorrected_dwi_mask[
+                    ..., min_slice_present_idx
+                ]
+
+        nib.save(
+            nib.Nifti1Image(
+                uncorrected_dwi_mask.astype(np.uint8),
+                mask_ap_nib.affine,
+                mask_ap_nib.header,
+            ),
+            uncorrected_dwi_mask_f,
+        )
+
+        # Binary closing -> binary dilation
+        for script in (
+            dilate_1_script,
+            erode_1_script,
+            dilate_2_script,
+            keep_largest_cc_script,
+        ):
+            result = pitn.utils.proc_runner.call_docker_run(
+                img=docker_img, cmd=script, run_config=docker_config
+            )
+
+        if shared_resources is not None:
+            with shared_resources["condition"]:
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value + n_procs
+                )
+                shared_resources["condition"].notify_all()
+
+        dwi_ap_mif_f.unlink(missing_ok=True)
+        dwi_pa_mif_f.unlink(missing_ok=True)
+        mask_ap_f.unlink(missing_ok=True)
+        mask_pa_f.unlink(missing_ok=True)
+        del dwi_ap_mif_f, dwi_pa_mif_f, mask_ap_f, mask_pa_f, uncorrected_dwi_mask
+
+    subj_output.uncorrected_dwi_mask.mask_f = uncorrected_dwi_mask_f
+
+    t1 = time.time()
+    print(
+        f"{subj_id} Time taken for initial DWI mask: {t1 - t}",
+        flush=True,
+    )
+    t = t1
 
     # ###### 1. Denoise with MP-PCA.
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     if shared_resources is not None:
-        n_procs = shared_resources["MAX_CPUS"]
+        n_procs = min(10, shared_resources["MAX_CPUS"])
     else:
         n_procs = 1
-    mppca_out_path = subj_input.output_path / "denoise_mppca"
+    mppca_out_path = subj_input.output_path / f"{step_prefix}_denoise_mppca"
     mppca_out_path.mkdir(exist_ok=True, parents=True)
     for pe_direct in ("ap", "pa"):
         subj_pe = subj_input[pe_direct]
         # Check if computation should be redone.
+        rough_mask_f = subj_output.uncorrected_dwi_mask.mask_f
+        # Placeholder for PE-specific mask.
+        pe_direct_mask_f = mppca_out_path / f"{pe_direct}_init_dwi_mask.nii.gz"
+
         # Define output files.
-        rough_mask_f = (
-            mppca_out_path / f"{subj_id}_{pe_direct}_rough-median-otsu-dwi-mask.nii.gz"
-        )
         denoise_dwi_f = (
             mppca_out_path / f"{subj_id}_{pe_direct}_mppca-denoise_dwi.nii.gz"
         )
@@ -124,41 +302,15 @@ def vcu_dwi_preproc(
             / f"{subj_id}_{pe_direct}_mppca-denoise_dwi-std-estimate.nii.gz"
         )
         rerun = pitn.utils.rerun_indicator_from_mtime(
-            input_files=[subj_pe.dwi_f, subj_pe.bvec_f, subj_pe.bval_f],
-            output_files=[rough_mask_f, denoise_dwi_f, denoise_std_f],
+            input_files=[subj_pe.dwi_f, subj_pe.bvec_f, subj_pe.bval_f, rough_mask_f],
+            output_files=[denoise_dwi_f, denoise_std_f, pe_direct_mask_f],
         )
         if rerun:
-            # Estimate a rough mask to speed up MPPCA.
-            # DWIs are not registered at all, so the mask needs to be generous across all
-            # gradient directions.
-            # Standardize intensity across DWIs, as higher gradient strengths produce lower
-            # signal intensity.
-            norm_dwis = (
-                subj_pe.dwi.get_fdata()
-                - np.mean(subj_pe.dwi.get_fdata(), axis=(0, 1, 2), keepdims=True)
-            ) / (np.std(subj_pe.dwi.get_fdata(), axis=(0, 1, 2), keepdims=True))
 
-            _, rough_dwi_mask = dipy.segment.mask.median_otsu(
-                np.mean(norm_dwis, axis=-1), median_radius=2, numpass=1, dilate=6
-            )
-            mask_labels, num_labels = skimage.measure.label(
-                rough_dwi_mask.astype(np.uint8), return_num=True
-            )
-            # Keep only the largest blob if there's more than one.
-            if num_labels > 1:
-                properties = skimage.measure.regionprops(mask_labels)
-                areas = [p.area for p in properties]
-                max_area = max(areas)
-                l = properties[areas.index(max_area)].label
-                rough_dwi_mask = mask_labels == l
-            # Crop by mask, because MP-PCA will just zero-out everything outside the
-            # mask anyway.
-            crop_dwi = crop_nib_by_mask(subj_pe.dwi, rough_dwi_mask)
-            crop_mask_nib = crop_nib_by_mask(
-                nib.Nifti1Image(rough_dwi_mask.astype(np.uint8), subj_pe.dwi.affine),
-                rough_dwi_mask,
-            )
-            nib.save(crop_mask_nib, rough_mask_f)
+            shutil.copyfile(rough_mask_f, pe_direct_mask_f)
+            rough_mask_f = pe_direct_mask_f
+            rough_dwi_mask = nib.load(rough_mask_f).get_fdata().astype(bool)
+
             # Estimate patch radius. Note that the total patch volume must be > the number
             # of gradient directions, so default params don't work for images with more than
             # 125 gradient directions.
@@ -172,12 +324,14 @@ def vcu_dwi_preproc(
                     shared_resources["condition"].wait_for(
                         lambda: shared_resources["cpus"].value >= n_procs
                     )
-                    shared_resources["cpus"].value -= n_procs
-                    shared_resources["condition"].notify_all()
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value - n_procs
+                    )
 
+            print(f"{subj_id} starting MP-PCA denoising PE {pe_direct}", flush=True)
             denoised_dwi, noise_std = dipy.denoise.localpca.mppca(
-                arr=crop_dwi.get_fdata(),
-                mask=crop_mask_nib.get_fdata(),
+                arr=subj_pe.dwi.get_fdata(),
+                mask=rough_dwi_mask,
                 patch_radius=patch_radius,
                 pca_method="eig",
                 return_sigma=True,
@@ -185,16 +339,21 @@ def vcu_dwi_preproc(
 
             if shared_resources is not None:
                 with shared_resources["condition"]:
-                    shared_resources["cpus"].value += n_procs
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value + n_procs
+                    )
                     shared_resources["condition"].notify_all()
 
             nib.save(
-                nib.Nifti1Image(denoised_dwi, affine=crop_dwi.affine),
+                nib.Nifti1Image(denoised_dwi, affine=subj_pe.dwi.affine),
                 str(denoise_dwi_f),
             )
             nib.save(
-                nib.Nifti1Image(noise_std, affine=crop_dwi.affine), str(denoise_std_f)
+                nib.Nifti1Image(noise_std, affine=subj_pe.dwi.affine),
+                str(denoise_std_f),
             )
+            del denoised_dwi
+            del noise_std
 
         subj_output.denoise_mppca[pe_direct].mask_f = rough_mask_f
         subj_output.denoise_mppca[pe_direct].dwi_f = denoise_dwi_f
@@ -203,85 +362,11 @@ def vcu_dwi_preproc(
         print(f"{subj_id} Time taken for MP-PCA {pe_direct}: {t1 - t}", flush=True)
         t = t1
 
-    # ###### 1.5 Re-align AP and PA volumes after mask cropping.
-    ap_dwi = nib.load(subj_output.denoise_mppca.ap.dwi_f)
-    pa_dwi = nib.load(subj_output.denoise_mppca.pa.dwi_f)
-
-    if (ap_dwi.shape != pa_dwi.shape) and (
-        not np.isclose(ap_dwi.affine, pa_dwi.affine).all()
-    ):
-        # Also re-align the mask and std fields. Each volume in a PE direction should
-        # have the same corresponding shape and affine.
-        ap_mask = nib.load(subj_output.denoise_mppca.ap.mask_f)
-        ap_std = nib.load(subj_output.denoise_mppca.ap.std_f)
-        pa_mask = nib.load(subj_output.denoise_mppca.pa.mask_f)
-        pa_std = nib.load(subj_output.denoise_mppca.pa.std_f)
-
-        target_shape = np.maximum(
-            np.asarray(ap_dwi.shape[:-1]),
-            np.asarray(pa_dwi.shape[:-1]),
-        )
-        ap_reshaped_dwi = pitn.data.preproc.dwi.crop_or_pad_nib(ap_dwi, target_shape)
-        ap_reshaped_mask = pitn.data.preproc.dwi.crop_or_pad_nib(ap_mask, target_shape)
-        ap_reshaped_mask.set_data_dtype(np.uint8)
-        ap_reshaped_std = pitn.data.preproc.dwi.crop_or_pad_nib(ap_std, target_shape)
-        pa_reshaped_dwi = pitn.data.preproc.dwi.crop_or_pad_nib(pa_dwi, target_shape)
-        pa_reshaped_mask = pitn.data.preproc.dwi.crop_or_pad_nib(pa_mask, target_shape)
-        pa_reshaped_std = pitn.data.preproc.dwi.crop_or_pad_nib(pa_std, target_shape)
-        if not np.isclose(ap_reshaped_dwi.affine, pa_reshaped_dwi.affine).all():
-            # Arbitrarily choose AP as the reference volume.
-            ref_aff = ap_reshaped_dwi.affine
-            tf_pa2ap = pitn.data.preproc.dwi.transform_translate_nib_fov_to_target(
-                pa_reshaped_dwi, target_affine=ref_aff
-            )
-            pa_reshaped_dwi = pitn.data.preproc.dwi.apply_torchio_tf_to_nib(
-                tf_pa2ap, pa_reshaped_dwi
-            )
-            assert np.isclose(pa_reshaped_dwi.affine, ap_reshaped_dwi.affine).all()
-            pa_reshaped_mask = pitn.data.preproc.dwi.apply_torchio_tf_to_nib(
-                tf_pa2ap, pa_reshaped_mask
-            )
-            assert np.isclose(pa_reshaped_mask.affine, ap_reshaped_mask.affine).all()
-            pa_reshaped_mask.set_data_dtype(np.uint8)
-            pa_reshaped_std = pitn.data.preproc.dwi.apply_torchio_tf_to_nib(
-                tf_pa2ap, pa_reshaped_std
-            )
-            assert np.isclose(pa_reshaped_std.affine, ap_reshaped_dwi.affine).all()
-
-        # Save out new nib volumes into MPPCA output location.
-        nib.save(ap_reshaped_dwi, subj_output.denoise_mppca.ap.dwi_f)
-        nib.save(ap_reshaped_mask, subj_output.denoise_mppca.ap.mask_f)
-        nib.save(ap_reshaped_std, subj_output.denoise_mppca.ap.std_f)
-        nib.save(pa_reshaped_dwi, subj_output.denoise_mppca.pa.dwi_f)
-        nib.save(pa_reshaped_mask, subj_output.denoise_mppca.pa.mask_f)
-        nib.save(pa_reshaped_std, subj_output.denoise_mppca.pa.std_f)
-        for im in (
-            ap_reshaped_dwi,
-            ap_reshaped_mask,
-            ap_reshaped_std,
-            pa_reshaped_dwi,
-            pa_reshaped_mask,
-            pa_reshaped_std,
-        ):
-            im.uncache()
-
-    # If both shapes and affines match, then there's no need for correction.
-    elif (ap_dwi.shape == pa_dwi.shape) and (
-        np.isclose(ap_dwi.affine, pa_dwi.affine).all()
-    ):
-        pass
-    else:
-        raise RuntimeError(
-            "ERROR: AP/PA shape-affine mismatch.",
-            "Expected either 1) both shapes and affines are different,",
-            "or 2) both shapes and affines are the same;",
-            f"got\nAP > {ap_dwi.shape}, {ap_dwi.affine}\n",
-            f"PA > {pa_dwi.shape}, {pa_dwi.affine}",
-        )
-
     # ###### 2. Remove Gibbs ringing artifacts.
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     n_procs = 4
-    gibbs_out_path = subj_input.output_path / "gibbs_remove"
+    gibbs_out_path = subj_input.output_path / f"{step_prefix}_gibbs_remove"
     gibbs_out_path.mkdir(exist_ok=True, parents=True)
     for pe_direct in ("ap", "pa"):
         subj_pe = subj_input[pe_direct]
@@ -307,8 +392,9 @@ def vcu_dwi_preproc(
                     shared_resources["condition"].wait_for(
                         lambda: shared_resources["cpus"].value >= n_procs
                     )
-                    shared_resources["cpus"].value -= n_procs
-                    shared_resources["condition"].notify_all()
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value - n_procs
+                    )
 
             dwi_data = dwi.get_fdata()
             dwi_degibbsed = dipy.denoise.gibbs.gibbs_removal(
@@ -318,10 +404,11 @@ def vcu_dwi_preproc(
                 inplace=False,
                 num_processes=n_procs,
             )
-
             if shared_resources is not None:
                 with shared_resources["condition"]:
-                    shared_resources["cpus"].value += n_procs
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value + n_procs
+                    )
                     shared_resources["condition"].notify_all()
 
             mask = nib.load(subj_output.denoise_mppca[pe_direct].mask_f).get_fdata()
@@ -330,6 +417,7 @@ def vcu_dwi_preproc(
                 nib.Nifti1Image(dwi_degibbsed, dwi.affine, header=dwi.header),
                 gibbs_corrected_dwi_f,
             )
+            del dwi_degibbsed, dwi_data
 
         subj_output.gibbs_remove[pe_direct].dwi_f = gibbs_corrected_dwi_f
         t1 = time.time()
@@ -339,8 +427,10 @@ def vcu_dwi_preproc(
         t = t1
 
     # ###### 3. Remove $B_1$ magnetic field bias.
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     n_procs = 4
-    b1_debias_out_path = subj_input.output_path / "b1_debias"
+    b1_debias_out_path = subj_input.output_path / f"{step_prefix}_b1_debias"
     b1_debias_out_path.mkdir(exist_ok=True, parents=True)
     docker_img = "mrtrix3/mrtrix3:3.0.3"
     for pe_direct in ("ap", "pa"):
@@ -389,8 +479,9 @@ def vcu_dwi_preproc(
                     shared_resources["condition"].wait_for(
                         lambda: shared_resources["cpus"].value >= n_procs
                     )
-                    shared_resources["cpus"].value -= n_procs
-                    shared_resources["condition"].notify_all()
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value - n_procs
+                    )
 
             dwi_debias_result = pitn.utils.proc_runner.call_docker_run(
                 img=docker_img, cmd=dwi_debias_script, run_config=docker_config
@@ -398,7 +489,9 @@ def vcu_dwi_preproc(
 
             if shared_resources is not None:
                 with shared_resources["condition"]:
-                    shared_resources["cpus"].value += n_procs
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value + n_procs
+                    )
                     shared_resources["condition"].notify_all()
 
             # Make sure to re-mask the de-biased output, can drastically reduce
@@ -414,6 +507,7 @@ def vcu_dwi_preproc(
                 ),
                 b1_debias_dwi_f,
             )
+            del dwi_debiased_data, dwi_debiased
 
         subj_output.b1_debias[pe_direct].dwi_f = b1_debias_dwi_f
         subj_output.b1_debias[pe_direct].bias_field_f = b1_debias_bias_field_f
@@ -425,8 +519,10 @@ def vcu_dwi_preproc(
         t = t1
 
     # ###### 4. Check bvec orientations
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     n_procs = 4
-    bvec_flip_correct_path = subj_input.output_path / "bvec_flip_correct"
+    bvec_flip_correct_path = subj_input.output_path / f"{step_prefix}_bvec_flip_correct"
     bvec_flip_correct_path.mkdir(exist_ok=True, parents=True)
     tmp_d = bvec_flip_correct_path / "tmp"
     tmp_d.mkdir(exist_ok=True, parents=True)
@@ -466,8 +562,9 @@ def vcu_dwi_preproc(
                     shared_resources["condition"].wait_for(
                         lambda: shared_resources["cpus"].value >= n_procs
                     )
-                    shared_resources["cpus"].value -= n_procs
-                    shared_resources["condition"].notify_all()
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value - n_procs
+                    )
 
             correct_bvec = pitn.data.preproc.dwi.bvec_flip_correct(
                 dwi_data=dwi.get_fdata(),
@@ -479,13 +576,16 @@ def vcu_dwi_preproc(
                 docker_img=docker_img,
                 docker_config=docker_config,
             )
+            np.savetxt(correct_bvec_file, correct_bvec, fmt="%g")
 
             if shared_resources is not None:
                 with shared_resources["condition"]:
-                    shared_resources["cpus"].value += n_procs
+                    shared_resources["cpus"].value = (
+                        shared_resources["cpus"].value + n_procs
+                    )
                     shared_resources["condition"].notify_all()
+            del dwi, mask
 
-            np.savetxt(correct_bvec_file, correct_bvec, fmt="%g")
         t1 = time.time()
         print(
             f"{subj_id} Time taken for bvec flip detection {pe_direct}: {t1 - t}",
@@ -495,12 +595,14 @@ def vcu_dwi_preproc(
         subj_output.bvec_flip_correct[pe_direct].bvec_f = correct_bvec_file
 
     # ###### 5. Run topup
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     n_procs = 1
     num_b0s_per_pe = 3
     b0_max = 50
     topup_img = "tylerspears/fsl-cuda10.2:6.0.5"
     # Define (at least the primary) output files.
-    topup_out_path = subj_input.output_path / "topup"
+    topup_out_path = subj_input.output_path / f"{step_prefix}_topup"
     topup_out_path.mkdir(exist_ok=True, parents=True)
     topup_input_dwi_f = topup_out_path / f"{subj_id}_ap_pa_b0_input.nii.gz"
     acqparams_f = topup_out_path / "acqparams.txt"
@@ -649,18 +751,20 @@ def vcu_dwi_preproc(
                 shared_resources["condition"].wait_for(
                     lambda: shared_resources["cpus"].value >= n_procs
                 )
-                shared_resources["cpus"].value -= n_procs
-                shared_resources["condition"].notify_all()
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value - n_procs
+                )
 
         topup_result = pitn.utils.proc_runner.call_docker_run(
             img=topup_img,
             cmd=topup_script,
             run_config=docker_config,
         )
-
         if shared_resources is not None:
             with shared_resources["condition"]:
-                shared_resources["cpus"].value += n_procs
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value + n_procs
+                )
                 shared_resources["condition"].notify_all()
 
     t1 = time.time()
@@ -670,10 +774,14 @@ def vcu_dwi_preproc(
     subj_output.topup.merge_update(topup_out_files)
 
     # ###### 6. Extract mask of unwarped diffusion data.
+    # Run BET on the topup b0s for eddy, as suggested by FSL:
+    # <https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/eddy/UsersGuide#A--mask>
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     n_procs = 1
     docker_img = "tylerspears/fsl-cuda10.2:6.0.5"
     output_path = subj_input.output_path
-    bet_out_path = output_path / "bet_topup2eddy"
+    bet_out_path = output_path / f"{step_prefix}_bet_topup2eddy"
     bet_out_path.mkdir(exist_ok=True, parents=True)
     tmp_dir = bet_out_path / "tmp"
     tmp_dir.mkdir(exist_ok=True)
@@ -690,19 +798,24 @@ def vcu_dwi_preproc(
         vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
         docker_config = dict(volumes=vols)
 
-        # Finally, run topup.
         if shared_resources is not None:
             with shared_resources["condition"]:
                 shared_resources["condition"].wait_for(
                     lambda: shared_resources["cpus"].value >= n_procs
                 )
-                shared_resources["cpus"].value -= n_procs
-                shared_resources["condition"].notify_all()
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value - n_procs
+                )
 
+        # Fractional intensity of 0.15 and a gradient of -0.15 experimentally seems to
+        # produce a decent (but still very rough) mask for eddy. If the default bet
+        # parameters are left as-is, the frontal cortex will get cut off.
         topup2eddy_mask_f = pitn.data.preproc.dwi.bet_mask_median_dwis(
             input_dwi_f,
             out_mask_f=out_mask_f,
             robust_iters=True,
+            fractional_intensity_threshold=0.15,
+            vertical_grad_in_f=-0.2,
             tmp_dir=tmp_dir,
             docker_img=docker_img,
             docker_config=docker_config,
@@ -710,7 +823,9 @@ def vcu_dwi_preproc(
 
         if shared_resources is not None:
             with shared_resources["condition"]:
-                shared_resources["cpus"].value += n_procs
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value + n_procs
+                )
                 shared_resources["condition"].notify_all()
 
         assert topup2eddy_mask_f.exists()
@@ -721,9 +836,11 @@ def vcu_dwi_preproc(
     subj_output.bet_topup2eddy.mask_f = out_mask_f
 
     # ###### 7. Run eddy correction
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
     n_procs = 2
     docker_img = "tylerspears/fsl-cuda10.2:6.0.5"
-    eddy_out_path = subj_input.output_path / "eddy"
+    eddy_out_path = subj_input.output_path / f"{step_prefix}_eddy"
     eddy_out_path.mkdir(exist_ok=True, parents=True)
     slspec_path = eddy_out_path / "slspec.txt"
     index_path = eddy_out_path / "index.txt"
@@ -882,9 +999,8 @@ def vcu_dwi_preproc(
                     lambda: (shared_resources["cpus"].value >= n_procs)
                     and (not shared_resources["gpus"].empty())
                 )
-                shared_resources["cpus"].value -= n_procs
-                gpu_idx = shared_resources["gpus"].get()
-                shared_resources["condition"].notify_all()
+                shared_resources["cpus"].value = shared_resources["cpus"] - n_procs
+                gpu_idx = shared_resources["gpus"].get(timeout=5)
         else:
             gpu_idx = "0"
 
@@ -902,7 +1018,9 @@ def vcu_dwi_preproc(
         if shared_resources is not None:
             shared_resources["gpus"].put(gpu_idx)
             with shared_resources["condition"]:
-                shared_resources["cpus"].value += n_procs
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value + n_procs
+                )
                 shared_resources["condition"].notify_all()
 
     t1 = time.time()
@@ -911,60 +1029,100 @@ def vcu_dwi_preproc(
 
     subj_output.eddy.input_bval = ap_pa_bval_path
     subj_output.eddy.input_bvec = ap_pa_bvec_path
-    subj_outputs.eddy.input_dwi = ap_pa_dwi_path
-    subj_outputs.eddy.index = index_path
+    subj_output.eddy.input_dwi = ap_pa_dwi_path
+    subj_output.eddy.index = index_path
     subj_output.eddy.slspec = slspec_path
     subj_output.eddy.merge_update(eddy_out_files)
 
-    # ###### 8. Extract final mask of diffusion data, crop, and perform alignment.
-    n_procs = 2
-    docker_img = "tylerspears/fsl-cuda10.2:6.0.5"
-    postproc_out_path = subj_input.output_path / "postproc"
+    # ###### 8. Extract final mask of diffusion data, and crop volumes.
+    step_num += 1
+    step_prefix = f"{step_num:g}".zfill(2)
+    n_procs = 5
+    docker_img = "mrtrix3/mrtrix3:3.0.3"
+    eddy_out_mask_f = eddy_out_path / f"{subj_id}_eddy_mask.nii.gz"
+    postproc_out_path = subj_input.output_path / f"{step_prefix}_final"
     postproc_out_path.mkdir(exist_ok=True, parents=True)
-    postproc_dwi_path = postproc_out_path / f"{subj_id}_postproc_dwi.nii.gz"
-    postproc_mask_path = postproc_out_path / f"{subj_id}_postproc_dwi-mask.nii.gz"
-    postproc_bvec_path = postproc_out_path / f"{subj_id}_postproc.bvec"
-    postproc_bval_path = postproc_out_path / f"{subj_id}_postproc.bval"
-    postproc_skull_strip_t1w_path = (
-        postproc_out_path / f"{subj_id}_postproc_brain-t1w.nii.gz"
-    )
-    postproc_dwi_vox2mni_affine_path = (
-        postproc_out_path / f"{subj_id}_postproc_dwi-vox2mni-frame_affine.txt"
-    )
-    tmp_dir = postproc_out_path / "tmp"
-    tmp_dir.mkdir(exist_ok=True)
+    postproc_dwi_path = postproc_out_path / f"{subj_id}_dwi.nii.gz"
+    postproc_mask_path = postproc_out_path / f"{subj_id}_dwi_mask.nii.gz"
+    postproc_bvec_path = postproc_out_path / f"{subj_id}.bvec"
+    postproc_bval_path = postproc_out_path / f"{subj_id}.bval"
 
     rerun = pitn.utils.rerun_indicator_from_mtime(
         input_files=[
             subj_output.eddy.corrected,
             subj_output.eddy.input_bval,
             subj_output.eddy.rotated_bvecs,
-            subj_input.t1w,
         ],
         output_files=[
+            eddy_out_mask_f,
             postproc_dwi_path,
             postproc_mask_path,
             postproc_bvec_path,
             postproc_bval_path,
-            postproc_skull_strip_t1w_path,
-            postproc_dwi_vox2mni_affine_path,
         ],
     )
 
     if rerun:
-        in_dwi = nib.load(subj_output.eddy.corrected)
-        bvals = np.loadtxt(subj_output.eddy.input_bval)
-        bvecs = np.loadtxt(subj_output.eddy.rotated_bvecs)
+        eddy_mask_script = pitn.mrtrix.dwi2mask_cmd(
+            subj_output.eddy.corrected,
+            output=eddy_out_mask_f,
+            fslgrad=(subj_output.eddy.rotated_bvecs, subj_output.eddy.input_bval),
+            clean_scale=2,
+            nthreads=n_procs,
+            force=True,
+        )
+        # Binary closing (2) -> binary dilate (2)
+        dilate_1_script = pitn.mrtrix.mask_filter_cmd(
+            eddy_out_mask_f,
+            "dilate",
+            eddy_out_mask_f,
+            npass=2,
+            force=True,
+        )
+        erode_1_script = pitn.mrtrix.mask_filter_cmd(
+            eddy_out_mask_f,
+            "erode",
+            eddy_out_mask_f,
+            npass=2,
+            force=True,
+        )
+        dilate_2_script = pitn.mrtrix.mask_filter_cmd(
+            eddy_out_mask_f,
+            "dilate",
+            eddy_out_mask_f,
+            npass=2,
+            force=True,
+        )
+        keep_largest_cc_script = pitn.mrtrix.mask_filter_cmd(
+            eddy_out_mask_f,
+            "connect",
+            eddy_out_mask_f,
+            largest=True,
+            force=True,
+        )
+        apply_mask_dwi_script = pitn.mrtrix.mr_grid_cmd(
+            subj_output.eddy.corrected,
+            operation="crop",
+            output=postproc_dwi_path,
+            mask=eddy_out_mask_f,
+            force=True,
+        )
+        apply_mask_mask_script = pitn.mrtrix.mr_grid_cmd(
+            eddy_out_mask_f,
+            operation="crop",
+            output=postproc_mask_path,
+            mask=eddy_out_mask_f,
+            force=True,
+        )
 
-        tmp_mask_f = (tmp_dir / "postproc_mask.nii.gz",)
-        tmp_b0s_f = tmp_dir / ""
-        in_b0s_data = in_dwi.get_fdata()[..., bvals <= 50]
-        in_b0s = nib.Nifti1Image(in_b0s_data, affine=in_dwi.affine)
-        in_b0s.set_data_dtype(np.uint8)
-        nib.save(in_b0s, tmp_b0s_f)
-
-        # Start with getting the BET-generated mask.
-        vols = pitn.utils.union_parent_dirs(postproc_mask_path, tmp_dir)
+        # Generate a DWI mask from the final preprocessed DWIs.
+        vols = pitn.utils.union_parent_dirs(
+            eddy_out_mask_f,
+            postproc_dwi_path,
+            subj_output.eddy.corrected,
+            subj_output.eddy.input_bval,
+            subj_output.eddy.rotated_bvecs,
+        )
         vols = {v: pitn.utils.proc_runner.get_docker_mount_obj(v) for v in vols}
         docker_config = dict(volumes=vols)
 
@@ -973,75 +1131,51 @@ def vcu_dwi_preproc(
                 shared_resources["condition"].wait_for(
                     lambda: shared_resources["cpus"].value >= n_procs
                 )
-                shared_resources["cpus"].value -= n_procs
-                shared_resources["condition"].notify_all()
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value - n_procs
+                )
 
-        tmp_mask_f = pitn.data.preproc.dwi.bet_mask_median_dwis(
-            tmp_b0s_f,
-            out_mask_f=tmp_mask_f,
-            robust_iters=True,
-            tmp_dir=tmp_dir,
-            docker_img=docker_img,
-            docker_config=docker_config,
+        # Run all scripts in order.
+        for script in (
+            eddy_mask_script,
+            dilate_1_script,
+            erode_1_script,
+            dilate_2_script,
+            keep_largest_cc_script,
+            apply_mask_dwi_script,
+            apply_mask_mask_script,
+        ):
+            result = pitn.utils.proc_runner.call_docker_run(
+                img=docker_img, cmd=script, run_config=docker_config
+            )
+
+        cropped_dwi_nib = nib.load(postproc_dwi_path)
+        cropped_dwi = cropped_dwi_nib.get_fdata()
+        cropped_mask = nib.load(postproc_mask_path).get_fdata().astype(bool)
+        cropped_mask = cropped_mask[..., None]
+        cropped_dwi = cropped_dwi * cropped_mask
+        nib.save(
+            nib.Nifti1Image(
+                cropped_dwi.astype(np.float32),
+                affine=cropped_dwi_nib.affine,
+                header=cropped_dwi_nib.header,
+            ),
+            postproc_dwi_path,
         )
+        bvals = np.loadtxt(subj_output.eddy.input_bval)
+        np.savetxt(postproc_bval_path, bvals, fmt="%g")
+        bvecs = np.loadtxt(subj_output.eddy.rotated_bvecs)
+        np.savetxt(postproc_bvec_path, bvecs, fmt="%g")
+
+        cropped_dwi_nib.uncache()
+        del cropped_dwi, cropped_mask
 
         if shared_resources is not None:
             with shared_resources["condition"]:
-                shared_resources["cpus"].value += n_procs
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value + n_procs
+                )
                 shared_resources["condition"].notify_all()
-
-        assert tmp_mask_f.exists()
-
-        # Perform a slight dilation of the mask, to account for any missed voxels.
-        tmp_mask = nib.load(tmp_mask_f)
-        tmp_mask.set_data_dtype(np.uint8)
-        tmp_mask_data = tmp_mask.get_fdata()
-        tmp_mask_data = skimage.morphology.binary_dilation(
-            tmp_mask_data, skimage.morphology.cube(2)
-        )
-        tmp_mask = tmp_mask.__class__(tmp_mask_data.astype(np.uint8), tmp_mask.affine)
-
-        crop_dwi = crop_nib_by_mask(in_dwi, tmp_mask.get_fdata().astype(np.uint8))
-        crop_mask_nib = crop_nib_by_mask(
-            tmp_mask, tmp_mask.get_fdata().astype(np.uint8)
-        )
-
-        # Zero-out everything outside the brain mask.
-        crop_dwi = crop_dwi.__class__(
-            crop_dwi.get_fdata() * crop_mask_nib.get_fdata()[..., None], crop_dwi.affine
-        )
-        postproc_skull_strip_t1w_path = postproc_skull_strip_t1w_path.resolve()
-        postproc_dwi_vox2mni_affine_path = postproc_dwi_vox2mni_affine_path.resolve()
-        # Find the transformation that aligns the DWI voxel coordinates with the
-        # coordinates of a standard template space. This only finds a transform of the
-        # DWI's frame of reference, we do *not* change the DW image itself in any way.
-        # <https://www.fieldtriptoolbox.org/faq/coordsys/#details-on-the-acpc-coordinate-system>
-        mni_align_script = rf"""
-        # Skull-strip the input T1w image
-        bet \
-            {str(subj_input.t1w.resolve())} \
-            {str(postproc_skull_strip_t1w_path)} \
-            -R
-        # Register T1w to template
-         flirt -dof 6 \
-            -cost normmi -searchcost normmi \
-            -interp sinc -sincwidth 7 -sincwindow hanning -verbose 1 \
-            -in {str(postproc_skull_strip_t1w_path)} \
-            -ref MNI152_T1_1mm_brain.nii.gz -out P_01_mni-space_brain-T1.nii.gz -omat T1w2MNI_affine.txt
-        # Reslice registered T1w and template to the DWI voxel size and image shape.
-
-        # Register median b0 image to T1w with `epi_reg`
-
-        # postproc_dwi_vox2mni_affine_path,
-        # Discard the images, we only want the rigid transform parameters.
-        """
-
-        crop_dwi.set_data_dtype(np.float32)
-        crop_mask_nib.set_data_dtype(np.uint8)
-        nib.save(crop_dwi, postproc_dwi_path)
-        nib.save(crop_mask_nib, postproc_mask_path)
-        np.savetxt(postproc_bvec_path, bvecs, fmt="%g")
-        np.savetxt(postproc_bval_path, bvals, fmt="%g")
 
     subj_output.postproc.dwi = postproc_dwi_path
     subj_output.postproc.mask = postproc_mask_path
@@ -1082,7 +1216,7 @@ if __name__ == "__main__":
     assert bids_dir.exists()
     output_dir = Path("/data/srv/outputs/pitn/vcu/preproc")
     assert output_dir.exists()
-    selected_subjs = ("P_01", "P_03", "P_04", "P_05", "P_06", "P_07", "P_08", "P_11")
+    selected_subjs = ("P_19", "P_20", "P_21", "P_22", "P_23", "P_24", "P_25", "P_26")
 
     # ## Subject File Locations
     subj_files = Box(default_box=True)
@@ -1101,7 +1235,7 @@ if __name__ == "__main__":
             )
         # Grab structural files
         t1w = pitn.utils.system.get_file_glob_unique(
-            p_dir, "*T1*_[0-9][0-9][0-9]*.nii.gz"
+            p_dir, "*T1*_[0-9][0-9][0-9].nii.gz"
         )
         subj_files[subj].t1w = Path(t1w)
 
@@ -1114,9 +1248,9 @@ if __name__ == "__main__":
         with multiprocessing.Manager() as manager:
 
             resources = manager.dict(
-                MAX_CPUS=multiprocessing.cpu_count() - 2,
+                MAX_CPUS=multiprocessing.cpu_count(),
                 condition=manager.Condition(),
-                cpus=manager.Value("i", multiprocessing.cpu_count() - 2),
+                cpus=manager.Value("i", multiprocessing.cpu_count()),
                 gpus=manager.Queue(2),
             )
             # resources["gpus"].put("0")
@@ -1127,7 +1261,7 @@ if __name__ == "__main__":
             # Grab files and process subject data.
             for subj_id, files in subj_files.items():
 
-                subj_out_dir = output_dir / subj_id
+                subj_out_dir = output_dir / subj_id / "diffusion" / "preproc"
                 subj_out_dir.mkdir(parents=True, exist_ok=True)
 
                 ap_files = files.ap.to_dict()

@@ -320,18 +320,25 @@ def bet_mask_median_dwis(
         d = Path(t_dir)
         if "volumes" not in docker_config.keys():
             docker_config["volumes"] = dict()
-        docker_config["volumes"][str(d)] = pitn.utils.proc_runner.get_docker_mount_obj(
-            d, mode="rw"
-        )
+        # tmp_dir is the parent to d, so mount that directory to pass the docker output
+        # back the host.
+        docker_config["volumes"][
+            str(tmp_dir)
+        ] = pitn.utils.proc_runner.get_docker_mount_obj(tmp_dir, mode="rw")
         median_out_fname = "_tmp_median_b0.nii.gz"
         median_out_path = d / median_out_fname
         nib.save(median_b0, median_out_path)
 
-        mask_out_basename = pitn.utils.cli_parse.file_basename(out_mask_f)
+        mask_out_basename = Path(out_mask_f).name
+        mask_out_basename = mask_out_basename.replace(
+            "".join(Path(out_mask_f).suffixes), ""
+        )
+        # Remove the string "mask" if it appears in the given basename.
+        mask_out_basename = mask_out_basename.replace("mask", "__")
 
         bet_script = pitn.fsl.bet_cmd(
             median_out_path,
-            out_file_basename=mask_out_basename,
+            out_file_basename=d / mask_out_basename,
             mask=True,
             skip_brain_output=True,
             verbose=False,
@@ -342,7 +349,7 @@ def bet_mask_median_dwis(
         run_bet_result = pitn.utils.proc_runner.call_docker_run(
             img=docker_img, cmd=bet_script, env=docker_env, run_config=docker_config
         )
-        mask_f = pitn.utils.system.get_file_glob_unique(d, "*_mask_*")
+        mask_f = pitn.utils.system.get_file_glob_unique(d, "*_mask.nii*")
         shutil.copyfile(mask_f, out_mask_f)
 
     return out_mask_f

@@ -74,7 +74,7 @@ def get_file_glob_unique(root_path: Path, glob_pattern: str) -> Path:
     if len(files) > 1:
         raise RuntimeError(
             "ERROR: More than one file matches glob pattern "
-            + f"{glob_pattern} under directory {str(root_path)}."
+            + f"{glob_pattern} under directory {str(root_path)}. "
             + "Expect only one match."
         )
     elif len(files) == 0:

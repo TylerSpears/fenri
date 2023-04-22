@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 import shlex
 from pathlib import Path
-from typing import Dict, List, Union
-
-from pitn.utils.cli_parse import add_equals_cmd_args
+from typing import Dict, List, Optional, Union
 
 from . import FSL_OUTPUT_TYPE_SUFFIX_MAP
 
@@ -17,6 +15,8 @@ def bet_cmd(
     eye_cleanup: bool = False,
     verbose: bool = True,
     fsl_output_type: str = "NIFTI_GZ",
+    fractional_intensity_threshold: Optional[float] = None,
+    vertical_grad_in_f: float = 0.0,
 ) -> str:
 
     cmd = list()
@@ -29,6 +29,13 @@ def bet_cmd(
         cmd.append("-m")
     if skip_brain_output:
         cmd.append("-n")
+    if fractional_intensity_threshold is not None:
+        cmd.append("-f")
+        cmd.append(str(fractional_intensity_threshold).format("%g"))
+    if vertical_grad_in_f != 0:
+        cmd.append("-g")
+        cmd.append(str(vertical_grad_in_f).format("%g"))
+
     if robust_iters:
         cmd.append("-R")
     if eye_cleanup:
@@ -38,7 +45,6 @@ def bet_cmd(
         cmd.append("-v")
 
     cmd = shlex.join(cmd)
-    cmd = add_equals_cmd_args(cmd)
     return cmd
 
 

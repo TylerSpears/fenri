@@ -145,6 +145,7 @@ def transform_coords(coords_3d: torch.Tensor, affine_a2b: torch.Tensor) -> torch
     # Expand the affine matrices to be broadcastable over the coordinate spatial
     # dimensions.
     a = a[:, None, None, None]
+
     p = einops.einsum(a[..., :3, :3], c, "... i j, ... j -> ... i")
     p += a[..., :3, -1]
 
@@ -152,11 +153,128 @@ def transform_coords(coords_3d: torch.Tensor, affine_a2b: torch.Tensor) -> torch
         p = p.reshape(-1, *tuple(coords_3d.shape))
     else:
         p = p.reshape(coords_3d.shape)
-
     if torch.is_floating_point(coords_3d) and p.dtype != coords_3d.dtype:
         p = p.to(dtype=coords_3d.dtype)
 
     return p
+
+
+def affine_vox2normalized_grid(
+    spatial_fov_vox: tuple, lower: float, upper: float, to_tensor=None
+) -> torch.Tensor:
+    """Construct an affine transformation that maps from voxel space to [lower, upper]."""
+    diff = upper - lower
+
+    if to_tensor is not None:
+        aff_vox2grid = torch.eye(4, dtype=to_tensor.dtype, device=to_tensor.device)
+    else:
+        aff_vox2grid = torch.eye(4, dtype=torch.float)
+    # Scale all coordinates to be in range [0, diff].
+    aff_diag = diff / (aff_vox2grid.new_tensor(spatial_fov_vox) - 1)
+    aff_diag = torch.cat([aff_diag, aff_diag.new_ones(1)], 0)
+    aff_vox2grid = aff_vox2grid.diagonal_scatter(aff_diag)
+    # Translate coords "back" by `lower` arbitrary unit(s) to make all coords within
+    # range [lower, upper], rather than [0, diff].
+    aff_vox2grid[:3, 3:4] = lower
+
+    return aff_vox2grid
+
+
+def sample_vol(
+    vol: torch.Tensor,
+    coords_mm_xyz: torch.Tensor,
+    affine_vox2mm: torch.Tensor,
+    mode="bilinear",
+    padding_mode="zeros",
+    align_corners=True,
+    override_out_of_bounds_val: Optional[float] = None,
+) -> torch.Tensor:
+
+    if vol.ndim == 3:
+        v = vol[None, None]
+    elif vol.ndim == 4:
+        v = vol[None]
+    else:
+        v = vol
+    assert v.ndim == 5
+
+    if mode.strip().lower() == "trilinear" or mode.strip().lower() == "linear":
+        mode = "bilinear"
+
+    coords, aff_vox2mm = _canonicalize_coords_3d_affine(coords_mm_xyz, affine_vox2mm)
+    # Invert the typical vox->mm affine.
+    aff_mm2vox = torch.linalg.inv(aff_vox2mm)
+    # Transform from vox to normalized grid coordinates in range [-1, 1] as required by
+    # grid_sample().
+    # spatial_fov_vox = tuple(vol.shape[1:-1])
+    spatial_fov_vox = tuple(v.shape[2:])
+    aff_vox2grid = affine_vox2normalized_grid(
+        spatial_fov_vox, lower=-1.0, upper=1.0, to_tensor=aff_vox2mm
+    )
+    aff_vox2grid.unsqueeze_(0)
+    # Merge transformations to map mm to normalized grid space, broadcasting the
+    # vox2grid affine over the batches in the input.
+    aff_mm2grid = torch.matmul(aff_vox2grid, aff_mm2vox)
+    grid_coords = transform_coords(coords, aff_mm2grid)
+
+    # Re-sample the volume with pytorch's grid_sample().
+    if not torch.is_floating_point(vol):
+        v = v.to(torch.promote_types(torch.float32, grid_coords.dtype))
+    # Reverse the order of the coordinate dimension to work properly with grid_sample!
+    grid_coords = torch.flip(grid_coords, dims=(-1,))
+    samples = F.grid_sample(
+        v,
+        grid=grid_coords,
+        mode=mode,
+        padding_mode=padding_mode,
+        align_corners=align_corners,
+    )
+
+    # If out-of-bounds samples should be overridden, set those sample values now.
+    # Otherwise, the grid_sample() only interpolates with the padded values, which
+    # allows out-of-bounds samples to appear to be in bounds.
+    if override_out_of_bounds_val is not None:
+        samples.masked_fill_(
+            (grid_coords < -1).any(dim=-1)[:, None]
+            | (grid_coords > 1).any(dim=-1)[:, None],
+            override_out_of_bounds_val,
+        )
+    # Change samples back to the input dtype only if the input was not a floating point,
+    # and the interpolation was nearest-neighbor.
+    if not torch.is_floating_point(vol) and mode == "nearest":
+        samples = samples.round().to(vol.dtype)
+
+    # Un-canonicalize the sample result shape.
+    if (
+        (samples.ndim != coords_mm_xyz.ndim)
+        or (samples.shape[0] != coords_mm_xyz.shape[0])
+        or (samples.ndim != vol.ndim)
+    ):
+        undo_shape = list(samples.shape)
+        b = samples.shape[0]
+        if b == 1:
+            if (
+                coords_mm_xyz.ndim in (1, 4)
+                and vol.ndim in (3, 4)
+                and affine_vox2mm.ndim == 2
+            ):
+                undo_shape[0] = 0
+        c = samples.shape[1]
+        if c == 1 and vol.ndim == 3:
+            undo_shape[1] = 0
+        s = tuple(samples.shape[2:])
+        if all(s_ == 1 for s_ in s) and coords_mm_xyz.ndim in (1, 2):
+            for i in (2, 3, 4):
+                undo_shape[i] = 0
+        elif sum(s) == max(s) + 2:
+            if coords_mm_xyz.ndim == 3:
+                undo_shape[2] = coords_mm_xyz.shape[1]
+                undo_shape[3] = 0
+                undo_shape[4] = 0
+        undo_shape = tuple(filter(lambda x: x > 0, undo_shape))
+        samples = samples.reshape(undo_shape)
+
+    return samples
 
 
 def sample_3d(
