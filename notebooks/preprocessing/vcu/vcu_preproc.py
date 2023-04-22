@@ -999,7 +999,9 @@ def vcu_dwi_preproc(
                     lambda: (shared_resources["cpus"].value >= n_procs)
                     and (not shared_resources["gpus"].empty())
                 )
-                shared_resources["cpus"].value = shared_resources["cpus"] - n_procs
+                shared_resources["cpus"].value = (
+                    shared_resources["cpus"].value - n_procs
+                )
                 gpu_idx = shared_resources["gpus"].get(timeout=5)
         else:
             gpu_idx = "0"
