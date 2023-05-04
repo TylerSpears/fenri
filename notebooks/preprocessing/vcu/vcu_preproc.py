@@ -1218,7 +1218,21 @@ if __name__ == "__main__":
     assert bids_dir.exists()
     output_dir = Path("/data/srv/outputs/pitn/vcu/preproc")
     assert output_dir.exists()
-    selected_subjs = ("P_19", "P_20", "P_21", "P_22", "P_23", "P_24", "P_25", "P_26")
+    selected_subjs = (
+        "P_01",
+        "P_02",
+        "P_03",
+        "P_04",
+        "P_05",
+        "P_06",
+        "P_07",
+        "P_08",
+        "P_10",
+        "P_11",
+        "P_13",
+        "P_14",
+        "P_16",
+    )
 
     # ## Subject File Locations
     subj_files = Box(default_box=True)
