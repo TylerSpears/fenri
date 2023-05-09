@@ -45,7 +45,9 @@ if __name__ == "__main__":
             "Starting subject",
         )
 
-        out_dir = data_dir / subj_id / "diffusion" / "parameter_maps" / "noddi"
+        out_dir = (
+            data_dir / subj_id / "diffusion" / "preproc" / "parameter_maps" / "noddi"
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
 
         dwi_dir = data_dir / subj_id / "diffusion" / "preproc" / "09_final"

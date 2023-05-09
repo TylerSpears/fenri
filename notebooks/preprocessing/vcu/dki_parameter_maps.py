@@ -71,7 +71,9 @@ if __name__ == "__main__":
         )
 
         ##### MSDKI
-        out_dir = data_dir / subj_id / "diffusion" / "parameter_maps" / "msdki"
+        out_dir = (
+            data_dir / subj_id / "diffusion" / "preproc" / "parameter_maps" / "msdki"
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
 
         msdki_model = dipy.reconst.msdki.MeanDiffusionKurtosisModel(

@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 set -eou pipefail
 
@@ -29,6 +29,9 @@ SPM_LST_DIR="${SUBJECTS_DIR}/spm-lst_lga"
 mkdir --parents "$SPM_LST_DIR"
 SPM_ROOT_DIR="/opt/spm"
 
+ANAT_OUT_DIR="$(realpath "${SUBJECTS_DIR}/../anat")"
+mkdir --parents "$ANAT_OUT_DIR"
+
 # 1. De-bias all volumes with N4.
 DEBIAS_DIR="${PRE_FS_DIR}/01_n4_debias"
 mkdir --parents "$DEBIAS_DIR"
@@ -43,19 +46,19 @@ if [ ! -s "$t1_debiased" ] ||
     [ "$t2" -nt "$t2_debiased" ] ||
     [ "$flair" -nt "$flair_debiased" ]; then
 
-    "${ANTSHOME}/N4BiasFieldCorrection" --verbose 1 \
+    "${ANTSPATH}/N4BiasFieldCorrection" --verbose 1 \
         -d 3 \
         --input-image "$t1" \
         --shrink-factor 3 \
         --output [ "$t1_debiased","${DEBIAS_DIR}/t1_bias_field.nii.gz" ]
 
-    "${ANTSHOME}/N4BiasFieldCorrection" --verbose 1 \
+    "${ANTSPATH}/N4BiasFieldCorrection" --verbose 1 \
         -d 3 \
         --input-image "$t2" \
         --shrink-factor 3 \
         --output [ "$t2_debiased","${DEBIAS_DIR}/t2_bias_field.nii.gz" ]
 
-    "${ANTSHOME}/N4BiasFieldCorrection" --verbose 1 \
+    "${ANTSPATH}/N4BiasFieldCorrection" --verbose 1 \
         -d 3 \
         --input-image "$flair" \
         --shrink-factor 3 \
@@ -75,7 +78,7 @@ if [ ! -s "$t2_reg_t1" ] || [ ! -s "$t2_reg_t1_tf" ] ||
     [ "$t1_debiased" -nt "$t2_reg_t1" ] ||
     [ "$t2_debiased" -nt "$t2_reg_t1" ]; then
     # Full registration command with bspline interpolation.
-    "${ANTSHOME}/antsRegistration" --verbose 1 \
+    "${ANTSPATH}/antsRegistration" --verbose 1 \
         --dimensionality 3 \
         --float 0 \
         --collapse-output-transforms 1 \
@@ -100,7 +103,7 @@ if [ ! -s "$flair_reg_t1" ] ||
     [ ! -s "$flair_reg_t1_tf" ] ||
     [ "$t1_debiased" -nt "$flair_reg_t1" ] ||
     [ "$flair_debiased" -nt "$flair_reg_t1" ]; then
-    "${ANTSHOME}/antsRegistration" --verbose 1 \
+    "${ANTSPATH}/antsRegistration" --verbose 1 \
         --dimensionality 3 \
         --float 0 \
         --collapse-output-transforms 1 \
@@ -138,21 +141,21 @@ if [ ! -s "$t1_denoised" ] ||
     [ "$t2_reg_t1_tf" -nt "$t2_denoised_reg_t1" ] ||
     [ "$flair_reg_t1_tf" -nt "$flair_denoised_reg_t1" ]; then
 
-    "${ANTSHOME}/DenoiseImage" --verbose 1 \
+    "${ANTSPATH}/DenoiseImage" --verbose 1 \
         -d 3 \
         --input-image "$t1_debiased" \
         --noise-model Rician \
         --shrink-factor 1 --patch-radius 1 --search-radius 2 \
         --output "$t1_denoised"
 
-    "${ANTSHOME}/DenoiseImage" --verbose 1 \
+    "${ANTSPATH}/DenoiseImage" --verbose 1 \
         -d 3 \
         --input-image "$t2_debiased" \
         --noise-model Rician \
         --shrink-factor 1 --patch-radius 1 --search-radius 2 \
         --output "$t2_denoised"
 
-    "${ANTSHOME}/DenoiseImage" --verbose 1 \
+    "${ANTSPATH}/DenoiseImage" --verbose 1 \
         -d 3 \
         --input-image "$flair_debiased" \
         --noise-model Rician \
@@ -160,14 +163,14 @@ if [ ! -s "$t1_denoised" ] ||
         --output "$flair_denoised"
 
     # Apply previous registration transform to the denoised T2 and FLAIR images.
-    "${ANTSHOME}/antsApplyTransforms" --verbose 1 \
+    "${ANTSPATH}/antsApplyTransforms" --verbose 1 \
         -d 3 \
         --input "$t2_denoised" \
         --reference-image "$t1_denoised" \
         --transform "$t2_reg_t1_tf" \
         --interpolation BSpline \
         --output "$t2_denoised_reg_t1"
-    "${ANTSHOME}/antsApplyTransforms" --verbose 1 \
+    "${ANTSPATH}/antsApplyTransforms" --verbose 1 \
         -d 3 \
         --input "$flair_denoised" \
         --reference-image "$t1_denoised" \
@@ -249,6 +252,7 @@ if [ ! -s "$lst_lesion_prob_map" ] ||
     rm -vf "${SPM_LST_DIR}/rmflair.nii"
     # Remove temporary uncompressed T1 and FLAIR images.
     rm -vf "$lst_t1" "$lst_flair"
+    rm -vf "${SPM_LST_DIR}/*.mat"
 else
     echo "****** $SUBJ_ID | Already completed SPM LGA******"
 fi
@@ -330,14 +334,93 @@ if [ ! -s "$lh_thal_amg_seg" ] ||
     [ "$thal_amg_t2" -nt "$lh_thal_amg_seg" ] ||
     [ "$thal_amg_t1" -nt "$rh_thal_amg_seg" ] ||
     [ "$thal_amg_t2" -nt "$rh_thal_amg_seg" ]; then
- 
+
     segmentHA_T2.sh $SUBJ_ID "$thal_amg_t2" $THAL_AMG_SEG_ID 1
 
 else
     echo "****** $SUBJ_ID | Already segmented amygdala + hippocampus + thalamus structures******"
 fi
 
+# 11. Create anatomical image mask from the freesurfer brain mask.
+brain_mask="${ANAT_OUT_DIR}/anat_mask.nii.gz"
+fs_brain_mask="${FREESURFER_SAMPLE_DIR}/mri/brainmask.mgz"
+template_vol="$t1_denoised"
+
+if [ ! -s "$brain_mask" ] || [ "$fs_brain_mask" -nt "$brain_mask" ]; then
+    mrgrid --force "$fs_brain_mask" regrid \
+        -template "$template_vol" \
+        -interp nearest \
+        -strides 1,2,3 \
+        "$brain_mask"
+else
+    echo "****** $SUBJ_ID | Already extracted binary brain mask******"
+fi
+# Set the brain mask to the template volume, as the strides are not RAS.
+template_vol="$brain_mask"
+
 # 11. Copy & extract freesurfer segmentations into the final output directory.
+LUT="${FREESURFER_HOME}/luts/FreeSurferColorLUT.txt"
+seg_files=(
+    "aparc.a2009s+aseg.mgz"
+    "aparc.DKTatlas+aseg.mgz"
+    "aparc+aseg.mgz"
+    "aseg.mgz"
+    "brainstemSsLabels.v13.FSvoxelSpace.mgz"
+    "hippoAmygLabels-T1-${THAL_AMG_SEG_ID}.v22.CA.FSvoxelSpace.mgz"
+    "hippoAmygLabels-T1-${THAL_AMG_SEG_ID}.v22.FS60.FSvoxelSpace.mgz"
+    "hippoAmygLabels-T1-${THAL_AMG_SEG_ID}.v22.HBT.FSvoxelSpace.mgz"
+    "wmparc.mgz"
+)
+
+for seg_f in "${seg_files[@]}"; do
+
+    # The hippocampus/amygdala/thalamus segmentation splits the labels into lh and rh,
+    # so they must be joined back together. Luckily, they are mutually exclusive 
+    # positionally.
+    if [[ $seg_f == *"hippoAmygLabels"* ]]; then
+        joined_input_seg="${FREESURFER_SAMPLE_DIR}/mri/_lh+rh.${seg_f}"
+        lh="${FREESURFER_SAMPLE_DIR}/mri/lh.${seg_f}"
+        rh="${FREESURFER_SAMPLE_DIR}/mri/rh.${seg_f}"
+        if [ ! -s "$joined_input_seg" ] ||
+            [ "$lh" -nt "$joined_input_seg" ] ||
+            [ "$rh" -nt "$joined_input_seg" ]; then
+
+            mrcalc --force "$lh" "$rh" -add "$joined_input_seg"
+        fi
+        input_seg_path="$joined_input_seg"
+        # Remove the T1+segmentation id string, as that is confusing and we only
+        # plan on doing one segmentation configuration.
+        seg_name="$(basename "$seg_f" .mgz)"
+        seg_name=${seg_name//"-T1-${THAL_AMG_SEG_ID}"/}
+    else
+        seg_name="$(basename "$seg_f" .mgz)"
+        input_seg_path="${FREESURFER_SAMPLE_DIR}/mri/${seg_f}"
+    fi
+
+    seg_dir="${ANAT_OUT_DIR}/freesurfer_segmentations/${seg_name}"
+    mkdir --parents "$seg_dir"
+    output_seg="${seg_dir}/${seg_name}.nii.gz"
+
+    if [ ! -s "$output_seg" ] || [ "$input_seg_path" -nt "$output_seg" ]; then
+        tmp_seg="${seg_dir}/.tmp.${seg_name}.nii.gz"
+        mrgrid --force -info "$input_seg_path" regrid \
+            -template "$template_vol" \
+            -interp nearest \
+            -strides 1,2,3 \
+            -datatype int32 \
+            "$tmp_seg"
+
+        mkdir --parents "$seg_dir/roi_masks"
+        "${SCRIPT_DIR}/split_freesurfer_segmentations_to_masks.py" \
+            --fs_seg="$tmp_seg" \
+            --lut="$LUT" \
+            --output_dir="$seg_dir/roi_masks"
+        mv "$tmp_seg" "$output_seg"
+    else
+        echo "****** $SUBJ_ID | Already converted and split $seg_name into masks******"
+    fi
+
+done
 
 # 12. Copy and mask all modality images that were bias-corrected into the
 # final output directory.
