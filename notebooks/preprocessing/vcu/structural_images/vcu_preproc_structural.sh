@@ -193,7 +193,7 @@ else
     echo "****** $SUBJ_ID | Already completed image denoising******"
 fi
 
-# 4. Run recon-all with the original T1 and T2, up to and including the creation of
+# 4. Run recon-all with the original T1, up to and including the creation of
 # aseg.auto_no_CC for the initial GM labels and nu-corrected T1 volume.
 FREESURFER_SAMPLE_DIR="${SUBJECTS_DIR}/${SUBJ_ID}"
 pre_lesion_seg="${SUBJECTS_DIR}/${SUBJ_ID}/mri/_prelesion.aseg.auto_noCCseg.mgz"
@@ -202,19 +202,16 @@ if [ ! -s "$pre_lesion_seg" ] ||
     [ "$t2" -nt "$pre_lesion_seg" ]; then
 
     rm -rvf "${SUBJECTS_DIR:?}/${SUBJ_ID:?}"
-    # set +e
+    set +e
     recon-all -autorecon1 -gcareg -canorm -careg -calabel \
         -subjid $SUBJ_ID \
         -i "$t1" \
-        -T2 "$t2" \
-        -T2pial \
         -wsatlas \
         -gcut \
         -3T \
         -expert "$FREESURFER_EXPERT_OPTIONS" \
         -time -openmp $N_PROCS -parallel -threads $N_PROCS
-    # set -e
-
+    set -e
     cp "${SUBJECTS_DIR}/${SUBJ_ID}/mri/aseg.auto_noCCseg.mgz" "$pre_lesion_seg"
 
     # Remove the auto aseg and the presurf aseg, as they will be re-generated later with
@@ -275,6 +272,7 @@ if [ ! -s "$reconall_lga_merged" ] ||
     [ "$pre_lesion_seg" -nt "$reconall_lga_merged" ]; then
 
     rm -fv "$reconall_aseg_nocc_orig_output" "$reconall_aseg_calabel_orig_output"
+
     lga_lesion_mask_fs_format="${FREESURFER_SAMPLE_DIR}/mri/_$(basename "$lst_lesion_mask" .nii.gz)_freesurfer_space.mgz"
     mrgrid "$lst_lesion_mask" regrid -force \
         -template "$pre_lesion_seg" \
@@ -300,7 +298,8 @@ if [ ! -s "$final_fs_seg_output" ] ||
     [ "$manual_calabel_output" -nt "$final_fs_seg_output" ]; then
 
     recon-all -subjid $SUBJ_ID \
-        -autorecon2 -nogcareg -nocanorm -nocareg -nocalabel \
+        -T2 "$t2" \
+        -autorecon2-noaseg \
         -autorecon3 \
         -T2pial \
         -openmp $N_PROCS -parallel -threads $N_PROCS
@@ -347,11 +346,29 @@ fs_brain_mask="${FREESURFER_SAMPLE_DIR}/mri/brainmask.mgz"
 template_vol="$t1_denoised"
 
 if [ ! -s "$brain_mask" ] || [ "$fs_brain_mask" -nt "$brain_mask" ]; then
-    mrgrid --force "$fs_brain_mask" regrid \
+
+    # Resample to match the native subject FOV (should only involve cropping, no
+    # interpolation from freesurfer -> native anatomical space).
+    # Then threshold the mask, and fill in small holes.
+    mrgrid "$fs_brain_mask" regrid \
         -template "$template_vol" \
         -interp nearest \
         -strides 1,2,3 \
-        "$brain_mask"
+        -datatype uint8 \
+        - |
+        mrthreshold \
+            - \
+            -abs 0.0001 \
+            - |
+        maskfilter \
+            - \
+            dilate -npass 2 \
+            - |
+        maskfilter --force \
+            - \
+            erode -npass 2 \
+            "$brain_mask"
+
 else
     echo "****** $SUBJ_ID | Already extracted binary brain mask******"
 fi
@@ -375,7 +392,7 @@ seg_files=(
 for seg_f in "${seg_files[@]}"; do
 
     # The hippocampus/amygdala/thalamus segmentation splits the labels into lh and rh,
-    # so they must be joined back together. Luckily, they are mutually exclusive 
+    # so they must be joined back together. Luckily, they are mutually exclusive
     # positionally.
     if [[ $seg_f == *"hippoAmygLabels"* ]]; then
         joined_input_seg="${FREESURFER_SAMPLE_DIR}/mri/_lh+rh.${seg_f}"
@@ -419,10 +436,47 @@ for seg_f in "${seg_files[@]}"; do
     else
         echo "****** $SUBJ_ID | Already converted and split $seg_name into masks******"
     fi
-
 done
+
+final_lesion_mask="${ANAT_OUT_DIR}/ms_lesion_mask.nii.gz"
+source_mask="${ANAT_OUT_DIR}/freesurfer_segmentations/aseg/roi_masks/0${FS_LESION_LABEL}_Lesion.nii.gz"
+
+cp --archive --update "$source_mask" "$final_lesion_mask"
 
 # 12. Copy and mask all modality images that were bias-corrected into the
 # final output directory.
+vol_files=(
+    "$t1_denoised"
+    "$t2_denoised_reg_t1"
+    "$flair_denoised_reg_t1"
+)
+dest_files=(
+    "${ANAT_OUT_DIR}/t1w_brain.nii.gz"
+    "${ANAT_OUT_DIR}/t2w_brain.nii.gz"
+    "${ANAT_OUT_DIR}/flair_brain.nii.gz"
+)
+for ((i = 0; i < ${#vol_files[@]}; i++)); do
+
+    vol_f="${vol_files[$i]}"
+    dest_f="${dest_files[$i]}"
+
+    if [ ! -s "$dest_f" ] || [ "$vol_f" -nt "$dest_f" ] || [ "$brain_mask" -nt "$dest_f" ]; then
+        mrcalc \
+            "$vol_f" \
+            "$brain_mask" \
+            -mult \
+            - |
+            mrconvert --force \
+                - \
+                -strides "$template_vol" \
+                "$dest_f"
+    else
+        echo "****** $SUBJ_ID | Already masked volume $(basename "$dest_f" .nii.gz) ******"
+    fi
+
+done
 
 # Finally, copy this script and software details to the subject directory.
+code_dir="$(realpath "${SUBJECTS_DIR}/..")"/code/structural_images/
+mkdir --parents "$code_dir"
+cp --archive --update "${SCRIPT_DIR}"/* "$code_dir"
