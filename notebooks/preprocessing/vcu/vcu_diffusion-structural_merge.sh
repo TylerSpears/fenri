@@ -220,24 +220,27 @@ mrconvert -info \
     -force
 mrconvert -info \
     "$fivett_seg" \
-    -coord 3 0 \
+    -coord 3 3 \
     -axes 0,1,2 \
     "${fivett_seg_dir}/roi_masks/csf.nii.gz" \
     -force
 mrconvert -info \
     "$fivett_seg" \
-    -coord 3 0 \
+    -coord 3 4 \
     -axes 0,1,2 \
     "${fivett_seg_dir}/roi_masks/pathological_tissue.nii.gz" \
     -force
 
-# Copy the freesurfer lesion mask into the diffusion root directory.
+# Transform the lesion mask into diffusion space.
 out_lesion_mask="${dwi_out_dir}/ms_lesion_mask.nii.gz"
-# Take one of the already registered labels, rather than transform the lesion map
-# itself.
-source_mask="${dwi_roi_dir}/aseg/roi_masks/0${FS_LESION_LABEL}_Lesion.nii.gz"
-
-cp --archive --update "$source_mask" "$out_lesion_mask"
+source_mask="${anat_dir}/ms_lesion_mask.nii.gz"
+mrtransform -force -info \
+    "$source_mask" \
+    -linear "$anat2dwi_tf_mrtrix" \
+    -template "$mean_b0" \
+    -strides "$strides_vol" \
+    -interp nearest \
+    "$out_lesion_mask"
 
 # 6. Apply the improved dwi mask onto the dwi itself, and all derived parameter maps.
 mrcalc -info \
@@ -265,6 +268,33 @@ for param_group in "$src_param_maps"/*; do
     for vol in "$param_group"/*.nii.gz; do
         vol_name="$(basename "$vol")"
 
+        # Remove subj id from the filename, if present.
+        if [[ "$vol_name" == "$SUBJ_ID"* ]]; then
+            vol_name=${vol_name//"${SUBJ_ID}_"/}
+        fi
+
+        # Rename the noddi parameters to have more readable names.
+        if [[ "$group_name" == "noddi" ]]; then
+            case "$vol_name" in
+            "partial_volume_0"*)
+                vol_name="partial_volume_fraction_csf-isotropic-ball.nii.gz"
+                ;;
+            "partial_volume_1"*)
+                vol_name="partial_volume_fraction_wm-intra-cellular-Watson-bundle.nii.gz"
+                ;;
+            "SD1WatsonDistributed_1_partial_volume_0"*)
+                vol_name="normalized_partial_volume_fraction_intra-axonal-stick_within-wm-Watson-bundle.nii.gz"
+                ;;
+            "SD1WatsonDistributed_1_SD1Watson_1_mu"*)
+                vol_name="wm-Watson-bundle_mu.nii.gz"
+                ;;
+            "SD1WatsonDistributed_1_SD1Watson_1_odi"*)
+                vol_name="wm-Watson-bundle_odi.nii.gz"
+                ;;
+            esac
+            echo
+        fi
+
         mrcalc -info \
             "$vol" \
             "$dwi_mask" \
@@ -278,17 +308,11 @@ for param_group in "$src_param_maps"/*; do
     done
 done
 
-# mrtransform anat_t1w_space/anat_space_mask.nii.gz -linear t1w2diffusion_mrtrix_affine.txt -template mean_b0.nii.gz -interp linear -
-# | mrthreshold - -abs 0.1 - | maskfilter - dilate -npass 1 anat_mask_dwi-space.nii.gz
+# 7. Copy this script into the subject's code directory.
+code_dir="${SUBJ_ROOT_DIR}/code"
+mkdir --parents "$code_dir"
+cp --archive --update "$(realpath "$0")" "$code_dir/"
+cp --archive --update "${SCRIPT_DIR}/"*parameter_maps.* "${SCRIPT_DIR}/vcu_preproc.py" "$code_dir/"
 
-# ==========
-# dwiextract ../diffusion/preproc/09_final/P_03_dwi.nii.gz -fslgrad ../diffusion/preproc/09_final/P_03.bvec
-# ../diffusion/preproc/09_final/P_03.bval -bzero - | mrmath - mean -axis 3 mean_b0.nii.gz
-# mrconvert -force mean_b0.nii.gz -strides 1,2,3 mean_b0.nii.gz
-
-# Extract and convert freesurfer's brain mask.
-# mrconvert ../freesurfer/P_03/mri/brainmask.mgz -strides 1,2,3 - | mrthreshold - -abs 0.001 fs_mask.nii.gz
-# Should just be a crop, with no real interpolation necessary.
-# mrgrid freesurfer_t1w_filled_mask.nii.gz regrid -template ../freesurfer/pre_freesurfer/03_denoise/t1w_n4_denoise.nii.gz -interp nearest anat_space_mask.nii.gz
-# Fill holes in the freesurfer mask.
-# maskfilter freesurfer_t1w_mask.nii.gz dilate -npass 2 - | maskfilter - erode -npass 2 freesurfer_t1w_filled_mask.nii.gz
+# Delete the tmp directory.
+rm -rvf "$tmp_dir"

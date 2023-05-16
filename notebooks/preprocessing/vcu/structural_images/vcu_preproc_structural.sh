@@ -15,7 +15,8 @@ export OMP_NUM_THREADS=$N_PROCS
 
 LGA_KAPPA="0.25"
 LGA_PROB_THRESH="0.25"
-FS_LESION_LABEL="99"
+# Set lesion labels to the "WM-Hypointensity" value in freesurfer.
+FS_LESION_LABEL="77"
 
 export SUBJECTS_DIR="$(pwd)/${SUBJ_ID}/freesurfer"
 PRE_FS_DIR="${SUBJECTS_DIR}/pre_freesurfer"
@@ -354,7 +355,6 @@ if [ ! -s "$brain_mask" ] || [ "$fs_brain_mask" -nt "$brain_mask" ]; then
         -template "$template_vol" \
         -interp nearest \
         -strides 1,2,3 \
-        -datatype uint8 \
         - |
         mrthreshold \
             - \
@@ -364,10 +364,15 @@ if [ ! -s "$brain_mask" ] || [ "$fs_brain_mask" -nt "$brain_mask" ]; then
             - \
             dilate -npass 2 \
             - |
-        maskfilter --force \
+        maskfilter \
             - \
             erode -npass 2 \
-            "$brain_mask"
+            - |
+        mrconvert \
+            - \
+            -datatype uint8 \
+            "$brain_mask" \
+            -force
 
 else
     echo "****** $SUBJ_ID | Already extracted binary brain mask******"
@@ -439,7 +444,8 @@ for seg_f in "${seg_files[@]}"; do
 done
 
 final_lesion_mask="${ANAT_OUT_DIR}/ms_lesion_mask.nii.gz"
-source_mask="${ANAT_OUT_DIR}/freesurfer_segmentations/aseg/roi_masks/0${FS_LESION_LABEL}_Lesion.nii.gz"
+source_mask="$lst_lesion_mask"
+# source_mask="${ANAT_OUT_DIR}/freesurfer_segmentations/aseg/roi_masks/0${FS_LESION_LABEL}_Lesion.nii.gz"
 
 cp --archive --update "$source_mask" "$final_lesion_mask"
 
