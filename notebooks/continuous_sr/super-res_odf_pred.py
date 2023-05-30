@@ -165,74 +165,74 @@ p.test.subj_ids = list(
     map(
         str,
         [
-            100307,
-            104820,
-            110613,
-            118730,
-            121618,
-            122317,
-            122822,
-            123925,
-            124422,
-            127933,
-            131924,
-            133827,
-            144428,
-            145127,
-            147737,
-            149236,
-            154532,
-            164939,
-            165032,
-            169545,
-            173536,
-            173940,
-            178849,
-            179346,
-            180836,
-            185038,
-            195647,
-            195849,
-            202113,
-            204016,
-            275645,
-            293748,
-            298051,
-            300618,
-            353740,
-            385450,
-            419239,
-            445543,
-            465852,
-            495255,
-            500222,
-            510225,
-            518746,
-            529549,
-            645450,
-            654350,
+            # 100307,
+            # 104820,
+            # 110613,
+            # 118730,
+            # 121618,
+            # 122317,
+            # 122822,
+            # 123925,
+            # 124422,
+            # 127933,
+            # 131924,
+            # 133827,
+            # 144428,
+            # 145127,
+            # 147737,
+            # 149236,
+            # 154532,
+            # 164939,
+            # 165032,
+            # 169545,
+            # 173536,
+            # 173940,
+            # 178849,
+            # 179346,
+            # 180836,
+            # 185038,
+            # 195647,
+            # 195849,
+            # 202113,
+            # 204016,
+            # 275645,
+            # 293748,
+            # 298051,
+            # 300618,
+            # 353740,
+            # 385450,
+            # 419239,
+            # 445543,
+            # 465852,
+            # 495255,
+            # 500222,
+            # 510225,
+            # 518746,
+            # 529549,
+            # 645450,
+            # 654350,
             749058,
-            767464,
-            800941,
-            803240,
-            812746,
-            825048,
-            843151,
-            849971,
-            896778,
-            929464,
-            933253,
-            965367,
-            987074,
-            993675,
-            994273,
-            581450,
-            251833,
-            191336,
-            126426,
-            859671,
-            200210,
-            360030,
+            # 767464,
+            # 800941,
+            # 803240,
+            # 812746,
+            # 825048,
+            # 843151,
+            # 849971,
+            # 896778,
+            # 929464,
+            # 933253,
+            # 965367,
+            # 987074,
+            # 993675,
+            # 994273,
+            # 581450,
+            # 251833,
+            # 191336,
+            # 126426,
+            # 859671,
+            # 200210,
+            # 360030,
         ],
     )
 )
@@ -242,7 +242,7 @@ p.model_weight_f = str(
 # p.model_weight_f = str(
 #     Path(p.tmp_results_dir) / "2023-02-09T21_09_47/state_dict_epoch_174_step_35000.pt"
 # )
-p.target_vox_size = 1.25
+p.target_vox_size = 2.0
 ###############################################
 # Network/model parameters.
 p.encoder = dict(
@@ -283,11 +283,12 @@ except:
     print("WARNING: Config file not loaded")
     pass
 
-
 # Remove the default_box behavior now that params have been fully read in.
 _p = Box(default_box=False)
 _p.merge_update(p)
 p = _p
+
+print("Voxel size: ", p.target_vox_size)
 
 # %% [markdown]
 # ## Data Loading
@@ -369,8 +370,11 @@ print("=" * 10)
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-tmp_res_dir = Path(p.tmp_results_dir) / "_".join([ts, "super_res_odf_test"])
-tmp_res_dir.mkdir(parents=True)
+# tmp_res_dir = Path(p.tmp_results_dir) / "_".join([ts, "super_res_odf_test"])
+tmp_res_dir = (
+    Path(p.tmp_results_dir) / "2023-05-24T12_03_39__super_res_odf_multi-res_viz"
+)
+tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
 test_dataloader = monai.data.DataLoader(
@@ -605,6 +609,7 @@ class ReducedDecoder(torch.nn.Module):
         rel_norm_context_coord = (rel_context_coord - -context_vox_size) / (
             2 * context_vox_size
         )
+        rel_norm_context_coord = torch.round_(rel_norm_context_coord, decimals=5)
         assert (rel_norm_context_coord >= 0).all() and (
             rel_norm_context_coord <= 1.0
         ).all()
@@ -840,23 +845,10 @@ for batch_dict in test_dataloader:
             x_coords[0, 2][:, :, -1].unique()[0],
         ]
     )
-    super_z = torch.arange(lower_lim[0], upper_lim[0], step=p.target_vox_size).to(
-        x_coords
-    )
-    super_y = torch.arange(lower_lim[1], upper_lim[1], step=p.target_vox_size).to(
-        x_coords
-    )
-    super_x = torch.arange(lower_lim[2], upper_lim[2], step=p.target_vox_size).to(
-        x_coords
-    )
-
-    super_zzz, super_yyy, super_xxx = torch.meshgrid(
-        [super_z, super_y, super_x], indexing="ij"
-    )
-    super_coords = torch.stack([super_zzz, super_yyy, super_xxx], dim=0)[None]
-    super_vol_shape = tuple(super_coords.shape[2:])
 
     super_vox_size = torch.ones_like(x_vox_size) * p.target_vox_size
+    target_fov_shape = torch.floor(torch.abs(upper_lim - lower_lim) / super_vox_size)
+    target_fov_shape = tuple(target_fov_shape.flatten().int().cpu().numpy().tolist())
 
     vox2acpc = batch_dict["affine_lrvox2acpc"][0].cpu()
     scale = (p.target_vox_size / x_vox_size)[0].cpu()
@@ -864,18 +856,72 @@ for batch_dict in test_dataloader:
     scale = torch.diag_embed(scale).to(vox2acpc).cpu()
     new_aff = vox2acpc @ scale
     new_aff = new_aff.numpy()
+    super_coords = pitn.affine.affine_coordinate_grid(
+        torch.from_numpy(new_aff).cpu().to(torch.float32), target_fov_shape
+    )
+    # ! Changing only for a slice viz.
+    z = super_coords[..., 2].flatten()
+    i_dz = torch.argmin(torch.abs(z - 8.625)).flatten()[0].item()
+    d_z = z[i_dz] - 8.625
+    d_z = d_z.item()
+    super_coords[..., 2] -= d_z
+    new_aff[2, 3] -= d_z
+    #!#########
+    # print("Resample fodf coeffs")
+    # pred_super_fodf = pitn.affine.sample_vol(
+    #     x.cpu(), super_coords.cpu(), vox2acpc, mode="bilinear", align_corners=True
+    # )
+
+    # super_z = torch.arange(lower_lim[0], upper_lim[0], step=p.target_vox_size).to(
+    #     x_coords
+    # )
+    # ! Changing only for a slice viz.
+    # i_dz = torch.where(
+    #     torch.abs(super_z - 8.625) == torch.min(torch.abs(super_z - 8.625))
+    # )[0][0].item()
+    # d_z = super_z[i_dz] - 8.625
+    # d_z = d_z.item()
+    # super_z = super_z - d_z
+    #!#########
+
+    # super_y = torch.arange(lower_lim[1], upper_lim[1], step=p.target_vox_size).to(
+    #     x_coords
+    # )
+    # super_x = torch.arange(lower_lim[2], upper_lim[2], step=p.target_vox_size).to(
+    #     x_coords
+    # )
+
+    # super_zzz, super_yyy, super_xxx = torch.meshgrid(
+    #     [super_z, super_y, super_x], indexing="ij"
+    # )
+    # super_coords = torch.stack([super_zzz, super_yyy, super_xxx], dim=0)[None]
+    # super_vol_shape = tuple(super_coords.shape[2:])
+
+    # super_vox_size = torch.ones_like(x_vox_size) * p.target_vox_size
+
+    # vox2acpc = batch_dict["affine_lrvox2acpc"][0].cpu()
+    # scale = (p.target_vox_size / x_vox_size)[0].cpu()
+    # scale = torch.cat([scale, scale.new_ones(1)]).cpu()
+    # scale = torch.diag_embed(scale).to(vox2acpc).cpu()
+    # new_aff = vox2acpc @ scale
+    # new_aff = new_aff.numpy()
+    # ! Changing only for a slice viz.
+    # new_aff[2, 3] -= d_z
+    #!#########
 
     with torch.no_grad():
+
+        sc = einops.rearrange(super_coords, "x y z d -> 1 d x y z")
         ic("Starting net inference.")
         ctx_v = encoder(x)
 
         # Whole-volume inference is memory-prohibitive, so use a sliding
         # window inference method on the encoded volume.
         pred_super_fodf = monai.inferers.sliding_window_inference(
-            super_coords.cpu(),
-            # roi_size=(48, 48, 48),
+            sc.cpu(),
+            # roi_size=(36, 36, 36),
             roi_size=(96, 96, 96),
-            sw_batch_size=super_coords.shape[0],
+            sw_batch_size=sc.shape[0],
             predictor=lambda q: decoder(
                 query_coord=q.to(device),
                 context_v=ctx_v,
@@ -886,29 +932,42 @@ for batch_dict in test_dataloader:
             padding_mode="replicate",
         )
     ic("Finished network inference.")
-    mask_coords = einops.rearrange(super_coords, "b coord z y x -> b (z y x) coord")
-    super_mask = pitn.affine.sample_3d(
-        x_mask.cpu(), mask_coords.cpu(), vox2acpc, mode="nearest", align_corners=True
+    # mask_coords = einops.rearrange(super_coords, "b coord z y x -> b (z y x) coord")
+    # super_mask = pitn.affine.sample_3d(
+    #     x_mask.cpu(), mask_coords.cpu(), vox2acpc, mode="nearest", align_corners=True
+    # )
+    # super_mask = (
+    #     einops.rearrange(
+    #         super_mask,
+    #         "b (z y x) c -> b z y x c",
+    #         z=super_vol_shape[0],
+    #         y=super_vol_shape[1],
+    #         x=super_vol_shape[2],
+    #     )
+    #     .squeeze()
+    #     .cpu()
+    #     .to(torch.int8)
+    #     .numpy()
+    # )
+
+    super_mask = pitn.affine.sample_vol(
+        x_mask.cpu(), super_coords.cpu(), vox2acpc, mode="nearest", align_corners=True
     )
-    super_mask = (
-        einops.rearrange(
-            super_mask,
-            "b (z y x) c -> b z y x c",
-            z=super_vol_shape[0],
-            y=super_vol_shape[1],
-            x=super_vol_shape[2],
-        )
-        .squeeze()
-        .cpu()
-        .to(torch.int8)
-        .numpy()
+    pred_super_fodf = pred_super_fodf * super_mask.bool()
+    superres_pred = pred_super_fodf.detach().cpu().squeeze()
+    superres_pred = einops.rearrange(
+        superres_pred,
+        "c x y z -> x y z c",
     )
-    superres_pred = pred_super_fodf.cpu().numpy()
-    superres_pred = superres_pred * super_mask
-    odf_coeffs = np.moveaxis(superres_pred, 1, -1).squeeze()
+    superres_pred = superres_pred.numpy().astype(np.float32).squeeze()
+
+    super_mask = super_mask.squeeze().cpu().to(torch.int8).numpy()
+
+    # superres_pred = pred_super_fodf.cpu().numpy()
+    # superres_pred = superres_pred * super_mask
     ic("Saving super-res fodf coeffs.")
     nib.save(
-        nib.Nifti1Image(odf_coeffs, affine=new_aff),
+        nib.Nifti1Image(superres_pred, affine=new_aff),
         tmp_res_dir / f"{subj_id}_odf-coeff_inr-super-res_{p.target_vox_size}mm.nii.gz",
     )
     ic("Saving mask.")
@@ -918,7 +977,7 @@ for batch_dict in test_dataloader:
     )
 
 # %%
-exit()
+# exit()
 
 # %% [markdown]
 # ### Tri-Linear Interp
@@ -948,24 +1007,9 @@ for batch_dict in test_dataloader:
             x_coords[0, 2][:, :, -1].unique()[0],
         ]
     )
-    super_z = torch.arange(lower_lim[0], upper_lim[0], step=p.target_vox_size).to(
-        x_coords
-    )
-    super_y = torch.arange(lower_lim[1], upper_lim[1], step=p.target_vox_size).to(
-        x_coords
-    )
-    super_x = torch.arange(lower_lim[2], upper_lim[2], step=p.target_vox_size).to(
-        x_coords
-    )
-
-    super_zzz, super_yyy, super_xxx = torch.meshgrid(
-        [super_z, super_y, super_x], indexing="ij"
-    )
-    super_coords = torch.stack([super_zzz, super_yyy, super_xxx], dim=-1)[None]
-    super_vol_shape = tuple(super_coords.shape[:-1])
-    super_coords = einops.rearrange(super_coords, "b z y x coord -> b (z y x) coord")
-
     super_vox_size = torch.ones_like(x_vox_size) * p.target_vox_size
+    target_fov_shape = torch.floor(torch.abs(upper_lim - lower_lim) / super_vox_size)
+    target_fov_shape = tuple(target_fov_shape.flatten().int().cpu().numpy().tolist())
 
     vox2acpc = batch_dict["affine_lrvox2acpc"][0].cpu()
     scale = (p.target_vox_size / x_vox_size)[0].cpu()
@@ -973,37 +1017,36 @@ for batch_dict in test_dataloader:
     scale = torch.diag_embed(scale).to(vox2acpc).cpu()
     new_aff = vox2acpc @ scale
     new_aff = new_aff.numpy()
+    super_coords = pitn.affine.affine_coordinate_grid(
+        torch.from_numpy(new_aff).cpu().to(torch.float32),
+        target_fov_shape
+        # torch.from_numpy(new_aff).to(x_coords), target_fov_shape
+    )
+    # ! Changing only for a slice viz.
+    z = super_coords[..., 2].flatten()
+    i_dz = torch.argmin(torch.abs(z - 8.625)).flatten()[0].item()
+    d_z = z[i_dz] - 8.625
+    d_z = d_z.item()
+    super_coords[..., 2] -= d_z
+    new_aff[2, 3] -= d_z
+    #!#########
+
     print("Resample fodf coeffs")
-    pred_super_fodf = pitn.affine.sample_3d(
+    pred_super_fodf = pitn.affine.sample_vol(
         x.cpu(), super_coords.cpu(), vox2acpc, mode="bilinear", align_corners=True
     )
-    super_mask = pitn.affine.sample_3d(
+    super_mask = pitn.affine.sample_vol(
         x_mask.cpu(), super_coords.cpu(), vox2acpc, mode="nearest", align_corners=True
     )
     pred_super_fodf = pred_super_fodf * super_mask.bool()
-    superres_pred = pred_super_fodf.detach().cpu()
+    superres_pred = pred_super_fodf.detach().cpu().squeeze()
     superres_pred = einops.rearrange(
         superres_pred,
-        "b (z y x) c -> b z y x c",
-        z=super_vol_shape[1],
-        y=super_vol_shape[2],
-        x=super_vol_shape[3],
+        "c x y z -> x y z c",
     )
     superres_pred = superres_pred.numpy().astype(np.float32).squeeze()
 
-    super_mask = (
-        einops.rearrange(
-            super_mask,
-            "b (z y x) c -> b z y x c",
-            z=super_vol_shape[1],
-            y=super_vol_shape[2],
-            x=super_vol_shape[3],
-        )
-        .squeeze()
-        .cpu()
-        .to(torch.int8)
-        .numpy()
-    )
+    super_mask = super_mask.squeeze().cpu().to(torch.int8).numpy()
     nib.save(
         nib.Nifti1Image(superres_pred, affine=new_aff),
         tmp_res_dir

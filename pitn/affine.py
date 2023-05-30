@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import einops
 import numpy as np
@@ -8,6 +8,31 @@ import torch
 import torch.nn.functional as F
 
 import pitn
+
+
+def affine_coordinate_grid(
+    affine_vox2b: torch.Tensor, vox_fov_shape: Union[torch.Tensor, int, Tuple[int]]
+) -> torch.Tensor:
+
+    if torch.is_tensor(vox_fov_shape):
+        fov_shape = tuple(vox_fov_shape.shape[-3:])
+    elif isinstance(vox_fov_shape, int):
+        fov_shape = (vox_fov_shape,) * 3
+    else:
+        fov_shape = tuple(vox_fov_shape)
+
+    vox_coords = torch.stack(
+        torch.meshgrid(
+            *[
+                torch.arange(d, dtype=affine_vox2b.dtype, device=affine_vox2b.device)
+                for d in fov_shape
+            ],
+            indexing="ij",
+        ),
+        dim=-1,
+    )
+
+    return transform_coords(vox_coords, affine_vox2b)
 
 
 # world_extent = (affine[:3, :3] @ vox_grid.T) + (affine[:3, 3:4])
@@ -286,7 +311,7 @@ def sample_3d(
     align_corners=True,
     override_out_of_bounds_val: Optional[float] = None,
 ) -> torch.Tensor:
-
+    #!DEPRECATED
     if vol.ndim == 3:
         v = vol[None, None]
     elif vol.ndim == 4:
