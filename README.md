@@ -15,7 +15,7 @@ mamba create --name pitn --file pitn.txt
 conda activate pitn
 # Install pip packages, try to constrain by the anaconda package versions, even if pip
 # does not detect some of them.
-pip install --requirement requirements.txt --constraints pitn_pip_constraints.txt
+pip install --requirement requirements.txt --constraint pitn_pip_constraints.txt
 ```
 
 See the `environment/` directory for more information regarding package versions.

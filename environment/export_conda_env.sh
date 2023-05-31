@@ -53,3 +53,23 @@ conda list --no-pip --export --prefix "$ACTIVE_PREFIX" \
     | sed -E '/^_.*/d' \
     | sed -E 's/([[:alnum:]\!_\-\+\.]+)\=([[:alnum:]\!_\-\+\.]+)\=([[:alnum:]\!_\-\+\.]+)$/\1==\2/' \
     > "${ACTIVE_CONDA_ENV}_pip_constraints.txt"
+
+# Save conda env revision history, only updating when necessary.
+DEST_REVISION_FILE="${ACTIVE_CONDA_ENV}_revision_history.txt"
+conda list --revisions > "_tmp_history.txt"
+if [ ! -s "$DEST_REVISION_FILE" ]; then
+    cp --archive --force "_tmp_history.txt" "$DEST_REVISION_FILE"
+else
+    n_unique_revs=$(md5sum "_tmp_history.txt" "$DEST_REVISION_FILE" | cut -d" " -f1 | uniq -c | wc -l)
+    if [ $n_unique_revs -ne 1 ]; then
+        cp --archive --force "_tmp_history.txt" "$DEST_REVISION_FILE"
+    fi
+fi
+rm -f "_tmp_history.txt"
+
+# Save complete pip inspection output, for possible future use.
+# Cut some fields that add to the file size.
+pip inspect --quiet --no-color --no-input |
+    jq 'del(.installed[].metadata.description)' |
+    jq 'del(.installed[].metadata.license)' \
+    > "${ACTIVE_CONDA_ENV}_env_inspection.json"
