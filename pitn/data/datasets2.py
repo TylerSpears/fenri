@@ -6,12 +6,25 @@ import itertools
 import math
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Hashable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Hashable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 import einops
 import monai
 import nibabel as nib
 import numpy as np
+import scipy
 import skimage
 import torch
 from monai.config import DtypeLike, KeysCollection, SequenceStr
@@ -30,26 +43,65 @@ from monai.utils import (
 import pitn
 
 
+class DWIDataDict(TypedDict):
+    dwi: torch.Tensor
+    bval: torch.Tensor
+    bvec: torch.Tensor
+
+
+def sub_select_dwi_from_bval(
+    dwi: torch.Tensor,
+    bval: torch.Tensor,
+    bvec: torch.Tensor,
+    shells_to_remove: list[float] = list(),
+    within_shell_idx_to_keep: dict[float, tuple[int]] = dict(),
+    bval_round_decimals: int = -2,
+) -> DWIDataDict:
+
+    keep_mask = torch.ones_like(bval).bool()
+
+    shells = torch.round(bval, decimals=bval_round_decimals)
+
+    for s in shells_to_remove:
+        keep_mask[torch.isclose(shells, shells.new_tensor(float(s)))] = False
+
+    for s, idx_to_keep in within_shell_idx_to_keep.items():
+        # Sub-select only bvals in this shell.
+        shell_mask = torch.isclose(shells, shells.new_tensor(float(s))).bool()
+        within_shell_idx_to_keep = bval.new_tensor(tuple(idx_to_keep)).long()
+        within_shell_mask = shell_mask[shell_mask]
+        within_shell_mask[within_shell_idx_to_keep] = False
+        within_shell_mask_to_keep = ~within_shell_mask
+        # Merge current running mask with the sub-selected shell.
+        keep_mask[shell_mask] = keep_mask[shell_mask] * within_shell_mask_to_keep
+
+    return {"dwi": dwi[keep_mask], "bval": bval[keep_mask], "bvec": bvec[:, keep_mask]}
+
+
 class HCPfODFINRDataset(monai.data.Dataset):
 
     _SAMPLE_KEYS = (
         "subj_id",
-        "lr_dwi",
-        "lr_mask",
-        "lr_bval",
-        "lr_bvec",
-        "lr_fodf",
-        "lr_fivett",
-        "lr_wm_mask",
-        "lr_gm_mask",
-        "lr_csf_mask",
-        "affine_lr_vox2world",
+        # "lr_dwi",
+        # "lr_mask",
+        # "lr_bval",
+        # "lr_bvec",
+        # "lr_fodf",
+        # "lr_fivett",
+        # "lr_wm_mask",
+        # "lr_gm_mask",
+        # "lr_csf_mask",
+        # "affine_lr_vox2world",
+        "dwi",
+        "bval",
+        "bvec",
         "fodf",
-        "mask",
+        "brain_mask",
         "fivett",
         "wm_mask",
         "gm_mask",
         "csf_mask",
+        "sampling_mask",
         "affine_vox2world",
     )
 
@@ -58,31 +110,22 @@ class HCPfODFINRDataset(monai.data.Dataset):
         subj_ids,
         dwi_root_dir: Path,
         fodf_root_dir: Path,
-        lr_dwi_root_dir: Path,
-        lr_fodf_root_dir: Path,
         transform=None,
     ):
         self.subj_ids = list(subj_ids)
         self.dwi_root_dir = Path(dwi_root_dir).resolve()
         self.fodf_root_dir = Path(fodf_root_dir).resolve()
-        self.lr_dwi_root_dir = Path(lr_dwi_root_dir).resolve()
-        self.lr_fodf_root_dir = Path(lr_fodf_root_dir).resolve()
         data = list()
         for sid in self.subj_ids:
             hcp_data = self.get_hcp_subj_dict(sid, self.dwi_root_dir)
             fodf_data = self.get_fodf_subj_dict(sid, self.fodf_root_dir)
-            lr_data = self.get_lr_hcp_subj_dict(sid, self.lr_dwi_root_dir)
-            lr_fodf_data = self.get_fodf_subj_dict(sid, self.lr_fodf_root_dir)
             sid_data = dict(
                 subj_id=hcp_data["subj_id"],
-                lr_dwi=lr_data["dwi"],
-                lr_fodf=lr_fodf_data["fodf"],
-                lr_mask=lr_data["mask"],
-                lr_fivett=lr_fodf_data["fivett"],
-                lr_bval=lr_data["bval"],
-                lr_bvec=lr_data["bvec"],
+                dwi=hcp_data["dwi"],
+                bval=hcp_data["bval"],
+                bvec=hcp_data["bvec"],
                 fodf=fodf_data["fodf"],
-                mask=fodf_data["mask"],
+                brain_mask=fodf_data["mask"],
                 fivett=fodf_data["fivett"],
             )
             data.append(sid_data)
@@ -150,15 +193,18 @@ class HCPfODFINRDataset(monai.data.Dataset):
         return data
 
     @staticmethod
-    def default_pre_sample_tf(mask_dilate_radius: int, skip_sample_mask=False):
+    def default_pre_sample_tf(
+        sample_mask_key="wm_mask",
+        mask_dilate_radius: int = 0,
+        bval_sub_sample_fn: Optional[
+            Callable[[torch.Tensor, torch.Tensor, torch.Tensor], DWIDataDict]
+        ] = None,
+    ):
 
         VOL_KEYS = (
-            "lr_dwi",
-            "lr_mask",
-            "lr_fodf",
-            "lr_fivett",
+            "dwi",
             "fodf",
-            "mask",
+            "brain_mask",
             "fivett",
         )
 
@@ -177,11 +223,11 @@ class HCPfODFINRDataset(monai.data.Dataset):
                 simple_keys=True,
             )
         )
-
-        grad_file_reader = monai.transforms.Lambdad(
-            ("lr_bval", "lr_bvec"), lambda f: np.loadtxt(str(f)), overwrite=True
+        tfs.append(
+            monai.transforms.Lambdad(
+                ("bval", "bvec"), lambda f: np.loadtxt(str(f)), overwrite=True
+            )
         )
-        tfs.append(grad_file_reader)
 
         # Data conversion
         tfs.append(
@@ -190,17 +236,48 @@ class HCPfODFINRDataset(monai.data.Dataset):
                 track_meta=True,
             )
         )
-        tfs.append(monai.transforms.ToTensord(("lr_bval", "lr_bvec"), track_meta=False))
+        # Crop all volumes to match the fodf, as the fodf has been mask-cropped.
         tfs.append(
-            monai.transforms.CastToTyped(
-                ("lr_mask", "lr_fivett", "mask", "fivett"), dtype=torch.uint8
+            monai.transforms.ResampleToMatchd(
+                ["dwi", "brain_mask", "fivett"],
+                key_dst="fodf",
+                align_corners=True,
+                mode="nearest",
+                dtype=[torch.float32, torch.uint8, torch.uint8],
             )
         )
+
+        tfs.append(monai.transforms.ToTensord(("bval", "bvec"), track_meta=False))
+
+        # Utility function to flip the X-axis of the bvecs, which is what happens to
+        # the DWIs themselves when loading HCP data (LAS) with nibabel's "canonical"
+        # orientation setting (RAS).
+        def bvec_las2ras(bvec):
+            aff = torch.eye(4).to(bvec)
+            aff[0, 0] *= -1
+            new_bvec = pitn.affine.transform_coords(bvec.T, aff).T
+            return new_bvec
+
+        tfs.append(monai.transforms.Lambdad("bvec", bvec_las2ras, overwrite=True))
+        tfs.append(
+            monai.transforms.CastToTyped(("brain_mask", "fivett"), dtype=torch.uint8)
+        )
+
+        if bval_sub_sample_fn is not None:
+            tfs.append(
+                monai.transforms.adaptor(
+                    bval_sub_sample_fn,
+                    {"dwi": "dwi", "bval": "bval", "bvec": "bvec"},
+                    inputs=["dwi", "bval", "bvec"],
+                )
+            )
+        # Re-cast the bvec and bval into non meta-tensors.
+        tfs.append(monai.transforms.ToTensord(("bval", "bvec"), track_meta=False))
 
         # Extract different tissue masks according to the 5tt designations.
         tfs.append(
             monai.transforms.SplitDimd(
-                keys=("lr_fivett", "fivett"),
+                keys=("fivett",),
                 output_postfixes=(
                     "cort_gm",
                     "sub_cort_gm",
@@ -209,29 +286,12 @@ class HCPfODFINRDataset(monai.data.Dataset):
                     "pathologic_tissue",
                 ),
                 dim=0,
-                keepdim=False,
+                keepdim=True,
                 update_meta=True,
                 list_output=False,
             )
         )
         # Merge the two gm masks back together.
-        tfs.append(
-            monai.transforms.AddChanneld(
-                keys=(
-                    "lr_fivett_cort_gm",
-                    "lr_fivett_sub_cort_gm",
-                    "fivett_cort_gm",
-                    "fivett_sub_cort_gm",
-                ),
-            )
-        )
-        tfs.append(
-            monai.transforms.ConcatItemsd(
-                keys=("lr_fivett_cort_gm", "lr_fivett_sub_cort_gm"),
-                name="lr_gm_mask",
-                dim=0,
-            )
-        )
         tfs.append(
             monai.transforms.ConcatItemsd(
                 keys=("fivett_cort_gm", "fivett_sub_cort_gm"),
@@ -241,27 +301,22 @@ class HCPfODFINRDataset(monai.data.Dataset):
         )
         tfs.append(
             monai.transforms.Lambdad(
-                keys=("lr_gm_mask", "gm_mask"),
-                func=lambda m: torch.amax(m, dim=0, keepdim=False),
+                keys=("gm_mask",),
+                func=lambda m: torch.amax(m, dim=0, keepdim=True),
                 overwrite=True,
             )
         )
         # Rename wm and csf masks.
         tfs.append(
             monai.transforms.CopyItemsd(
-                keys=("lr_fivett_wm", "lr_fivett_csf", "fivett_wm", "fivett_csf"),
-                names=("lr_wm_mask", "lr_csf_mask", "wm_mask", "csf_mask"),
+                keys=("fivett_wm", "fivett_csf"),
+                names=("wm_mask", "csf_mask"),
             )
         )
         # Delete leftover tissue mask items.
         tfs.append(
             monai.transforms.DeleteItemsd(
                 keys=(
-                    "lr_fivett_wm",
-                    "lr_fivett_csf",
-                    "lr_fivett_pathologic_tissue",
-                    "lr_fivett_cort_gm",
-                    "lr_fivett_sub_cort_gm",
                     "fivett_wm",
                     "fivett_csf",
                     "fivett_cort_gm",
@@ -270,49 +325,49 @@ class HCPfODFINRDataset(monai.data.Dataset):
                 ),
             )
         )
-        tfs.append(
-            monai.transforms.AddChanneld(
-                keys=(
-                    "lr_wm_mask",
-                    "lr_gm_mask",
-                    "lr_csf_mask",
-                    "wm_mask",
-                    "gm_mask",
-                    "csf_mask",
-                ),
-            )
-        )
 
         # Handle patch sampling mask.
-        if not skip_sample_mask:
+        tfs.append(
+            monai.transforms.CopyItemsd(
+                keys=sample_mask_key,
+                names="sampling_mask",
+            )
+        )
+        # Dilate the sampling mask, if requested.
+        if mask_dilate_radius != 0:
             # Dilate the lr mask to allow for uniform sampling of the patch centers.
-            dilate_tf = pitn.transforms.BinaryDilated(
-                ["lr_mask"],
-                footprint=skimage.morphology.ball(mask_dilate_radius),
-                write_to_keys=["lr_sampling_mask"],
+            tfs.append(
+                pitn.transforms.BinaryDilated(
+                    ["sampling_mask"],
+                    footprint=skimage.morphology.ball(mask_dilate_radius),
+                    write_to_keys=["sampling_mask"],
+                )
             )
-            rescale_tf = monai.transforms.Lambdad(
-                "lr_sampling_mask", lambda m: m / torch.sum(m, (1, 2, 3), keepdim=True)
+        # Rescale the sampling mask to add up to 1.0
+        tfs.append(
+            monai.transforms.Lambdad(
+                "sampling_mask", lambda m: m / torch.sum(m, (1, 2, 3), keepdim=True)
             )
-            tfs.append(dilate_tf)
-            tfs.append(rescale_tf)
+        )
 
         tfs.append(
-            functools.partial(
-                _extract_affine, src_vol_key="lr_dwi", write_key="affine_lr_vox2world"
+            monai.transforms.adaptor(
+                _extract_affine, outputs="affine_vox2world", inputs={"fodf": "src_vol"}
             )
         )
         tfs.append(
-            functools.partial(
-                _extract_affine, src_vol_key="fodf", write_key="affine_vox2world"
+            monai.transforms.adaptor(
+                monai.data.utils.affine_to_spacing,
+                outputs="vox_size",
+                inputs={"affine_vox2world": "affine"},
             )
         )
-        vox_size_tf = monai.transforms.adaptor(
-            monai.data.utils.affine_to_spacing,
-            outputs="vox_size",
-            inputs={"affine_vox2world": "affine"},
+
+        tfs.append(
+            monai.transforms.CastToTyped(
+                ("affine_vox2world", "vox_size", "bval", "bvec"), dtype=torch.float32
+            )
         )
-        tfs.append(vox_size_tf)
         return monai.transforms.Compose(tfs)
 
 
@@ -403,13 +458,13 @@ class _EfficientRandWeightedCropd(monai.transforms.RandWeightedCropd):
 
 
 # Save the affine as its own field.
-def _extract_affine(d: dict, src_vol_key, write_key: str):
-    aff = d[src_vol_key].affine
+def _extract_affine(src_vol):
+    aff = src_vol.affine
     if torch.is_tensor(aff):
-        d[write_key] = torch.clone(aff).to(torch.float32)
+        aff = torch.clone(aff).to(torch.float32)
     else:
-        d[write_key] = np.array(np.asarray(aff), copy=True, dtype=np.float32)
-    return d
+        aff = np.array(np.asarray(aff), copy=True, dtype=np.float32)
+    return aff
 
 
 def _extract_lr_patch_info(lr_dwi, affine_lr_vox2world, patch_size: tuple):
@@ -706,14 +761,16 @@ class RandIsotropicResampleAffineInteriord(
 
 
 def _random_iso_scale_affine(
-    src_affine: np.ndarray, scale_low: float, scale_high: float
-) -> np.ndarray:
+    src_affine: torch.Tensor, scale_low: float, scale_high: float
+) -> torch.Tensor:
     scale = np.random.uniform(scale_low, scale_high)
     scaling_affine = monai.transforms.utils.create_scale(
         3,
         [scale] * 3,
     )
-    scaled_affine = scaling_affine @ src_affine
+    scaling_affine = torch.from_numpy(scaling_affine).to(src_affine)
+    # scaled_affine = scaling_affine @ src_affine
+    scaled_affine = src_affine @ scaling_affine
     return scaled_affine
 
 
@@ -777,21 +834,48 @@ def _crop_fr_min_hull_by_lr_world_coords_extent(
     return d
 
 
+def prefilter_gaussian_blur(
+    vol: torch.Tensor,
+    src_affine: torch.Tensor,
+    target_affine: torch.Tensor,
+    sigma_scale_coeff: float = 2.5,
+    sigma_truncate=4.0,
+):
+
+    v = vol.detach().cpu().numpy()
+    src_size = monai.data.utils.affine_to_spacing(src_affine.detach().cpu())
+    target_size = monai.data.utils.affine_to_spacing(target_affine.detach().cpu())
+    scale_ratio_high_to_low = (torch.mean(src_size) / torch.mean(target_size)).item()
+    sigma = 1 / (sigma_scale_coeff * scale_ratio_high_to_low)
+    if len(v.shape) == 4:
+        sigma = (0, sigma, sigma, sigma)
+    else:
+        sigma = (sigma,) * 3
+    v_filter = scipy.ndimage.gaussian_filter(
+        v, sigma=sigma, order=0, mode="nearest", truncate=sigma_truncate
+    )
+
+    vol_blur = torch.from_numpy(v_filter).to(vol)
+
+    return vol_blur
+
+
 class HCPfODFINRPatchDataset(monai.data.PatchDataset):
 
     _SAMPLE_KEYS = (
         "subj_id",
-        "lr_dwi",
-        "lr_mask",
-        "lr_bval",
-        "lr_bvec",
-        "lr_fodf",
-        "lr_vox_size",
-        "affine_lr_patch_vox2world",
         "fodf",
-        "mask",
+        "brain_mask",
+        "fivett",
+        "wm_mask",
+        "gm_mask",
+        "csf_mask",
         "vox_size",
-        "affine_fr_patch_vox2world",
+        "affine_vox2world",
+        "lr_dwi",
+        "lr_brain_mask",
+        "lr_vox_size",
+        "affine_lr_vox2world",
     )
 
     def __init__(
@@ -812,69 +896,123 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
 
     @staticmethod
     def default_patch_func(
-        keys=("lr_dwi", "lr_mask", "lr_fodf"),
-        w_key="lr_sampling_mask",
+        keys=("dwi", "fodf", "brain_mask", "fivett", "wm_mask", "gm_mask", "csf_mask"),
+        w_key="sampling_mask",
         **sample_tf_kwargs,
     ):
         return _EfficientRandWeightedCropd(keys=keys, w_key=w_key, **sample_tf_kwargs)
 
     @staticmethod
     def default_feature_tf(
+        baseline_iso_scale_factor_lr_spacing_mm_low_high: float,
         augmentation_prob: float,
-        iso_scale_factor_lr_spacing_mm_low_high: Tuple[float] = (1.0, 1.0),
+        augment_iso_scale_factor_lr_spacing_mm_low_high: Tuple[float] = (1.0, 1.0),
+        scale_prefilter_kwargs: dict = dict(),
         augment_spatial_resample_kwargs: dict = dict(),
         augment_rand_rician_noise_kwargs: dict = dict(),
         augment_rand_rotate_90_kwargs: dict = dict(),
         augment_rand_flip_kwargs: dict = dict(),
     ):
+
         VOL_KEYS = (
-            "lr_dwi",
-            "lr_mask",
-            "lr_fodf",
-            "lr_fivett",
+            "dwi",
             "fodf",
-            "mask",
+            "brain_mask",
             "fivett",
+            "wm_mask",
+            "gm_mask",
+            "csf_mask",
         )
+        LR_VOL_KEYS = (
+            "lr_dwi",
+            "lr_brain_mask",
+            "lr_fivett",
+            "lr_wm_mask",
+            "lr_gm_mask",
+            "lr_csf_mask",
+        )
+
         # Transforms for extracting features for the network.
         feat_tfs = list()
 
-        # Extract the new LR patch affine matrix.
+        # Extract the patch affine matrix.
         feat_tfs.append(
-            functools.partial(
-                _extract_affine,
-                src_vol_key="lr_dwi",
-                write_key="_orig_affine_lr_patch_vox2world",
+            monai.transforms.adaptor(
+                _extract_affine, outputs="affine_vox2world", inputs={"dwi": "src_vol"}
             )
         )
-        # If augmenting the lr patch, then the fov of the fr patch must be adjusted to
-        # match.
         feat_tfs.append(
             monai.transforms.CopyItemsd(
-                keys=["_orig_affine_lr_patch_vox2world"],
+                keys=["affine_vox2world"],
                 times=1,
-                names=["target_affine_lr_patch"],
+                names=["target_affine_lr_vox2world"],
             )
         )
-
+        # Make copies of the patches that will be downsampled.
+        feat_tfs.append(
+            monai.transforms.CopyItemsd(
+                keys=("dwi", "brain_mask", "fivett", "wm_mask", "gm_mask", "csf_mask"),
+                times=1,
+                names=(
+                    "lr_dwi",
+                    "lr_brain_mask",
+                    "lr_fivett",
+                    "lr_wm_mask",
+                    "lr_gm_mask",
+                    "lr_csf_mask",
+                ),
+            )
+        )
         augment_tfs = list()
-        non_augment_tfs = list()
+        baseline_non_augment_tfs = list()
 
-        # Augmentation transforms, subject to `augmentation prob`.
+        #### Augmentation transforms, subject to `augmentation prob`.
         # Random iso-scaling
-        low, high = iso_scale_factor_lr_spacing_mm_low_high
+        low, high = augment_iso_scale_factor_lr_spacing_mm_low_high
+        # Randomly choose a scale, apply to an affine matrix, then resample from that.
         scale_aff_tf = monai.transforms.RandLambdad(
-            "target_affine_lr_patch",
-            partial(_random_iso_scale_affine, low=low, high=high),
+            "target_affine_lr_vox2world",
+            partial(_random_iso_scale_affine, scale_low=low, scale_high=high),
             overwrite=True,
         )
+        # Prefilter/blur DWI with a small gaussian filter. Sigma is chosen by a slightly
+        # tweaked rule-of-thumb by default:
+        # sigma = 1 / 2.5 * (high_res_spacing / low_res_spacing)
+        # This function is common for both the augmentation path, and the "baseline"
+        # path.
+        prefilter_fn = partial(
+            prefilter_gaussian_blur,
+            **{
+                **dict(sigma_scale_coeff=2.5, sigma_truncate=4.0),
+                **scale_prefilter_kwargs,
+            },
+        )
+        # Blur, then downsample the full-res DWI patch to create the LR patch
+        prefilter_tf = monai.transforms.adaptor(
+            prefilter_fn,
+            outputs="lr_dwi",
+            inputs={
+                "lr_dwi": "vol",
+                "affine_vox2world": "src_affine",
+                "target_affine_lr_vox2world": "target_affine",
+            },
+        )
+        # Then downscale with bilinear (for the dwi) or nearest neighbor (masks/labels)
         resample_lr_patch_tf = monai.transforms.SpatialResampled(
             **{
                 **dict(
-                    keys=["lr_dwi", "lr_fodf", "lr_mask", "lr_fivett"],
-                    mode=["bilinear", "bilinear", "nearest", "nearest"],
+                    keys=(
+                        "lr_dwi",
+                        "lr_brain_mask",
+                        "lr_fivett",
+                        "lr_wm_mask",
+                        "lr_gm_mask",
+                        "lr_csf_mask",
+                    ),
+                    mode=["bilinear"] + (["nearest"] * 5),
                     align_corners=True,
-                    dst_keys="target_affine_lr_patch",
+                    padding_mode="zeros",
+                    dst_keys="target_affine_lr_vox2world",
                 ),
                 **augment_spatial_resample_kwargs,
             }
@@ -899,155 +1037,189 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                 **augment_rand_rician_noise_kwargs,
             }
         )
-        augment_tfs.append(scale_aff_tf)
-        augment_tfs.append(resample_lr_patch_tf)
-        augment_tfs.append(noise_tf)
 
         # Crop the target patch according to the center and fov of the lr patch,
-        # agnostic as to whether the lr patch was randomly augmented.
+        # agnostic as to the target size of the LR patch.
         # Crop the "minimum hull" such that the fr patch fully encompasses all points
         # in the lr patch, extending beyond the lr coordinates by a maximum of 1 voxel.
         fr_cropper = monai.transforms.Crop()
         fr_crop_min_hull_tf = partial(
             _crop_fr_min_hull_by_lr_world_coords_extent,
-            keys_to_crop=("fodf", "mask", "fivett"),
-            output_keys=("fodf", "mask", "fivett"),
+            keys_to_crop=VOL_KEYS,
+            output_keys=VOL_KEYS,
             affine_fr_vox2world_key="affine_vox2world",
             lr_vox_extent_fov_im_key="lr_dwi",
-            affine_lr_patch_vox2world_key="target_affine_lr_patch",
+            affine_lr_patch_vox2world_key="target_affine_lr_vox2world",
             im_cropper=fr_cropper,
         )
         # Crop this "min hull" by 1 voxel on each side to accomodate the INR
         # output interpolation scheme.
         fr_crop_by_1_tf = monai.transforms.SpatialCropd(
-            keys=("fodf", "mask", "fivett"), roi_slices=(slice(1, -1),) * 3
+            keys=VOL_KEYS,
+            roi_slices=(slice(1, -1),) * 3,
         )
-        # These transforms are performed regardless of whether augmentation is being
-        # done.
-        augment_tfs.append(fr_crop_min_hull_tf)
-        augment_tfs.append(fr_crop_by_1_tf)
-        non_augment_tfs.append(fr_crop_min_hull_tf)
-        non_augment_tfs.append(fr_crop_by_1_tf)
 
         # Apply random flips and rotations to both the lr patch and the fr patch.
         # Random 90 degree rotations
-        rotate_tf = monai.transforms.RandRotate90d(
-            keys=VOL_KEYS,
+        # These won't produce a uniform distribution of final orientations, but that
+        # probably isn't a big deal at this time.
+        rotate_xy_tf = monai.transforms.RandRotate90d(
+            keys=VOL_KEYS + LR_VOL_KEYS,
             max_k=3,
-            spatial_axes=(0, 1, 2),
+            spatial_axes=(0, 1),
+            **augment_rand_rotate_90_kwargs,
+        )
+        rotate_yz_tf = monai.transforms.RandRotate90d(
+            keys=VOL_KEYS + LR_VOL_KEYS,
+            max_k=3,
+            spatial_axes=(1, 2),
+            **augment_rand_rotate_90_kwargs,
         )
         # Random flips
-        flip_tf = monai.transforms.RandFlipd(keys=VOL_KEYS, spatial_axis=(0, 1, 2))
-        augment_tfs.append(rotate_tf)
-        augment_tfs.append(flip_tf)
+        flip_x_tf = monai.transforms.RandFlipd(
+            keys=VOL_KEYS + LR_VOL_KEYS, spatial_axis=0, **augment_rand_flip_kwargs
+        )
+        flip_y_tf = monai.transforms.RandFlipd(
+            keys=VOL_KEYS + LR_VOL_KEYS, spatial_axis=1, **augment_rand_flip_kwargs
+        )
+        flip_z_tf = monai.transforms.RandFlipd(
+            keys=VOL_KEYS + LR_VOL_KEYS, spatial_axis=2, **augment_rand_flip_kwargs
+        )
+        augment_tfs.append(scale_aff_tf)
+        augment_tfs.append(prefilter_tf)
+        augment_tfs.append(resample_lr_patch_tf)
+        augment_tfs.append(noise_tf)
+        augment_tfs.append(fr_crop_min_hull_tf)
+        augment_tfs.append(fr_crop_by_1_tf)
+        augment_tfs.append(rotate_xy_tf)
+        augment_tfs.append(rotate_yz_tf)
+        augment_tfs.append(flip_x_tf)
+        augment_tfs.append(flip_y_tf)
+        augment_tfs.append(flip_z_tf)
 
         augment_tfs = monai.transforms.Compose(augment_tfs)
-        non_augment_tfs = monai.transforms.Compose(non_augment_tfs)
+
+        #### Baseline transforms, which reuse some of the augment transforms.
+        # The scaling is "random," but there's only one value that can be selected.
+        baseline_scale_aff_tf = monai.transforms.Lambdad(
+            "target_affine_lr_vox2world",
+            partial(
+                _random_iso_scale_affine,
+                scale_low=baseline_iso_scale_factor_lr_spacing_mm_low_high,
+                scale_high=baseline_iso_scale_factor_lr_spacing_mm_low_high,
+            ),
+            overwrite=True,
+        )
+        baseline_resample_lr_patch_tf = monai.transforms.SpatialResampled(
+            **{
+                **dict(
+                    keys=(
+                        "lr_dwi",
+                        "lr_brain_mask",
+                        "lr_fivett",
+                        "lr_wm_mask",
+                        "lr_gm_mask",
+                        "lr_csf_mask",
+                    ),
+                    mode=["bilinear"] + (["nearest"] * 5),
+                    padding_mode="zeros",
+                    align_corners=True,
+                    dst_keys="target_affine_lr_vox2world",
+                ),
+                **augment_spatial_resample_kwargs,
+            }
+        )
+        baseline_non_augment_tfs.append(baseline_scale_aff_tf)
+        baseline_non_augment_tfs.append(copy.deepcopy(prefilter_tf))
+        baseline_non_augment_tfs.append(baseline_resample_lr_patch_tf)
+        baseline_non_augment_tfs.append(copy.deepcopy(fr_crop_min_hull_tf))
+        baseline_non_augment_tfs.append(copy.deepcopy(fr_crop_by_1_tf))
+        baseline_non_augment_tfs = monai.transforms.Compose(baseline_non_augment_tfs)
 
         # Create a transformation branch conditioned on the chance of whether or not
         # to use augmentation.
         augment_branch_tf = monai.transforms.OneOf(
-            transforms=(augment_tfs, non_augment_tfs),
+            transforms=(augment_tfs, baseline_non_augment_tfs),
             weights=(augmentation_prob, 1.0 - augmentation_prob),
         )
         feat_tfs.append(augment_branch_tf)
 
         # Remove the bvec and bval, as we may have altered the orientation of the images
         # and they are no longer correct (and are not used at this time). Also remove
-        # tmp affine values.
+        # the full resolution DWI as it is not used, for now.
         feat_tfs.append(
             monai.transforms.DeleteItemsd(
                 keys=(
-                    "_orig_affine_lr_patch_vox2world",
-                    "target_affine_lr_patch",
-                    "lr_bval",
-                    "lr_bvec",
+                    "dwi",
+                    "bval",
+                    "bvec",
+                    "target_affine_lr_vox2world",
                 )
             )
         )
+        curr_vol_keys = tuple(set(VOL_KEYS) - {"dwi"})
 
         # Extract the new LR patch affine matrix.
         feat_tfs.append(
-            functools.partial(
+            monai.transforms.adaptor(
                 _extract_affine,
-                src_vol_key="lr_dwi",
-                write_key="affine_lr_patch_vox2world",
+                outputs="affine_lr_vox2world",
+                inputs={"lr_dwi": "src_vol"},
             )
         )
         feat_tfs.append(
             monai.transforms.adaptor(
                 monai.data.utils.affine_to_spacing,
                 outputs="lr_vox_size",
-                inputs={"affine_lr_patch_vox2world": "affine"},
+                inputs={"affine_lr_vox2world": "affine"},
             )
         )
         # Similarly for the FR patch.
         feat_tfs.append(
-            functools.partial(
-                _extract_affine,
-                src_vol_key="fodf",
-                write_key="affine_fr_patch_vox2world",
+            monai.transforms.adaptor(
+                _extract_affine, outputs="affine_vox2world", inputs={"fodf": "src_vol"}
             )
         )
         feat_tfs.append(
             monai.transforms.adaptor(
                 monai.data.utils.affine_to_spacing,
-                outputs="fr_vox_size",
-                inputs={"affine_fr_patch_vox2world": "affine"},
+                outputs="vox_size",
+                inputs={"affine_vox2world": "affine"},
             )
         )
 
+        curr_vol_keys = tuple(set(curr_vol_keys) - {"fivett"})
+        curr_lr_vol_keys = tuple(
+            set(LR_VOL_KEYS) - {"lr_fivett", "lr_csf_mask", "lr_wm_mask", "lr_gm_mask"}
+        )
         # Remove unnecessary items from the data dict.
         # Sub-select keys to free memory.
         select_k_tf = monai.transforms.SelectItemsd(
-            [
+            (
                 "subj_id",
-                "lr_dwi",
-                "lr_mask",
-                "lr_fodf",
-                "lr_bval",
-                "lr_bvec",
-                "affine_lr_patch_vox2world",
-                "fodf",
-                "mask",
+                "affine_vox2world",
+                "affine_lr_vox2world",
+                "vox_size",
                 "lr_vox_size",
-                "fr_vox_size",
-            ]
+            )
+            + curr_vol_keys
+            + curr_lr_vol_keys,
         )
         feat_tfs.append(select_k_tf)
 
         # Convert all MetaTensors to regular Tensors.
         to_tensor_tf = monai.transforms.ToTensord(
-            [
-                "lr_dwi",
-                "lr_mask",
-                "lr_fodf",
-                "affine_lr_patch_vox2world",
+            (
+                "affine_vox2world",
+                "affine_lr_vox2world",
+                "vox_size",
                 "lr_vox_size",
-                "fodf",
-                "mask",
-                "affine_fr_patch_vox2world",
-            ],
+            )
+            + curr_vol_keys
+            + curr_lr_vol_keys,
             track_meta=False,
         )
         feat_tfs.append(to_tensor_tf)
-
-        select_k_tf = monai.transforms.SelectItemsd(
-            [
-                "subj_id",
-                "lr_dwi",
-                "lr_mask",
-                "lr_fodf",
-                "affine_lr_patch_vox2world",
-                # "lr_bval",
-                # "lr_bvec",
-                "fodf",
-                "mask",
-                "vox_size",
-                "lr_vox_size",
-            ]
-        )
-        feat_tfs.append(select_k_tf)
 
         return monai.transforms.Compose(feat_tfs)
 
@@ -1095,6 +1267,7 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
         )
         feat_tfs.append(off_by_1_padder)
         # Extract the LR affine matrix.
+        # NOTE: replace with an adaptor transform
         feat_tfs.append(
             functools.partial(
                 _extract_affine,
@@ -1124,6 +1297,7 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
         # )
         # feat_tfs.append(off_by_1_cropper)
         # Extract the full-res affine matrix.
+        # NOTE: replace with an adaptor transform
         feat_tfs.append(
             functools.partial(
                 _extract_affine,

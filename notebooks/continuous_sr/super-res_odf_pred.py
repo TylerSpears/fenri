@@ -211,7 +211,7 @@ p.test.subj_ids = list(
             # 529549,
             # 645450,
             # 654350,
-            749058,
+            # 749058,
             # 767464,
             # 800941,
             # 803240,
@@ -230,7 +230,7 @@ p.test.subj_ids = list(
             # 251833,
             # 191336,
             # 126426,
-            # 859671,
+            859671,
             # 200210,
             # 360030,
         ],
@@ -242,7 +242,7 @@ p.model_weight_f = str(
 # p.model_weight_f = str(
 #     Path(p.tmp_results_dir) / "2023-02-09T21_09_47/state_dict_epoch_174_step_35000.pt"
 # )
-p.target_vox_size = 2.0
+p.target_vox_size = 1.25
 ###############################################
 # Network/model parameters.
 p.encoder = dict(
@@ -370,10 +370,8 @@ print("=" * 10)
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-# tmp_res_dir = Path(p.tmp_results_dir) / "_".join([ts, "super_res_odf_test"])
-tmp_res_dir = (
-    Path(p.tmp_results_dir) / "2023-05-24T12_03_39__super_res_odf_multi-res_viz"
-)
+tmp_res_dir = Path(p.tmp_results_dir) / "_".join([ts, "super_res_odf_test"])
+# tmp_res_dir = Path(p.tmp_results_dir) / "2023-06-13T11_13_12_super_res_odf_test"
 tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
@@ -860,12 +858,12 @@ for batch_dict in test_dataloader:
         torch.from_numpy(new_aff).cpu().to(torch.float32), target_fov_shape
     )
     # ! Changing only for a slice viz.
-    z = super_coords[..., 2].flatten()
-    i_dz = torch.argmin(torch.abs(z - 8.625)).flatten()[0].item()
-    d_z = z[i_dz] - 8.625
-    d_z = d_z.item()
-    super_coords[..., 2] -= d_z
-    new_aff[2, 3] -= d_z
+    # z = super_coords[..., 2].flatten()
+    # i_dz = torch.argmin(torch.abs(z - 8.625)).flatten()[0].item()
+    # d_z = z[i_dz] - 8.625
+    # d_z = d_z.item()
+    # super_coords[..., 2] -= d_z
+    # new_aff[2, 3] -= d_z
     #!#########
     # print("Resample fodf coeffs")
     # pred_super_fodf = pitn.affine.sample_vol(
@@ -1023,12 +1021,12 @@ for batch_dict in test_dataloader:
         # torch.from_numpy(new_aff).to(x_coords), target_fov_shape
     )
     # ! Changing only for a slice viz.
-    z = super_coords[..., 2].flatten()
-    i_dz = torch.argmin(torch.abs(z - 8.625)).flatten()[0].item()
-    d_z = z[i_dz] - 8.625
-    d_z = d_z.item()
-    super_coords[..., 2] -= d_z
-    new_aff[2, 3] -= d_z
+    # z = super_coords[..., 2].flatten()
+    # i_dz = torch.argmin(torch.abs(z - 8.625)).flatten()[0].item()
+    # d_z = z[i_dz] - 8.625
+    # d_z = d_z.item()
+    # super_coords[..., 2] -= d_z
+    # new_aff[2, 3] -= d_z
     #!#########
 
     print("Resample fodf coeffs")

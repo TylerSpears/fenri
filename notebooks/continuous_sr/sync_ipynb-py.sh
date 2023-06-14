@@ -2,7 +2,7 @@
 
 set -eou pipefail
 
-jupytext --sync "$1"
+jupytext --sync --show-changes "$1" | bat --language diff --pager never
 
 # To do the initial export:
 # jupytext --to ipynb --from py:percent \
