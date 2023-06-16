@@ -27,13 +27,7 @@ import numpy as np
 import scipy
 import skimage
 import torch
-from monai.config import DtypeLike, KeysCollection, SequenceStr
-from monai.data.meta_obj import get_track_meta
 from monai.utils import (
-    GridSampleMode,
-    GridSamplePadMode,
-    InterpolateMode,
-    NumpyPadMode,
     convert_to_tensor,
     ensure_tuple,
     ensure_tuple_rep,
@@ -210,15 +204,14 @@ class HCPfODFINRDataset(monai.data.Dataset):
 
         tfs = list()
         # Load images
-        vol_reader = monai.data.NibabelReader(
-            as_closest_canonical=True, dtype=np.float32
-        )
+        vol_reader = monai.data.NibabelReader(as_closest_canonical=True)
         tfs.append(
             monai.transforms.LoadImaged(
                 VOL_KEYS,
                 reader=vol_reader,
                 dtype=np.float32,
                 meta_key_postfix="meta",
+                image_only=False,
                 ensure_channel_first=True,
                 simple_keys=True,
             )
@@ -467,173 +460,6 @@ def _extract_affine(src_vol):
     return aff
 
 
-def _extract_lr_patch_info(lr_dwi, affine_lr_vox2world, patch_size: tuple):
-    # Extract low-resolution input information
-    patch_center_lr_vox = torch.clone(
-        lr_dwi.meta["crop_center"].as_tensor().to(torch.int)
-    )
-    affine_lr_vox2world = torch.as_tensor(affine_lr_vox2world).to(torch.float32)
-    vox_extent = list()
-    for patch_dim_len, patch_center in zip(patch_size, patch_center_lr_vox):
-        half_patch_start = math.ceil(patch_dim_len // 2)
-        half_patch_end = math.floor(patch_dim_len // 2)
-        vox_extent.append(
-            torch.arange(
-                patch_center - half_patch_start, patch_center + half_patch_end
-            ).to(patch_center_lr_vox)
-        )
-    vox_extent = torch.stack(vox_extent, dim=-1)
-    patch_extent_lr_vox = vox_extent
-    # Calculate world-space coordinates of the vox extent.
-    world_extent = (
-        affine_lr_vox2world[:3, :3] @ vox_extent.T.to(affine_lr_vox2world)
-    ) + (affine_lr_vox2world[:3, 3:4])
-    world_extent = world_extent.T
-    lr_patch_extent_world = world_extent
-
-    return dict(
-        patch_center_lr_vox=patch_center_lr_vox,
-        lr_patch_extent_world=lr_patch_extent_world,
-        patch_extent_lr_vox=patch_extent_lr_vox,
-    )
-
-
-def _crop_fr_patch(
-    d,
-    vols_to_crop_key_map: dict,
-    affine_vox2world_key="affine_vox2world",
-    fodf_key="fodf",
-    vox_size_key="vox_size",
-    lr_patch_extent_world_key="lr_patch_extent_world",
-    lr_vox_size_key="lr_vox_size",
-    write_fr_patch_extent_world_key="fr_patch_extent_world",
-):
-    # Calculate patch voxel coordinates from LR patch real/spatial coordinates.
-    affine_vox2world = d[affine_vox2world_key]
-    affine_world2vox = torch.inverse(affine_vox2world)
-    lr_patch_extent_world = d[lr_patch_extent_world_key]
-    lr_patch_extent_world = lr_patch_extent_world.to(affine_world2vox)
-    lr_patch_extent_in_fr_vox = (affine_world2vox[:3, :3] @ lr_patch_extent_world.T) + (
-        affine_world2vox[:3, 3:4]
-    )
-    lr_patch_extent_in_fr_vox = lr_patch_extent_in_fr_vox.T
-
-    # Calculate the spatial bounds of the full-res patch to be *within* the coordinates
-    # of the low-res input, otherwise the network cannot be given distance-weighted
-    # inputs for the borders of the full-res patch.
-    # Patch shapes in FR space should be consistently-sized, so set an upper bound
-    # based on the raw vox size, minus some buffer space.
-    lr_vox_size = d[lr_vox_size_key]
-    vox_size = d[vox_size_key]
-    # Assume vox sizes are isotropic.
-    EPSILON_SPACE = 1e-6
-    patch_len = torch.floor(
-        ((lr_vox_size[0] * (lr_patch_extent_world.shape[0] - 4)) / vox_size[0])
-        - EPSILON_SPACE
-    )
-    # patch_len = torch.floor(
-    #     ((lr_patch_extent_world.shape[0] * lr_vox_size[0]) - (2 * 2 * lr_vox_size[0]))
-    #     / vox_size[0]
-    # )
-    patch_len = patch_len.to(torch.int).cpu().item()
-    patch_center_vox_idx = (
-        torch.round(torch.quantile(lr_patch_extent_in_fr_vox, q=0.5, dim=0))
-        .to(torch.int)
-        .cpu()
-    )
-    l_bound = patch_center_vox_idx - math.floor(patch_len / 2)
-    u_bound = patch_center_vox_idx + math.ceil(patch_len / 2)
-
-    # Calculate the spatial coordinates of the patch's voxel indices.
-    # First, get the span of vox indices according to the bounds.
-    extent_vox_l = list()
-    for l, u in zip(l_bound.cpu().tolist(), u_bound.cpu().tolist()):
-        extent_vox_l.append(torch.arange(l, u).to(torch.int))
-    patch_extent_vox = torch.stack(extent_vox_l, dim=-1).to(torch.int32)
-
-    fr_vol_low_limits = torch.zeros(3).to(torch.int)
-    example_fr_vol = d[fodf_key]
-    fr_vol_up_limits = torch.as_tensor(example_fr_vol.shape[1:]).to(torch.int)
-
-    # Construct transforms for FR sampling.
-    tfs = list()
-    # Check for FR sampling out of bounds.
-    # Handle under out of bounds indices.
-    if (l_bound < fr_vol_low_limits).any():
-        pad_pre = torch.zeros_like(l_bound)
-        pad_pre[l_bound < fr_vol_low_limits] = torch.abs(
-            (l_bound - fr_vol_low_limits)[l_bound < fr_vol_low_limits]
-        )
-        padder = monai.transforms.BorderPadd(
-            keys=list(vols_to_crop_key_map.keys()),
-            spatial_border=list(
-                itertools.chain.from_iterable(
-                    zip(pad_pre.tolist(), itertools.repeat(0, len(pad_pre)))
-                )
-            ),
-            mode="constant",
-            value=0,
-        )
-        tfs.append(padder)
-        # Adjust the patch's center vox according to the new padding.
-        patch_center_vox_idx = patch_center_vox_idx + pad_pre
-        l_bound = l_bound + pad_pre
-
-    # Handle upper out of bounds indices.
-    if (u_bound > fr_vol_up_limits).any():
-        pad_post = torch.zeros_like(u_bound)
-        pad_post[u_bound > fr_vol_up_limits] = torch.abs(u_bound - fr_vol_up_limits)[
-            u_bound > fr_vol_up_limits
-        ]
-        padder = monai.transforms.BorderPadd(
-            keys=list(vols_to_crop_key_map.keys()),
-            spatial_border=list(
-                itertools.chain.from_iterable(
-                    zip(
-                        itertools.repeat(0, len(pad_post)),
-                        pad_post.tolist(),
-                    )
-                )
-            ),
-            mode="constant",
-            value=0,
-        )
-        tfs.append(padder)
-
-    cropper = monai.transforms.SpatialCropd(
-        list(vols_to_crop_key_map.keys()),
-        roi_start=l_bound.tolist(),
-        roi_end=u_bound.tolist(),
-        # roi_center=patch_center_vox_idx.tolist(),
-        # roi_size=(patch_len,) * 3,
-        # roi_start=roi_start, roi_end=roi_end
-    )
-    tfs.append(cropper)
-    to_crop = {v: d[v] for v in vols_to_crop_key_map.keys()}
-    cropped = monai.transforms.Compose(tfs)(to_crop)
-    # plt.imshow(d['fodf'][0, 51:99, 45:93, 51:99][:, 25])
-    # plt.imshow(cropped['fodf'][0, :, 25])
-    # Store the cropped vols into the data dict with the (possibly) new keys.
-    for old_v in cropped.keys():
-        d[vols_to_crop_key_map[old_v]] = cropped[old_v]
-        if (torch.as_tensor(cropped[old_v].shape[1:]).to(torch.int) != patch_len).any():
-            raise RuntimeError()
-
-    fr_patch_extent_world = (
-        affine_vox2world[:3, :3] @ patch_extent_vox.T.to(affine_vox2world)
-    ) + (affine_vox2world[:3, 3:4])
-    fr_patch_extent_world = fr_patch_extent_world.T
-    assert (
-        torch.amin(fr_patch_extent_world, 0) >= torch.amin(lr_patch_extent_world, 0)
-    ).all()
-    assert (
-        torch.amax(fr_patch_extent_world, 0) <= torch.amax(lr_patch_extent_world, 0)
-    ).all()
-    d[write_fr_patch_extent_world_key] = fr_patch_extent_world
-
-    return d
-
-
 def _get_extent_world(x_pre_img: torch.Tensor, affine: torch.Tensor) -> torch.Tensor:
     """Calculates the world coordinates that enumerate each voxel in the FOV.
 
@@ -663,162 +489,334 @@ def _get_extent_world(x_pre_img: torch.Tensor, affine: torch.Tensor) -> torch.Te
     return world_extent
 
 
-class RandIsotropicResampleAffineInteriord(
-    monai.transforms.RandomizableTransform,
-    monai.transforms.MapTransform,
-    monai.transforms.InvertibleTransform,
-):
-    backend = monai.transforms.Affined.backend
-
-    def __init__(
-        self,
-        keys,
-        prob: float,
-        isotropic_scale_range: Tuple[float, float],
-        # rotate_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
-        # shear_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
-        # translate_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
-        # scale_range: Optional[Union[Sequence[Union[Tuple[float, float], float]], float]] = None,
-        mode: SequenceStr = GridSampleMode.BILINEAR,
-        padding_mode: SequenceStr = GridSamplePadMode.REFLECTION,
-        device: Optional[torch.device] = None,
-        allow_missing_keys: bool = False,
-    ) -> None:
-
-        monai.transforms.MapTransform.__init__(self, keys, allow_missing_keys)
-        monai.transforms.RandomizableTransform.__init__(self, prob)
-
-        self._rand_iso_scale_param = None
-        self.isotopic_scale_range = ensure_tuple(isotropic_scale_range)
-        self.mode = monai.utils.ensure_tuple_rep(mode, len(self.keys))
-        self.padding_mode = monai.utils.ensure_tuple_rep(padding_mode, len(self.keys))
-
-    def randomize(self, data: Optional[Any] = None) -> None:
-        self._rand_iso_scale_param = self.R.uniform(
-            self.isotopic_scale_range[0], self.isotopic_scale_range[1]
-        )
-        super().randomize(None)
-
-    @staticmethod
-    def interior_spatial_shape(input_to_target_scale: float, fov_shape) -> Tuple[float]:
-        target_space_in_input_space = np.floor(input_to_target_scale / 2)
-        target_shape = tuple(np.asarray(2 * target_space_in_input_space).tolist())
-        return target_shape
-
-    def __call__(self, data: dict) -> dict:
-        d = dict(data)
-        first_key: Hashable = self.first_key(d)
-        if first_key == ():
-            out = convert_to_tensor(d, track_meta=get_track_meta())
-            return out
-
-        self.randomize(None)
-
-        # do random transform?
-        do_resampling = self._do_transform
-
-        # do the transform
-        if do_resampling:
-            spatial_size = d[first_key].shape[1:]
-
-            scale_params = (self._rand_iso_scale_param,) * len(spatial_size)
-
-            target_shape = self.interior_spatial_shape(
-                self._rand_iso_scale_param, fov_shape=np.asarray(spatial_size)
-            )
-            affine_tf = monai.transforms.Affined(
-                self.keys,
-                scale_params=scale_params,
-                spatial_size=target_shape,
-                mode=self.mode,
-                padding_mode=self.padding_mode,
-                device=self.device,
-                dtype=self.dtype,
-                allow_missing_keys=self.allow_missing_keys,
-            )
-
-            d = affine_tf(d)
-
-        for key in self.key_iterator(d):
-            if not do_resampling:
-                d[key] = convert_to_tensor(
-                    d[key], track_meta=get_track_meta(), dtype=torch.float32
-                )
-            if get_track_meta():
-                for key in self.key_iterator(d):
-                    xform = (
-                        self.pop_transform(d[key], check=False) if do_resampling else {}
-                    )
-                    self.push_transform(
-                        d[key],
-                        extra_info={
-                            "do_resampling": do_resampling,
-                            "rand_affine_info": xform,
-                        },
-                    )
-
-        return d
-
-
-def _random_iso_scale_affine(
-    src_affine: torch.Tensor, scale_low: float, scale_high: float
+def _random_iso_center_scale_affine(
+    src_affine: torch.Tensor,
+    src_spatial_sample: torch.Tensor,
+    scale_low: float,
+    scale_high: float,
+    n_delta_buffer_scaled_vox: int = 1,
 ) -> torch.Tensor:
+    # Randomly increase the spacing of src affine isotropically, while adding
+    # translations to center the resamples into the src FoV.
     scale = np.random.uniform(scale_low, scale_high)
     scaling_affine = monai.transforms.utils.create_scale(
         3,
         [scale] * 3,
     )
     scaling_affine = torch.from_numpy(scaling_affine).to(src_affine)
-    # scaled_affine = scaling_affine @ src_affine
-    scaled_affine = src_affine @ scaling_affine
-    return scaled_affine
+    # Calculate the offset in target space voxels such that the target FoV will be
+    # centered in the src FoV, and have 1 target voxel buffer between the LR fov and src
+    # fov.
+    src_spatial_shape = np.array(tuple(src_spatial_sample.shape[1:]))
+    src_spacing = monai.data.utils.affine_to_spacing(src_affine, r=3).cpu().numpy()
+    src_spatial_extent = src_spacing * src_spatial_shape
+    target_n_vox_in_src_fov = src_spatial_extent / (scale * src_spacing)
+    fov_delta = target_n_vox_in_src_fov - np.floor(target_n_vox_in_src_fov)
+    evenly_distribute_fov_delta = fov_delta / 2
+    # Add 1 scaled voxel between the inner (scaled) fov and the outer (src) fov, while
+    # also keeping the delta spacing to keep the scaled fov centered wrt the src fov.
+    evenly_distribute_fov_delta = (
+        evenly_distribute_fov_delta + n_delta_buffer_scaled_vox
+    )
+    translate_aff = torch.eye(4).to(scaling_affine)
+    translate_aff[:-1, -1] = torch.from_numpy(evenly_distribute_fov_delta).to(
+        translate_aff
+    )
+
+    # Delta is in target space voxels, so we need to scale first, then translate.
+    target_affine = src_affine @ (translate_aff @ scaling_affine)
+    return target_affine
 
 
-def _crop_fr_min_hull_by_lr_world_coords_extent(
+# class CropLRInsideFRFoVd(monai.transforms.MapTransform):
+
+#     backend = monai.transforms.Crop.backend
+#     SPATIAL_COORD_PRECISION = 5
+
+#     def __init__(
+#         self,
+#         keys,
+#         affine_fr_vox2world_key,
+#         affine_lr_patch_vox2world_key,
+#         lr_vox_extent_fov_im_key,
+#         fr_vox_extent_fov_im_key,
+#         allow_missing_keys=False,
+#     ):
+#         monai.transforms.MapTransform.__init__(self, keys, allow_missing_keys)
+#         self.cropper = monai.transforms.Crop()
+#         self.affine_fr_vox2world_key = affine_fr_vox2world_key
+#         self.affine_lr_patch_vox2world_key = affine_lr_patch_vox2world_key
+#         self.lr_vox_extent_fov_im_key = lr_vox_extent_fov_im_key
+#         self.fr_vox_extent_fov_im_key = fr_vox_extent_fov_im_key
+
+#     def __call__(self, data) -> dict:
+#         d = dict(data)
+#         lr_fov_vox = tuple(d[self.lr_vox_extent_fov_im_key].shape[-3:])
+#         fr_fov_vox = tuple(d[self.fr_vox_extent_fov_im_key].shape[-3:])
+#         lr_affine_vox2world = torch.as_tensor(d[self.affine_lr_patch_vox2world_key])
+#         fr_affine_vox2world = torch.as_tensor(d[self.affine_fr_vox2world_key])
+#         shared_dtype = torch.result_type(lr_affine_vox2world, fr_affine_vox2world)
+#         lr_affine_vox2world = lr_affine_vox2world.to(shared_dtype)
+#         fr_affine_vox2world = fr_affine_vox2world.to(shared_dtype)
+
+#         # Get the bounding box of the FR fov in LR voxel coordinates. If the FR bbox has
+#         # voxel coordinates > 0 or < the LR fov shape, then the LR fov is out of bounds
+#         # w.r.t. the FR spatial extent, and must be cropped to be entirely contained
+#         # within the FR fov.
+#         # Map the FR fov bounds to LR vox coordinates.
+#         affine_fr_vox2lr_vox = (
+#             torch.linalg.inv(lr_affine_vox2world) @ fr_affine_vox2world
+#         )
+#         # Account for any floating point errors that may cause the bottom row in the
+#         # homogeneous matrix to be invalid.
+#         affine_fr_vox2lr_vox[-1] = torch.round(torch.abs(affine_fr_vox2lr_vox[-1]))
+
+#         # Find the lower corner of the bounding box.
+#         fr_fov_vox_low = (0,) * len(fr_fov_vox)
+#         fr_fov_vox_low = affine_fr_vox2lr_vox.new_tensor((0,) * len(fr_fov_vox))
+#         fr_fov_vox_high = affine_fr_vox2lr_vox.new_tensor(fr_fov_vox)
+
+#         # Calculate the bbox coordinates of the FR fov in LR voxels.
+#         bbox_fr_fov_in_lr_vox = pitn.affine.transform_coords(
+#             torch.stack([fr_fov_vox_low, fr_fov_vox_high], dim=0),
+#             affine_fr_vox2lr_vox,
+#         ).round(decimals=self.SPATIAL_COORD_PRECISION)
+#         # To find the desired slices that make the LR fov be contained within the FR fov,
+#         # round the bbox surrounding the FR fov, in LR voxels, to the next "interior" LR
+#         # voxel. Also, limit the slices to be within the LR fov.
+#         lr_fov_vox_low = (0,) * len(lr_fov_vox)
+#         lr_fov_vox_low = lr_affine_vox2world.new_tensor((0,) * len(lr_fov_vox))
+#         lr_fov_vox_high = lr_affine_vox2world.new_tensor(lr_fov_vox)
+#         bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov = (
+#             torch.maximum(
+#                 bbox_fr_fov_in_lr_vox[0].ceil().to(torch.int), lr_fov_vox_low
+#             ),
+#             torch.minimum(
+#                 bbox_fr_fov_in_lr_vox[1].floor().to(torch.int), lr_fov_vox_high
+#             ),
+#         )
+
+#         lr_slices = self.cropper.compute_slices(
+#             roi_start=bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov[0],
+#             roi_end=bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov[1],
+#         )
+
+#         for key in self.key_iterator(d):
+#             d[key] = self.cropper(d[key], lr_slices)  # type: ignore
+#         return d
+
+
+class CropFRInsideFoVNLRVox(monai.transforms.MapTransform):
+
+    backend = monai.transforms.Crop.backend
+    SPATIAL_COORD_PRECISION = 5
+
+    def __init__(
+        self,
+        keys,
+        affine_fr_vox2world_key,
+        affine_lr_patch_vox2world_key,
+        lr_vox_extent_fov_im_key,
+        fr_vox_extent_fov_im_key,
+        n_lr_vox_fr_interior_buffer=1,
+        allow_missing_keys=False,
+    ):
+        monai.transforms.MapTransform.__init__(self, keys, allow_missing_keys)
+        self.cropper = monai.transforms.Crop()
+        self.n_lr_vox_fr_interior_buffer = n_lr_vox_fr_interior_buffer
+        self.affine_fr_vox2world_key = affine_fr_vox2world_key
+        self.affine_lr_patch_vox2world_key = affine_lr_patch_vox2world_key
+        self.lr_vox_extent_fov_im_key = lr_vox_extent_fov_im_key
+        self.fr_vox_extent_fov_im_key = fr_vox_extent_fov_im_key
+
+    def __call__(self, data) -> dict:
+        d = dict(data)
+        lr_fov_vox = tuple(d[self.lr_vox_extent_fov_im_key].shape[-3:])
+        fr_fov_vox = tuple(d[self.fr_vox_extent_fov_im_key].shape[-3:])
+        lr_affine_vox2world = torch.as_tensor(d[self.affine_lr_patch_vox2world_key])
+        fr_affine_vox2world = torch.as_tensor(d[self.affine_fr_vox2world_key])
+        shared_dtype = torch.result_type(lr_affine_vox2world, fr_affine_vox2world)
+        lr_affine_vox2world = lr_affine_vox2world.to(shared_dtype)
+        fr_affine_vox2world = fr_affine_vox2world.to(shared_dtype)
+
+        # Transform the desired LR FoV bounds into FR voxel coordinates, then "shrink"
+        # the FR bbox to fit within those bounds.
+        # Map the LR fov bounds to FR vox coordinates.
+        affine_lr_vox2fr_vox = (
+            torch.linalg.inv(fr_affine_vox2world) @ lr_affine_vox2world
+        )
+        # Account for any floating point errors that may cause the bottom row in the
+        # homogeneous matrix to be invalid.
+        affine_lr_vox2fr_vox[-1] = torch.round(torch.abs(affine_lr_vox2fr_vox[-1]))
+
+        # Reduce the LR fov by the desired buffer size, and find the lower corner of
+        # the (reduced) bounding box.
+        lr_fov_vox_low = (0,) * len(lr_fov_vox)
+        lr_fov_vox_low = affine_lr_vox2fr_vox.new_tensor((0,) * len(lr_fov_vox))
+        lr_fov_vox_low = lr_fov_vox_low + self.n_lr_vox_fr_interior_buffer
+        lr_fov_vox_high = affine_lr_vox2fr_vox.new_tensor(lr_fov_vox)
+        lr_fov_vox_high = lr_fov_vox_high - self.n_lr_vox_fr_interior_buffer
+
+        # Calculate the bbox coordinates of the reduced LR fov in FR voxels.
+        bbox_lr_fov_in_fr_vox = pitn.affine.transform_coords(
+            torch.stack([lr_fov_vox_low, lr_fov_vox_high], dim=0),
+            affine_lr_vox2fr_vox,
+        ).round(decimals=self.SPATIAL_COORD_PRECISION)
+        # To find the desired slices that make the FR fov be contained within the LR fov,
+        # round the bbox surrounding the LR fov, in FR voxels, to the next "interior" FR
+        # voxel. Also, limit the slices to be within the FR fov.
+        fr_fov_vox_low = (0,) * len(fr_fov_vox)
+        fr_fov_vox_low = fr_affine_vox2world.new_tensor((0,) * len(fr_fov_vox))
+        fr_fov_vox_high = fr_affine_vox2world.new_tensor(fr_fov_vox)
+        new_fr_bbox_inside_lr_buffer = (
+            torch.maximum(
+                bbox_lr_fov_in_fr_vox[0].ceil().to(torch.int), fr_fov_vox_low
+            ),
+            torch.minimum(
+                bbox_lr_fov_in_fr_vox[1].floor().to(torch.int), fr_fov_vox_high
+            ),
+        )
+
+        fr_slices = self.cropper.compute_slices(
+            roi_start=new_fr_bbox_inside_lr_buffer[0],
+            roi_end=new_fr_bbox_inside_lr_buffer[1],
+        )
+
+        for key in self.key_iterator(d):
+            d[key] = self.cropper(d[key], fr_slices)  # type: ignore
+        return d
+
+
+class ContainedFoVSpatialResampled(monai.transforms.SpatialResampled):
+    def __call__(
+        self, data: Mapping[Hashable, torch.Tensor], lazy: bool | None = None
+    ) -> dict[Hashable, torch.Tensor]:
+        """
+        Args:
+            data: a dictionary containing the tensor-like data to be processed. The ``keys`` specified
+                in this dictionary must be tensor like arrays that are channel first and have at most
+                three spatial dimensions
+            lazy: a flag to indicate whether this transform should execute lazily or not
+                during this call. Setting this to False or True overrides the ``lazy`` flag set
+                during initialization for this call. Defaults to None.
+
+        Returns:
+            a dictionary containing the transformed data, as well as any other data present in the dictionary
+        """
+
+        n_vox_edge_buffer = 1
+        lazy_ = self.lazy if lazy is None else lazy
+        d: dict = dict(data)
+        # Add a quick-and-dirty cache in case all key-ed volumes are the same shape,
+        # and all have the same source affines.
+        sp_srcaff_dstaff2dst_sp = list()
+        for key, mode, padding_mode, align_corners, dtype, dst_key in self.key_iterator(
+            d,
+            self.mode,
+            self.padding_mode,
+            self.align_corners,
+            self.dtype,
+            self.dst_keys,
+        ):
+            # Override the spatial size such that the interpolation does not
+            # need to be padded.
+            src_affine = torch.as_tensor(d[key].affine)
+            dst_affine = torch.as_tensor(d[dst_key])
+            shared_dtype = torch.result_type(src_affine, dst_affine)
+            src_affine = src_affine.to(shared_dtype)
+            dst_affine = dst_affine.to(shared_dtype)
+            src_vox_upper_bound = torch.as_tensor(d[key].shape[1:])[None, :]
+            if (
+                sp_srcaff_dstaff2dst_sp
+                and torch.isclose(src_vox_upper_bound, sp_srcaff_dstaff2dst_sp[0]).all()
+                and torch.isclose(src_affine, sp_srcaff_dstaff2dst_sp[1]).all()
+                and torch.isclose(dst_affine, sp_srcaff_dstaff2dst_sp[2]).all()
+            ):
+                dst_vox_spatial_size_rounded = sp_srcaff_dstaff2dst_sp[-1]
+            else:
+                affine_src_vox2dst_vox = torch.linalg.inv(dst_affine) @ src_affine
+                # Add vox buffer to the higher edge of the fov.
+                dst_vox_upper_bound = (
+                    pitn.affine.transform_coords(
+                        src_vox_upper_bound, affine_src_vox2dst_vox
+                    )
+                    - n_vox_edge_buffer
+                )
+                dst_vox_spatial_size_rounded = tuple(
+                    dst_vox_upper_bound.floor().int().cpu().flatten().tolist()
+                )
+                if not sp_srcaff_dstaff2dst_sp:
+                    sp_srcaff_dstaff2dst_sp.append(src_vox_upper_bound)
+                    sp_srcaff_dstaff2dst_sp.append(src_affine)
+                    sp_srcaff_dstaff2dst_sp.append(dst_affine)
+                    sp_srcaff_dstaff2dst_sp.append(dst_vox_spatial_size_rounded)
+
+            d[key] = self.sp_transform(
+                img=d[key],
+                dst_affine=d[dst_key],
+                spatial_size=dst_vox_spatial_size_rounded,
+                mode=mode,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+                dtype=dtype,
+                lazy=lazy_,
+            )
+        return d
+
+
+def _crop_lr_inside_fr_spatial_surface(
     d: dict,
     keys_to_crop: tuple,
     output_keys: tuple,
     affine_fr_vox2world_key,
     lr_vox_extent_fov_im_key,
+    fr_vox_extent_fov_im_key,
     affine_lr_patch_vox2world_key,
     im_cropper,
 ):
     SPATIAL_COORD_PRECISION = 5
     lr_fov_vox = tuple(d[lr_vox_extent_fov_im_key].shape[-3:])
+    fr_fov_vox = tuple(d[fr_vox_extent_fov_im_key].shape[-3:])
     lr_affine_vox2world = torch.as_tensor(d[affine_lr_patch_vox2world_key])
     fr_affine_vox2world = torch.as_tensor(d[affine_fr_vox2world_key])
     shared_dtype = torch.result_type(lr_affine_vox2world, fr_affine_vox2world)
     lr_affine_vox2world = lr_affine_vox2world.to(shared_dtype)
     fr_affine_vox2world = fr_affine_vox2world.to(shared_dtype)
 
-    affine_lr_patch_vox2fr_vox = (
-        torch.linalg.inv(fr_affine_vox2world) @ lr_affine_vox2world
-    )
+    # Get the bounding box of the FR fov in LR voxel coordinates. If the FR bbox has
+    # voxel coordinates > 0 or < the LR fov shape, then the LR fov is out of bounds
+    # w.r.t. the FR spatial extent, and must be cropped to be entirely contained
+    # within the FR fov.
+    # Map the FR fov bounds to LR vox coordinates.
+    affine_fr_vox2lr_vox = torch.linalg.inv(lr_affine_vox2world) @ fr_affine_vox2world
     # Account for any floating point errors that may cause the bottom row in the
     # homogeneous matrix to be invalid.
-    affine_lr_patch_vox2fr_vox[-1] = torch.round(
-        torch.abs(affine_lr_patch_vox2fr_vox[-1])
-    )
+    affine_fr_vox2lr_vox[-1] = torch.round(torch.abs(affine_fr_vox2lr_vox[-1]))
+
+    # Find the lower corner of the bounding box.
+    fr_fov_vox_low = (0,) * len(fr_fov_vox)
+    fr_fov_vox_low = affine_fr_vox2lr_vox.new_tensor((0,) * len(fr_fov_vox))
+    fr_fov_vox_high = affine_fr_vox2lr_vox.new_tensor(fr_fov_vox)
+
+    # Calculate the bbox coordinates of the FR fov in LR voxels.
+    bbox_fr_fov_in_lr_vox = pitn.affine.transform_coords(
+        torch.stack([fr_fov_vox_low, fr_fov_vox_high], dim=0),
+        affine_fr_vox2lr_vox,
+    ).round(decimals=SPATIAL_COORD_PRECISION)
+    # To find the desired slices that make the LR fov be contained within the FR fov,
+    # round the bbox surrounding the FR fov, in LR voxels, to the next "interior" LR
+    # voxel. Also, limit the slices to be within the LR fov.
     lr_fov_vox_low = (0,) * len(lr_fov_vox)
-    fr_in_lr_fov_vox_low = (
-        pitn.affine.transform_coords(
-            lr_affine_vox2world.new_tensor(lr_fov_vox_low), affine_lr_patch_vox2fr_vox
-        )
-        .round_(decimals=SPATIAL_COORD_PRECISION)
-        .floor_()
-        .to(torch.int)
+    lr_fov_vox_low = lr_affine_vox2world.new_tensor((0,) * len(lr_fov_vox))
+    lr_fov_vox_high = lr_affine_vox2world.new_tensor(lr_fov_vox)
+    bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov = (
+        torch.maximum(bbox_fr_fov_in_lr_vox[0].ceil().to(torch.int), lr_fov_vox_low),
+        torch.minimum(bbox_fr_fov_in_lr_vox[1].floor().to(torch.int), lr_fov_vox_high),
     )
-    lr_fov_vox_high = lr_fov_vox
-    fr_in_lr_fov_vox_high = (
-        pitn.affine.transform_coords(
-            lr_affine_vox2world.new_tensor(lr_fov_vox_high), affine_lr_patch_vox2fr_vox
-        )
-        .round_(decimals=SPATIAL_COORD_PRECISION)
-        .ceil_()
-        .to(torch.int)
-    )
-    fr_patch_slices = monai.transforms.Crop.compute_slices(
-        roi_start=fr_in_lr_fov_vox_low, roi_end=fr_in_lr_fov_vox_high
+
+    lr_slices = monai.transforms.Crop.compute_slices(
+        roi_start=bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov[0],
+        roi_end=bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov[1],
     )
 
     if isinstance(keys_to_crop, str):
@@ -828,7 +826,7 @@ def _crop_fr_min_hull_by_lr_world_coords_extent(
     assert len(keys_to_crop) == len(output_keys)
     for k_in, k_out in zip(keys_to_crop, output_keys):
         im = d[k_in]
-        im_patch = im_cropper(im, fr_patch_slices)
+        im_patch = im_cropper(im, lr_slices)
         d[k_out] = im_patch
 
     return d
@@ -963,17 +961,20 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                 ),
             )
         )
-        augment_tfs = list()
-        baseline_non_augment_tfs = list()
 
         #### Augmentation transforms, subject to `augmentation prob`.
         # Random iso-scaling
         low, high = augment_iso_scale_factor_lr_spacing_mm_low_high
         # Randomly choose a scale, apply to an affine matrix, then resample from that.
-        scale_aff_tf = monai.transforms.RandLambdad(
-            "target_affine_lr_vox2world",
-            partial(_random_iso_scale_affine, scale_low=low, scale_high=high),
-            overwrite=True,
+        scale_shift_aff_tf = monai.transforms.adaptor(
+            partial(
+                _random_iso_center_scale_affine,
+                scale_low=low,
+                scale_high=high,
+                n_delta_buffer_scaled_vox=1,
+            ),
+            inputs={"affine_vox2world": "src_affine", "dwi": "src_spatial_sample"},
+            outputs="target_affine_lr_vox2world",
         )
         # Prefilter/blur DWI with a small gaussian filter. Sigma is chosen by a slightly
         # tweaked rule-of-thumb by default:
@@ -998,7 +999,7 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
             },
         )
         # Then downscale with bilinear (for the dwi) or nearest neighbor (masks/labels)
-        resample_lr_patch_tf = monai.transforms.SpatialResampled(
+        resample_lr_patch_tf = ContainedFoVSpatialResampled(
             **{
                 **dict(
                     keys=(
@@ -1010,13 +1011,25 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                         "lr_csf_mask",
                     ),
                     mode=["bilinear"] + (["nearest"] * 5),
-                    align_corners=True,
                     padding_mode="zeros",
+                    align_corners=True,
                     dst_keys="target_affine_lr_vox2world",
                 ),
                 **augment_spatial_resample_kwargs,
             }
         )
+
+        # Crop the full-resolution patch such that it lies 1 LR voxel within the
+        # LR spatial extent on all sides.
+        fr_crop_inside_lr_buffer_fov_tf = CropFRInsideFoVNLRVox(
+            keys=VOL_KEYS,
+            n_lr_vox_fr_interior_buffer=1,
+            affine_fr_vox2world_key="affine_vox2world",
+            affine_lr_patch_vox2world_key="target_affine_lr_vox2world",
+            fr_vox_extent_fov_im_key="dwi",
+            lr_vox_extent_fov_im_key="lr_dwi",
+        )
+
         # Random noise injection
         # Dipy constructs the std as `SNR = ref_signal / sigma`, with the ref being
         # the max value in the b0s. In HCP, this value is ~10,000 mm/s^2, so with an snr
@@ -1037,28 +1050,6 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                 **augment_rand_rician_noise_kwargs,
             }
         )
-
-        # Crop the target patch according to the center and fov of the lr patch,
-        # agnostic as to the target size of the LR patch.
-        # Crop the "minimum hull" such that the fr patch fully encompasses all points
-        # in the lr patch, extending beyond the lr coordinates by a maximum of 1 voxel.
-        fr_cropper = monai.transforms.Crop()
-        fr_crop_min_hull_tf = partial(
-            _crop_fr_min_hull_by_lr_world_coords_extent,
-            keys_to_crop=VOL_KEYS,
-            output_keys=VOL_KEYS,
-            affine_fr_vox2world_key="affine_vox2world",
-            lr_vox_extent_fov_im_key="lr_dwi",
-            affine_lr_patch_vox2world_key="target_affine_lr_vox2world",
-            im_cropper=fr_cropper,
-        )
-        # Crop this "min hull" by 1 voxel on each side to accomodate the INR
-        # output interpolation scheme.
-        fr_crop_by_1_tf = monai.transforms.SpatialCropd(
-            keys=VOL_KEYS,
-            roi_slices=(slice(1, -1),) * 3,
-        )
-
         # Apply random flips and rotations to both the lr patch and the fr patch.
         # Random 90 degree rotations
         # These won't produce a uniform distribution of final orientations, but that
@@ -1085,55 +1076,52 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         flip_z_tf = monai.transforms.RandFlipd(
             keys=VOL_KEYS + LR_VOL_KEYS, spatial_axis=2, **augment_rand_flip_kwargs
         )
-        augment_tfs.append(scale_aff_tf)
-        augment_tfs.append(prefilter_tf)
-        augment_tfs.append(resample_lr_patch_tf)
-        augment_tfs.append(noise_tf)
-        augment_tfs.append(fr_crop_min_hull_tf)
-        augment_tfs.append(fr_crop_by_1_tf)
-        augment_tfs.append(rotate_xy_tf)
-        augment_tfs.append(rotate_yz_tf)
-        augment_tfs.append(flip_x_tf)
-        augment_tfs.append(flip_y_tf)
-        augment_tfs.append(flip_z_tf)
-
+        augment_tfs = [
+            scale_shift_aff_tf,
+            prefilter_tf,
+            resample_lr_patch_tf,
+            fr_crop_inside_lr_buffer_fov_tf,
+            noise_tf,
+            rotate_xy_tf,
+            rotate_yz_tf,
+            flip_x_tf,
+            flip_y_tf,
+            flip_z_tf,
+        ]
         augment_tfs = monai.transforms.Compose(augment_tfs)
 
         #### Baseline transforms, which reuse some of the augment transforms.
         # The scaling is "random," but there's only one value that can be selected.
-        baseline_scale_aff_tf = monai.transforms.Lambdad(
-            "target_affine_lr_vox2world",
+        baseline_scale_shift_aff_tf = monai.transforms.adaptor(
             partial(
-                _random_iso_scale_affine,
+                _random_iso_center_scale_affine,
                 scale_low=baseline_iso_scale_factor_lr_spacing_mm_low_high,
                 scale_high=baseline_iso_scale_factor_lr_spacing_mm_low_high,
             ),
-            overwrite=True,
+            inputs={"affine_vox2world": "src_affine", "dwi": "src_spatial_sample"},
+            outputs="target_affine_lr_vox2world",
         )
+        # Remove augmentation kwargs from the baseline downsampler.
         baseline_resample_lr_patch_tf = monai.transforms.SpatialResampled(
-            **{
-                **dict(
-                    keys=(
-                        "lr_dwi",
-                        "lr_brain_mask",
-                        "lr_fivett",
-                        "lr_wm_mask",
-                        "lr_gm_mask",
-                        "lr_csf_mask",
-                    ),
-                    mode=["bilinear"] + (["nearest"] * 5),
-                    padding_mode="zeros",
-                    align_corners=True,
-                    dst_keys="target_affine_lr_vox2world",
-                ),
-                **augment_spatial_resample_kwargs,
-            }
+            keys=(
+                "lr_dwi",
+                "lr_brain_mask",
+                "lr_fivett",
+                "lr_wm_mask",
+                "lr_gm_mask",
+                "lr_csf_mask",
+            ),
+            mode=["bilinear"] + (["nearest"] * 5),
+            padding_mode="zeros",
+            align_corners=True,
+            dst_keys="target_affine_lr_vox2world",
         )
-        baseline_non_augment_tfs.append(baseline_scale_aff_tf)
-        baseline_non_augment_tfs.append(copy.deepcopy(prefilter_tf))
-        baseline_non_augment_tfs.append(baseline_resample_lr_patch_tf)
-        baseline_non_augment_tfs.append(copy.deepcopy(fr_crop_min_hull_tf))
-        baseline_non_augment_tfs.append(copy.deepcopy(fr_crop_by_1_tf))
+        baseline_non_augment_tfs = [
+            baseline_scale_shift_aff_tf,
+            copy.deepcopy(prefilter_tf),
+            baseline_resample_lr_patch_tf,
+            copy.deepcopy(fr_crop_inside_lr_buffer_fov_tf),
+        ]
         baseline_non_augment_tfs = monai.transforms.Compose(baseline_non_augment_tfs)
 
         # Create a transformation branch conditioned on the chance of whether or not

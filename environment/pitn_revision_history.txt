@@ -616,3 +616,6 @@
     -protobuf-4.21.12 (conda-forge/linux-64)
     -pyyaml-6.0 (conda-forge/linux-64)
     -rsa-4.9 (conda-forge/noarch)
+
+2023-06-15 10:56:24  (rev 2)
+     monai  {1.0.1 (conda-forge/noarch) -> 1.2.0 (conda-forge/noarch)}

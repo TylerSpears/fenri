@@ -357,7 +357,7 @@ mkl==2022.1.0
 mkl-devel==2022.1.0
 mkl-include==2022.1.0
 mock==4.0.3
-monai==1.0.1
+monai==1.2.0
 more-itertools==8.14.0
 mpg123==1.31.2
 mrtrix3==3.0.4

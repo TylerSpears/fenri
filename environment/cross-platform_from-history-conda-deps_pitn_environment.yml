@@ -347,7 +347,7 @@ dependencies:
   - mdurl==0.1.0
   - mistune==0.8.4
   - mock==4.0.3
-  - monai==1.0.1
+  - monai
   - more-itertools==8.14.0
   - mpg123==1.31.2
   - mrtrix3==3.0.4
