@@ -1182,21 +1182,22 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         )
         # Remove unnecessary items from the data dict.
         # Sub-select keys to free memory.
-        select_k_tf = monai.transforms.SelectItemsd(
-            (
-                "subj_id",
-                "affine_vox2world",
-                "affine_lr_vox2world",
-                "vox_size",
-                "lr_vox_size",
+        feat_tfs.append(
+            monai.transforms.SelectItemsd(
+                (
+                    "subj_id",
+                    "affine_vox2world",
+                    "affine_lr_vox2world",
+                    "vox_size",
+                    "lr_vox_size",
+                )
+                + curr_vol_keys
+                + curr_lr_vol_keys,
             )
-            + curr_vol_keys
-            + curr_lr_vol_keys,
         )
-        feat_tfs.append(select_k_tf)
 
         # Convert all MetaTensors to regular Tensors.
-        to_tensor_tf = monai.transforms.ToTensord(
+        all_tensor_keys = (
             (
                 "affine_vox2world",
                 "affine_lr_vox2world",
@@ -1204,35 +1205,61 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                 "lr_vox_size",
             )
             + curr_vol_keys
-            + curr_lr_vol_keys,
-            track_meta=False,
+            + curr_lr_vol_keys
         )
-        feat_tfs.append(to_tensor_tf)
+        feat_tfs.append(
+            monai.transforms.CastToTyped(
+                (
+                    "affine_vox2world",
+                    "affine_lr_vox2world",
+                    "vox_size",
+                    "lr_vox_size",
+                    "fodf",
+                    "lr_dwi",
+                )
+                + (
+                    "brain_mask",
+                    "wm_mask",
+                    "gm_mask",
+                    "csf_mask",
+                    "lr_brain_mask",
+                ),
+                dtype=[torch.float32] * 6 + [torch.bool] * 5,
+            ),
+        )
+        feat_tfs.append(
+            monai.transforms.FromMetaTensord(
+                curr_vol_keys + curr_lr_vol_keys, data_type="tensor"
+            )
+        )
+        feat_tfs.append(monai.transforms.SelectItemsd(all_tensor_keys + ("subj_id",)))
 
         return monai.transforms.Compose(feat_tfs)
 
 
-class HCPfODFINRWholeVolDataset(monai.data.Dataset):
+class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
+
     _SAMPLE_KEYS = (
         "subj_id",
-        "lr_dwi",
-        "lr_fodf",
-        "lr_bval",
-        "lr_bvec",
-        "lr_vox_size",
-        "lr_extent_world",
-        "lr_freesurfer_seg",
-        "lr_fivett",
-        "affine_lr_vox2world",
         "fodf",
+        "brain_mask",
         "fivett",
-        "mask",
+        "wm_mask",
+        "gm_mask",
+        "csf_mask",
         "vox_size",
-        "extent_world",
         "affine_vox2world",
+        "lr_dwi",
+        "lr_brain_mask",
+        "lr_vox_size",
+        "affine_lr_vox2world",
     )
 
-    def __init__(self, base_dataset, transform=None):
+    def __init__(
+        self,
+        base_dataset,
+        transform=None,
+    ):
         self.base_dataset = base_dataset
         super().__init__(
             self.base_dataset,
@@ -1240,142 +1267,208 @@ class HCPfODFINRWholeVolDataset(monai.data.Dataset):
         )
 
     @staticmethod
-    def default_tf():
-        # Transforms for extracting features for the network.
+    def default_vol_tf(
+        baseline_iso_scale_factor_lr_spacing_mm_low_high: float,
+        scale_prefilter_kwargs: dict = dict(),
+    ):
+
+        VOL_KEYS = (
+            "dwi",
+            "fodf",
+            "brain_mask",
+            "fivett",
+            "wm_mask",
+            "gm_mask",
+            "csf_mask",
+        )
+        LR_VOL_KEYS = (
+            "lr_dwi",
+            "lr_brain_mask",
+            "lr_fivett",
+            "lr_wm_mask",
+            "lr_gm_mask",
+            "lr_csf_mask",
+        )
+
+        # Transforms for whole-brain volumes as input to the network.
         feat_tfs = list()
 
-        # Extract LR features.
-        # Pad the low-res by 3 in each direction, to compensate for off-by-1 (1-ish)
-        # errors in re-sampling in the network.
-        off_by_1_padder = monai.transforms.BorderPadd(
-            ["lr_dwi", "lr_fodf", "lr_mask", "lr_fivett", "lr_freesurfer_seg"],
-            spatial_border=3,
-            mode="constant",
-            value=0,
-        )
-        feat_tfs.append(off_by_1_padder)
-        # Extract the LR affine matrix.
-        # NOTE: replace with an adaptor transform
+        # Pad the full-resolution volumes, because various transformations will require
+        # cropping, and we can safely 0-pad here.
         feat_tfs.append(
-            functools.partial(
-                _extract_affine,
-                src_vol_key="lr_dwi",
-                write_key="affine_lr_vox2world",
+            monai.transforms.BorderPadd(
+                keys=VOL_KEYS, spatial_border=4, mode="constant", value=0
             )
         )
-        lr_vox_size_tf = monai.transforms.adaptor(
-            monai.data.utils.affine_to_spacing,
-            outputs="lr_vox_size",
-            inputs={"affine_lr_vox2world": "affine"},
-        )
-        feat_tfs.append(lr_vox_size_tf)
 
-        lr_extent_world_tf = monai.transforms.adaptor(
-            _get_extent_world,
-            outputs="lr_extent_world",
-            inputs={"lr_dwi": "x_pre_img", "affine_lr_vox2world": "affine"},
-        )
-        feat_tfs.append(lr_extent_world_tf)
-
-        # Extract full-res features.
-        # Crop the full-res by 2 in each direction, to compensate for off-by-1 (1-ish)
-        # errors in re-sampling in the network.
-        # off_by_1_cropper = monai.transforms.SpatialCropd(
-        #     ["fodf", "mask"], roi_slices=(slice(2, -2), slice(2, -2), slice(2, -2))
-        # )
-        # feat_tfs.append(off_by_1_cropper)
-        # Extract the full-res affine matrix.
-        # NOTE: replace with an adaptor transform
+        # Extract the vol affine matrix.
         feat_tfs.append(
-            functools.partial(
-                _extract_affine,
-                src_vol_key="fodf",
-                write_key="affine_vox2world",
+            monai.transforms.adaptor(
+                _extract_affine, outputs="affine_vox2world", inputs={"dwi": "src_vol"}
             )
         )
-        vox_size_tf = monai.transforms.adaptor(
-            monai.data.utils.affine_to_spacing,
-            outputs="vox_size",
-            inputs={"affine_vox2world": "affine"},
+        feat_tfs.append(
+            monai.transforms.CopyItemsd(
+                keys=["affine_vox2world"],
+                times=1,
+                names=["target_affine_lr_vox2world"],
+            )
         )
-        feat_tfs.append(vox_size_tf)
-
-        extent_world_tf = monai.transforms.adaptor(
-            _get_extent_world,
-            outputs="extent_world",
-            inputs={"fodf": "x_pre_img", "affine_vox2world": "affine"},
+        # Make copies of the vols that will be downsampled.
+        feat_tfs.append(
+            monai.transforms.CopyItemsd(
+                keys=("dwi", "brain_mask", "fivett", "wm_mask", "gm_mask", "csf_mask"),
+                times=1,
+                names=(
+                    "lr_dwi",
+                    "lr_brain_mask",
+                    "lr_fivett",
+                    "lr_wm_mask",
+                    "lr_gm_mask",
+                    "lr_csf_mask",
+                ),
+            )
         )
-        feat_tfs.append(extent_world_tf)
 
+        # Scale and center the LR target affine matrix for later resampling.
+        # The scaling is "random," but there's only one value that can be selected.
+        feat_tfs.append(
+            monai.transforms.adaptor(
+                partial(
+                    _random_iso_center_scale_affine,
+                    scale_low=baseline_iso_scale_factor_lr_spacing_mm_low_high,
+                    scale_high=baseline_iso_scale_factor_lr_spacing_mm_low_high,
+                ),
+                inputs={"affine_vox2world": "src_affine", "dwi": "src_spatial_sample"},
+                outputs="target_affine_lr_vox2world",
+            )
+        )
+
+        # Prefilter/blur DWI with a small gaussian filter. Sigma is chosen by a slightly
+        # tweaked rule-of-thumb by default:
+        # sigma = 1 / 2.5 * (high_res_spacing / low_res_spacing)
+        # NOTE: The given values should match those used in training!
+        prefilter_fn = partial(
+            prefilter_gaussian_blur,
+            **{
+                **dict(sigma_scale_coeff=2.5, sigma_truncate=4.0),
+                **scale_prefilter_kwargs,
+            },
+        )
+        # Blur, then downsample the full-res DWI vol to create the LR vol
+        feat_tfs.append(
+            monai.transforms.adaptor(
+                prefilter_fn,
+                outputs="lr_dwi",
+                inputs={
+                    "lr_dwi": "vol",
+                    "affine_vox2world": "src_affine",
+                    "target_affine_lr_vox2world": "target_affine",
+                },
+            )
+        )
+
+        feat_tfs.append(
+            monai.transforms.SpatialResampled(
+                keys=(
+                    "lr_dwi",
+                    "lr_brain_mask",
+                    "lr_fivett",
+                    "lr_wm_mask",
+                    "lr_gm_mask",
+                    "lr_csf_mask",
+                ),
+                mode=["bilinear"] + (["nearest"] * 5),
+                padding_mode="zeros",
+                align_corners=True,
+                dst_keys="target_affine_lr_vox2world",
+            )
+        )
+
+        # Crop the full-resolution patch such that it lies 1 LR voxel within the
+        # LR spatial extent on all sides.
+        feat_tfs.append(
+            CropFRInsideFoVNLRVox(
+                keys=VOL_KEYS,
+                n_lr_vox_fr_interior_buffer=1,
+                affine_fr_vox2world_key="affine_vox2world",
+                affine_lr_patch_vox2world_key="target_affine_lr_vox2world",
+                fr_vox_extent_fov_im_key="dwi",
+                lr_vox_extent_fov_im_key="lr_dwi",
+            )
+        )
+
+        # Remove the full resolution DWI as it is not used, for now.
+        feat_tfs.append(
+            monai.transforms.DeleteItemsd(
+                keys=(
+                    "dwi",
+                    "target_affine_lr_vox2world",
+                )
+            )
+        )
+        curr_vol_keys = tuple(set(VOL_KEYS) - {"dwi"})
+
+        # Extract the new LR vol affine matrix.
+        feat_tfs.append(
+            monai.transforms.adaptor(
+                _extract_affine,
+                outputs="affine_lr_vox2world",
+                inputs={"lr_dwi": "src_vol"},
+            )
+        )
+        feat_tfs.append(
+            monai.transforms.adaptor(
+                monai.data.utils.affine_to_spacing,
+                outputs="lr_vox_size",
+                inputs={"affine_lr_vox2world": "affine"},
+            )
+        )
+        # Similarly for the FR vol.
+        feat_tfs.append(
+            monai.transforms.adaptor(
+                _extract_affine, outputs="affine_vox2world", inputs={"fodf": "src_vol"}
+            )
+        )
+        feat_tfs.append(
+            monai.transforms.adaptor(
+                monai.data.utils.affine_to_spacing,
+                outputs="vox_size",
+                inputs={"affine_vox2world": "affine"},
+            )
+        )
+
+        curr_vol_keys = tuple(set(curr_vol_keys) - {"fivett"})
+        curr_lr_vol_keys = tuple(
+            set(LR_VOL_KEYS) - {"lr_fivett", "lr_csf_mask", "lr_wm_mask", "lr_gm_mask"}
+        )
         # Remove unnecessary items from the data dict.
         # Sub-select keys to free memory.
         select_k_tf = monai.transforms.SelectItemsd(
-            [
+            (
                 "subj_id",
-                "lr_dwi",
-                "lr_fodf",
-                "lr_mask",
-                "affine_lr_vox2world",
-                # "lr_bval",
-                # "lr_bvec",
-                "lr_freesurfer_seg",
-                "lr_fivett",
-                "lr_extent_world",
-                "lr_vox_size",
-                "fodf",
-                "mask",
-                "fivett",
-                "extent_world",
                 "affine_vox2world",
+                "affine_lr_vox2world",
                 "vox_size",
-            ]
+                "lr_vox_size",
+            )
+            + curr_vol_keys
+            + curr_lr_vol_keys,
         )
         feat_tfs.append(select_k_tf)
 
         # Convert all MetaTensors to regular Tensors.
         to_tensor_tf = monai.transforms.ToTensord(
-            [
-                "lr_dwi",
-                "lr_fodf",
-                "lr_mask",
-                "lr_extent_world",
-                "lr_freesurfer_seg",
-                "lr_fivett",
-                "lr_vox_size",
-                "affine_lr_vox2world",
-                "fodf",
-                "mask",
-                "fivett",
-                "extent_world",
-                "vox_size",
+            (
                 "affine_vox2world",
-            ],
+                "affine_lr_vox2world",
+                "vox_size",
+                "lr_vox_size",
+            )
+            + curr_vol_keys
+            + curr_lr_vol_keys,
             track_meta=False,
         )
         feat_tfs.append(to_tensor_tf)
-        # ~~Generate features from each DWI and the associated bval and bvec.~~
-
-        select_k_tf = monai.transforms.SelectItemsd(
-            [
-                "subj_id",
-                "lr_dwi",
-                "lr_fodf",
-                "lr_mask",
-                "lr_extent_world",
-                "lr_freesurfer_seg",
-                "lr_fivett",
-                "lr_vox_size",
-                "affine_lr_vox2world",
-                # "lr_bval",
-                # "lr_bvec",
-                "fodf",
-                "mask",
-                "fivett",
-                "extent_world",
-                "affine_vox2world",
-                "vox_size",
-            ]
-        )
-        feat_tfs.append(select_k_tf)
 
         return monai.transforms.Compose(feat_tfs)
