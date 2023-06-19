@@ -183,7 +183,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "test_resize_augment_long_run"
+p.experiment_name = "test_size_augment_masking_symmetric_padding"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -214,41 +214,45 @@ p.scale_prefilter_kwargs = dict(
     sigma_truncate=4.0,
 )
 p.train = dict(
-    patch_spatial_size=(40, 40, 40),
+    patch_spatial_size=(36, 36, 36),
     batch_size=4,
-    samples_per_subj_per_epoch=40,
-    max_epochs=200,
+    samples_per_subj_per_epoch=50,
+    # samples_per_subj_per_epoch=150,  #!testing/debug
+    # max_epochs=200,
+    max_epochs=100,  #!testing/debug
     dwi_recon_epoch_proportion=0.05,
+    # dwi_recon_epoch_proportion=0.01,  #!testing/debug
     sample_mask_key="wm_mask",
 )
 p.train.augment = dict(
     # augmentation_prob=0.0,  #!testing/debug
+    # augmentation_prob=1.0,  #!testing/debug
     augmentation_prob=0.3,
     baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
     scale_prefilter_kwargs=p.scale_prefilter_kwargs,
     augment_iso_scale_factor_lr_spacing_mm_low_high=(1.65, 1.9),
     augment_rand_rician_noise_kwargs={"prob": 0.0},
-    augment_rand_rotate_90_kwargs={"prob": 0.0},
-    augment_rand_flip_kwargs={"prob": 0.0},
+    augment_rand_rotate_90_kwargs={"prob": 0.5},
+    augment_rand_flip_kwargs={"prob": 0.5},
 )
 # Optimizer kwargs for training.
 p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=12, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=16, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
     interior_channels=80,
-    out_channels=96,
+    out_channels=128,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
     input_coord_channels=True,
 )
 p.decoder = dict(
-    context_v_features=96,
+    context_v_features=128,
     in_features=p.encoder.out_channels,
     out_features=45,
     m_encode_num_freqs=36,
@@ -354,7 +358,7 @@ with warnings.catch_warnings(record=True) as warn_list:
             bval_sub_sample_fn=bval_sub_sample_fn,
         ),
         copy_cache=False,
-        num_workers=10,
+        num_workers=12,
     )
 
 train_dataset = pitn.data.datasets2.HCPfODFINRPatchDataset(
@@ -637,6 +641,7 @@ class Decoder(torch.nn.Module):
         context_v,
         context_world_coord,
         query_world_coord,
+        query_world_coord_mask,
         query_sub_grid_coord,
         context_sub_grid_coord,
     ):
@@ -652,14 +657,15 @@ class Decoder(torch.nn.Module):
         encoded_rel_q2ctx_coord = self.encode_relative_coord(
             rel_q2ctx_norm_sub_grid_coord
         )
-
+        # b n 1 -> b 1 n
+        context_v = context_v * query_world_coord_mask[:, None, :, 0]
         # Perform forward pass of the MLP.
         if self.norm_pre is not None:
             context_v = self.norm_pre(context_v)
         # Group batches and queries-per-batch into just batches, keep context channels
         # as the feature vector.
         context_feats = einops.rearrange(context_v, "b channels n -> (b n) channels")
-
+        feat_mask = einops.rearrange(query_world_coord_mask, "b n 1 -> (b n) 1")
         coord_feats = (
             context_world_coord,
             query_world_coord,
@@ -668,8 +674,8 @@ class Decoder(torch.nn.Module):
         coord_feats = torch.cat(coord_feats, dim=-1)
 
         coord_feats = einops.rearrange(coord_feats, "b n coord -> (b n) coord")
-        x_coord = coord_feats
-        y_sub_grid_pred = context_feats
+        x_coord = coord_feats * feat_mask
+        y_sub_grid_pred = context_feats * feat_mask
 
         if self.lin_pre is not None:
             y_sub_grid_pred = self.lin_pre(y_sub_grid_pred)
@@ -690,6 +696,7 @@ class Decoder(torch.nn.Module):
         context_v: torch.Tensor,
         context_world_coord_grid: torch.Tensor,
         query_world_coord: torch.Tensor,
+        query_world_coord_mask: torch.Tensor,
         affine_context_vox2world: torch.Tensor,
         affine_query_vox2world: torch.Tensor,
         context_vox_size_world: torch.Tensor,
@@ -703,6 +710,16 @@ class Decoder(torch.nn.Module):
             query_world_coord, "b ... c -> b (...) c", b=batch_size, c=3
         )
         n_q_per_batch = q_world.shape[1]
+        # Query mask should be b x y z 1
+        q_mask = einops.rearrange(query_world_coord_mask, "b ... 1 -> b (...) 1")
+        # Replace each unmasked (i.e., invalid) query point by a dummy point, in this
+        # case a point from roughly the middle of each batch of query points, which
+        # should be as safe as possible from being out of bounds wrt the context vox
+        # indices.
+        dummy_q_world = q_world[:, (n_q_per_batch // 2)]
+        dummy_q_world.unsqueeze_(1)
+        # Replace all unmasked q world coords with the dummy coord.
+        q_world = torch.where(q_mask, q_world, dummy_q_world)
 
         affine_world2ctx_vox = torch.linalg.inv(affine_context_vox2world)
         q_ctx_vox = pitn.affine.transform_coords(q_world, affine_world2ctx_vox)
@@ -720,9 +737,9 @@ class Decoder(torch.nn.Module):
             n=n_q_per_batch,
         )
         q_sub_grid_coord = q_ctx_vox - q_ctx_vox_bottom.to(q_ctx_vox)
-        q_bottom_in_world_coord = pitn.affine.transform_coords(
-            q_ctx_vox_bottom.to(affine_context_vox2world), affine_context_vox2world
-        )
+        # q_bottom_in_world_coord = pitn.affine.transform_coords(
+        #     q_ctx_vox_bottom.to(affine_context_vox2world), affine_context_vox2world
+        # )
 
         y_weighted_accumulate = None
         # Build the low-res representation one sub-grid voxel index at a time.
@@ -758,16 +775,26 @@ class Decoder(torch.nn.Module):
                 b=batch_size,
                 n=n_q_per_batch,
             )
-            sub_grid_offset_xyz = (
-                sub_grid_offset_ijk * context_vox_size_world.unsqueeze(1)
+            sub_grid_context_world_coord = context_world_coord_grid[
+                batch_vox_idx.flatten(),
+                sub_grid_index_ijk[..., 0].flatten(),
+                sub_grid_index_ijk[..., 1].flatten(),
+                sub_grid_index_ijk[..., 2].flatten(),
+                :,
+            ]
+            sub_grid_context_world_coord = einops.rearrange(
+                sub_grid_context_world_coord,
+                "(b n) coords -> b n coords",
+                b=batch_size,
+                n=n_q_per_batch,
             )
-            sub_grid_context_world_coord = q_bottom_in_world_coord + sub_grid_offset_xyz
 
             sub_grid_pred_ijk = self.sub_grid_forward(
                 context_v=sub_grid_context_v,
                 context_world_coord=sub_grid_context_world_coord,
                 query_world_coord=q_world,
                 query_sub_grid_coord=q_sub_grid_coord,
+                query_world_coord_mask=q_mask,
                 context_sub_grid_coord=sub_grid_offset_ijk,
             )
             # Initialize the accumulated prediction after finding the
@@ -838,8 +865,8 @@ def calc_grad_norm(model, norm_type=2):
 def batchwise_masked_mse(y_pred, y, mask):
     masked_y_pred = y_pred.clone()
     masked_y = y.clone()
-    masked_y_pred[mask] = torch.nan
-    masked_y[mask] = torch.nan
+    masked_y_pred[~mask] = torch.nan
+    masked_y[~mask] = torch.nan
     se = F.mse_loss(masked_y_pred, masked_y, reduction="none")
     se = se.reshape(se.shape[0], -1)
     mse = torch.nanmean(se, dim=1)
@@ -872,7 +899,7 @@ def validate_stage(
 
             x = batch_dict["lr_dwi"]
             batch_size = x.shape[0]
-            x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
+            # x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
             x_affine_vox2world = batch_dict["affine_lr_vox2world"]
             x_vox_size = batch_dict["lr_vox_size"]
             x_coords = pitn.affine.affine_coordinate_grid(
@@ -898,8 +925,8 @@ def validate_stage(
 
             # Concatenate the input world coordinates as input features into the
             # encoder. Mask out the x coordinates that are not to be considered.
-            x_coords_encoder = (
-                einops.rearrange(x_coords, "b x y z coord -> b coord x y z") * x_mask
+            x_coords_encoder = einops.rearrange(
+                x_coords, "b x y z coord -> b coord x y z"
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
 
@@ -907,14 +934,26 @@ def validate_stage(
 
             # Whole-volume inference is memory-prohibitive, so use a sliding
             # window inference method on the encoded volume.
+            # Transform y_coords into a coordinates-first shape, for the interface, and
+            # attach the mask for compatibility with the sliding inference function.
+            y_slide_window = torch.cat(
+                [
+                    einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
+                    y_mask.to(y_coords),
+                ],
+                dim=1,
+            )
+            fn_coordify = lambda x: einops.rearrange(
+                x, "b coord x y z -> b x y z coord"
+            )
             pred_fodf = monai.inferers.sliding_window_inference(
-                # Transform y_coords into a coordinates-first shape, for the interface.
-                einops.rearrange(y_coords, "b x y z c -> b c x y z"),
-                roi_size=(36, 36, 36),
+                y_slide_window,
+                roi_size=(48, 48, 48),
                 sw_batch_size=y_coords.shape[0],
                 predictor=lambda q: decoder(
                     # Rearrange back into coord-last format.
-                    query_world_coord=einops.rearrange(q, "b c x y z -> b x y z c"),
+                    query_world_coord=fn_coordify(q[:, :-1]),
+                    query_world_coord_mask=fn_coordify(q[:, -1:].bool()),
                     context_v=ctx_v,
                     context_world_coord_grid=x_coords,
                     affine_context_vox2world=x_affine_vox2world,
@@ -934,35 +973,38 @@ def validate_stage(
             # If visualization subj_id is in this batch, create the visual and log it.
             if subj_id == val_viz_subj_id:
                 with mpl.rc_context({"font.size": 6.0}):
-                    figsize = (8, 5)
-                    width_pixels = 3 * (
-                        pred_fodf.shape[2] + pred_fodf.shape[3] + pred_fodf.shape[4]
-                    )
-                    height_pixels = 5 * min(
-                        pred_fodf.shape[2], pred_fodf.shape[3], pred_fodf.shape[4]
-                    )
-                    target_dpi = int(
-                        np.ceil(
-                            np.sqrt(
-                                (width_pixels * height_pixels)
-                                / ((0.95 * figsize[0]) * (0.9 * figsize[1]))
-                            )
-                        )
-                    )
-                    target_dpi = max(target_dpi, 175)
-                    fig = plt.figure(dpi=target_dpi, figsize=figsize)
-                    fig, _ = pitn.viz.plot_fodf_coeff_slices(
+                    # figsize = (8, 5)
+                    # width_pixels = 3 * (
+                    #     pred_fodf.shape[2] + pred_fodf.shape[3] + pred_fodf.shape[4]
+                    # )
+                    # height_pixels = 5 * min(
+                    #     pred_fodf.shape[2], pred_fodf.shape[3], pred_fodf.shape[4]
+                    # )
+                    # target_dpi = int(
+                    #     np.ceil(
+                    #         np.sqrt(
+                    #             (width_pixels * height_pixels)
+                    #             / ((0.95 * figsize[0]) * (0.9 * figsize[1]))
+                    #         )
+                    #     )
+                    # )
+                    # target_dpi = max(target_dpi, 175)
+                    # fig = plt.figure(dpi=target_dpi, figsize=figsize)
+                    fig = plt.figure(dpi=175, figsize=(10, 6))
+                    fig = pitn.viz.plot_fodf_coeff_slices(
                         pred_fodf,
                         y,
-                        pred_fodf - y,
+                        torch.abs(pred_fodf - y) * y_mask_broad,
+                        col_headers=("Predicted",) * 3
+                        + ("Target",) * 3
+                        + ("|Pred - GT|",) * 3,
+                        row_headers=[f"z-harm deg {i}" for i in range(0, 9, 2)],
+                        colorbars="rows",
                         fig=fig,
-                        fodf_vol_labels=("Predicted", "Target", "Pred - GT"),
-                        imshow_kwargs={
-                            # "interpolation": "nearest",
-                            "interpolation": "antialiased",
-                            "cmap": "gray",
-                        },
+                        interpolation="nearest",
+                        cmap="gray",
                     )
+
                     aim_run.track(
                         aim.Image(
                             fig,
@@ -1129,7 +1171,7 @@ try:
         shuffle=True,
         pin_memory=True,
         collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="end", mode="constant"
+            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
         ),
         **p.train.dataloader.to_dict(),
     )
@@ -1140,7 +1182,7 @@ try:
         pin_memory=True,
         num_workers=0,
         collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="end", mode="constant"
+            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
         ),
     )
     train_dataloader, val_dataloader = fabric.setup_dataloaders(
@@ -1196,18 +1238,20 @@ try:
 
             # Concatenate the input world coordinates as input features into the
             # encoder. Mask out the x coordinates that are not to be considered.
-            x_coords_encoder = (
-                einops.rearrange(x_coords, "b x y z coord -> b coord x y z") * x_mask
+            x_coords_encoder = einops.rearrange(
+                x_coords, "b x y z coord -> b coord x y z"
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
             ctx_v = encoder(x)
 
             if not train_recon:
                 y_mask_broad = torch.broadcast_to(y_mask, y.shape)
+                y_coord_mask = einops.rearrange(y_mask, "b 1 x y z -> b x y z 1")
                 pred_fodf = decoder(
                     context_v=ctx_v,
                     context_world_coord_grid=x_coords,
                     query_world_coord=y_coords,
+                    query_world_coord_mask=y_coord_mask,
                     affine_context_vox2world=x_affine_vox2world,
                     affine_query_vox2world=y_affine_vox2world,
                     context_vox_size_world=x_vox_size,

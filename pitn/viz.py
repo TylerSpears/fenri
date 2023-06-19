@@ -613,6 +613,46 @@ def make_grid(
 
 
 def plot_fodf_coeff_slices(
+    *fodf_vols: Sequence[Union[torch.Tensor, np.ndarray]],
+    fodf_coeff_idx=(0, 3, 10, 21, 36),
+    slice_idx=(0.5, 0.5, 0.5),
+    **plot_im_grid_kwargs,
+):
+    vols = list()
+    for v in fodf_vols:
+        v = v.detach().cpu()
+        if v.ndim == 5 and int(v.shape[0]) == 1:
+            v = v[0]
+        v = v.numpy()
+        vols.append(v)
+
+    n_fod_coeffs_to_plot = len(fodf_coeff_idx)
+    nrows = n_fod_coeffs_to_plot
+
+    slices_to_plot = list()
+    for i_c, c_idx in enumerate(fodf_coeff_idx):
+        for coeff_vs in vols:
+            coeff_v = coeff_vs[c_idx]
+            for j_dim, s in enumerate(slice_idx):
+                if s is None:
+                    continue
+                # If slice idx was a fraction, interpret that as a percent of the total
+                # dim size.
+                if isinstance(s, float) and s >= 0.0 and s <= 1.0:
+                    idx = math.floor(s * coeff_v.shape[j_dim])
+                else:
+                    idx = math.floor(s)
+                slice_template = [slice(None), slice(None), slice(None)]
+                slice_template[j_dim] = idx
+                slicer = tuple(slice_template)
+
+                coeff_v_slice = coeff_v[slicer]
+                slices_to_plot.append(coeff_v_slice)
+
+    return plot_im_grid(*slices_to_plot, nrows=nrows, **plot_im_grid_kwargs)
+
+
+def _plot_fodf_coeff_slices(
     *fodf_vols,
     fig,
     rect=111,
