@@ -1,23 +1,7 @@
 # -*- coding: utf-8 -*-
-# ---
-# jupyter:
-#   jupytext:
-#     cell_metadata_filter: -all
-#     comment_magics: true
-#     formats: ipynb,py:percent
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.14.0
-#   kernelspec:
-#     display_name: pitn
-#     language: python
-#     name: python3
-# ---
 
 # %% [markdown]
-# # Continuous-Space Super-Resolution of fODFs in Diffusion MRI
+# # Batch Prediction in Subject Native Resolution for fODF INR
 #
 # Code by:
 #
@@ -82,7 +66,6 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from lightning_fabric.fabric import Fabric
 from natsort import natsorted
 
 import pitn
@@ -125,7 +108,7 @@ if torch.cuda.is_available():
     if "CUDA_PYTORCH_DEVICE_IDX" in os.environ.keys():
         dev_idx = int(os.environ["CUDA_PYTORCH_DEVICE_IDX"])
     else:
-        dev_idx = 0
+        dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -183,18 +166,15 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "test_size_augment_masking_symmetric_padding"
-p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
-p.train_val_test_split_file = random.choice(
-    list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
-)
-p.aim_logger = dict(
-    repo="aim://dali.cpe.virginia.edu:53800",
-    experiment="PITN_INR",
-    meta_params=dict(run_name=p.experiment_name),
-    tags=("PITN", "INR", "HCP", "super-res", "dMRI"),
+# p.train_val_test_split_file = random.choice(
+#     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
+# )
+p.model_weight_f = str(
+    Path(p.tmp_results_dir)
+    / "2023-06-18T20_34_58"
+    / "state_dict_epoch_99_step_25000.pt"
 )
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
@@ -213,34 +193,14 @@ p.scale_prefilter_kwargs = dict(
     sigma_scale_coeff=2.5,
     sigma_truncate=4.0,
 )
-p.train = dict(
-    patch_spatial_size=(36, 36, 36),
-    batch_size=4,
-    samples_per_subj_per_epoch=75,
-    # samples_per_subj_per_epoch=150,  #!testing/debug
-    # max_epochs=200,
-    max_epochs=125,  #!testing/debug
-    dwi_recon_epoch_proportion=0.05,
-    # dwi_recon_epoch_proportion=0.01,  #!testing/debug
-    sample_mask_key="wm_mask",
+p.test.subj_ids = list(
+    map(
+        str,
+        [
+            581450,
+        ],
+    )
 )
-p.train.augment = dict(
-    # augmentation_prob=0.0,  #!testing/debug
-    # augmentation_prob=1.0,  #!testing/debug
-    augmentation_prob=0.3,
-    baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
-    scale_prefilter_kwargs=p.scale_prefilter_kwargs,
-    augment_iso_scale_factor_lr_spacing_mm_low_high=(1.61, 2.0),
-    augment_rand_rician_noise_kwargs={"prob": 0.0},
-    augment_rand_rotate_90_kwargs={"prob": 0.5},
-    augment_rand_flip_kwargs={"prob": 0.5},
-)
-# Optimizer kwargs for training.
-p.train.optim.encoder.lr = 5e-4
-p.train.optim.decoder.lr = 5e-4
-p.train.optim.recon_decoder.lr = 1e-3
-# Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=16, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
@@ -289,34 +249,11 @@ p = _p
 
 
 # %%
-tvt_split = pd.read_csv(p.train_val_test_split_file)
-p.train.subj_ids = natsorted(tvt_split[tvt_split.split == "train"].subj_id.tolist())
-p.val = dict()
-p.val.subj_ids = natsorted(tvt_split[tvt_split.split == "val"].subj_id.tolist())
-p.test = dict()
-p.test.subj_ids = natsorted(tvt_split[tvt_split.split == "test"].subj_id.tolist())
-
-# Ensure that no test subj ids are in either the training or validation sets.
-# However, we can have overlap between training and validation.
-assert len(set(p.train.subj_ids) & set(p.test.subj_ids)) == 0
-assert len(set(p.val.subj_ids) & set(p.test.subj_ids)) == 0
+# tvt_split = pd.read_csv(p.train_val_test_split_file)
+# p.test.subj_ids = natsorted(tvt_split[tvt_split.split == "test"].subj_id.tolist())
 
 # %%
 ic(p.to_dict())
-
-# %%
-# Select which parameters to store in the aim meta-params.
-p.aim_logger.meta_params.hparams = dict(
-    batch_size=p.train.batch_size,
-    patch_spatial_size=p.train.patch_spatial_size,
-    samples_per_subj_per_epoch=p.train.samples_per_subj_per_epoch,
-    max_epochs=p.train.max_epochs,
-)
-p.aim_logger.meta_params.data = dict(
-    train_subj_ids=p.train.subj_ids,
-    val_subj_ids=p.val.subj_ids,
-    test_subj_ids=p.test.subj_ids,
-)
 
 # %% [markdown]
 # ## Data Loading
@@ -336,96 +273,33 @@ bval_sub_sample_fn = partial(
 )
 
 # %% [markdown]
-# ### Create Patch-Based Training Dataset
+# ### Test Dataset
 
 # %%
-DEBUG_TRAIN_DATA_SUBJS = 2
 with warnings.catch_warnings(record=True) as warn_list:
 
-    # print("DEBUG Train subject numbers")
-    pre_sample_ds = pitn.data.datasets2.HCPfODFINRDataset(
-        # subj_ids=p.train.subj_ids[:DEBUG_TRAIN_DATA_SUBJS],  #!DEBUG
-        subj_ids=p.train.subj_ids,
+    test_dataset = pitn.data.datasets2.HCPfODFINRDataset(
+        subj_ids=p.test.subj_ids,
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
-        transform=None,
-    )
-
-    pre_sample_train_dataset = monai.data.CacheDataset(
-        pre_sample_ds,
-        transform=pre_sample_ds.default_pre_sample_tf(
-            sample_mask_key=p.train.sample_mask_key,
+        transform=pitn.data.datasets2.HCPfODFINRDataset.default_pre_sample_tf(
+            sample_mask_key="wm_mask",
             bval_sub_sample_fn=bval_sub_sample_fn,
         ),
-        copy_cache=False,
-        num_workers=12,
     )
 
-train_dataset = pitn.data.datasets2.HCPfODFINRPatchDataset(
-    pre_sample_train_dataset,
-    patch_func=pitn.data.datasets2.HCPfODFINRPatchDataset.default_patch_func(
-        spatial_size=p.train.patch_spatial_size,
-        num_samples=p.train.samples_per_subj_per_epoch,
-    ),
-    samples_per_image=p.train.samples_per_subj_per_epoch,
-    transform=pitn.data.datasets2.HCPfODFINRPatchDataset.default_feature_tf(
-        **p.train.augment.to_dict()
-    ),
-)
-
-print("=" * 10)
-print("Warnings caught:")
-ws = "\n".join(
-    [
-        warnings.formatwarning(
-            w.message, w.category, w.filename, w.lineno, w.file, w.line
-        )
-        for w in warn_list
-    ]
-)
-ws = "\n".join(filter(lambda s: bool(s.strip()), ws.splitlines()))
-print(ws, flush=True)
-print("=" * 10)
-
-
-# %% [markdown]
-# ### Validation & Test Datasets
-
-# %%
-# #!DEBUG
-DEBUG_VAL_SUBJS = 4
-with warnings.catch_warnings(record=True) as warn_list:
-
-    print("DEBUG Val subject numbers")
-    val_paths_ds = pitn.data.datasets2.HCPfODFINRDataset(
-        subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],  #!DEBUG
-        # subj_ids=p.val.subj_ids,
-        dwi_root_dir=hcp_full_res_data_dir,
-        fodf_root_dir=hcp_full_res_fodf_dir,
-        transform=None,
-    )
-
-    cached_val_ds = monai.data.CacheDataset(
-        val_paths_ds,
-        transform=pre_sample_ds.default_pre_sample_tf(
-            sample_mask_key=p.train.sample_mask_key,
-            bval_sub_sample_fn=bval_sub_sample_fn,
-        ),
-        copy_cache=False,
-        num_workers=4,
-    )
-
-    val_dataset = pitn.data.datasets2.HCPfODFINRWholeBrainDataset(
-        cached_val_ds,
+    test_dataset = pitn.data.datasets2.HCPfODFINRWholeBrainDataset(
+        test_dataset,
         transform=pitn.data.datasets2.HCPfODFINRWholeBrainDataset.default_vol_tf(
             baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
             scale_prefilter_kwargs=p.scale_prefilter_kwargs,
         ),
     )
-    # Cache the transformations on the validation data.
-    val_dataset = monai.data.CacheDataset(
-        val_dataset,
+    test_dataset = monai.data.CacheDataset(
+        test_dataset,
+        cache_num=3,
         transform=None,
+        progress=True,
         copy_cache=False,
         num_workers=4,
     )
@@ -837,39 +711,9 @@ class Decoder(torch.nn.Module):
 
 
 # %% [markdown]
-# ## Training
-
-
-# %%
-def setup_logger_run(run_kwargs: dict, logger_meta_params: dict, logger_tags: list):
-    aim_run = aim.Run(
-        system_tracking_interval=None,
-        log_system_params=True,
-        capture_terminal_logs=True,
-        **run_kwargs,
-    )
-    for k, v in logger_meta_params.items():
-        aim_run[k] = v
-    for v in logger_tags:
-        aim_run.add_tag(v)
-
-    return aim_run
-
+# ## Testing
 
 # %%
-def calc_grad_norm(model, norm_type=2):
-    # https://discuss.pytorch.org/t/check-the-norm-of-gradients/27961/5
-    total_norm = 0
-    parameters = [
-        p for p in model.parameters() if p.grad is not None and p.requires_grad
-    ]
-    for p in parameters:
-        param_norm = p.grad.detach().data.norm(2)
-        total_norm += param_norm.item() ** 2
-    total_norm = total_norm**0.5
-    return total_norm
-
-
 def batchwise_masked_mse(y_pred, y, mask):
     masked_y_pred = y_pred.clone()
     masked_y = y.clone()
@@ -921,6 +765,7 @@ def validate_stage(
             y_coords = pitn.affine.affine_coordinate_grid(
                 y_affine_vox2world, tuple(y.shape[2:])
             )
+            # Fix an edge case in the affine_coordinate_grid function.
             if batch_size == 1:
                 if x_coords.shape[0] != 1:
                     x_coords.unsqueeze_(0)
@@ -1084,144 +929,88 @@ def validate_stage(
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-tmp_res_dir = Path(p.tmp_results_dir) / ts
+experiment_name = f"{ts}_inr-pred-test_native-res"
+tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
 tmp_res_dir.mkdir(parents=True)
 
 # %%
-fabric = Fabric(accelerator="gpu", devices=1, precision=32)
-fabric.launch()
-device = fabric.device
+model = "INR"
+model_pred_res_dir = tmp_res_dir / model
+model_pred_res_dir.mkdir(exist_ok=True)
+with open(model_pred_res_dir / "model_description.txt", "x") as f:
+    f.write(f"model weights file: {str(p.model_weight_f)}\n")
+    f.write(f"encoder parameters: \n{str(p.encoder.to_dict())}\n")
+    f.write(f"decoder parameters: \n{str(p.decoder.to_dict())}\n")
 
-aim_run = setup_logger_run(
-    run_kwargs={
-        k: p.aim_logger[k] for k in set(p.aim_logger.keys()) - {"meta_params", "tags"}
-    },
-    logger_meta_params=p.aim_logger.meta_params.to_dict(),
-    logger_tags=p.aim_logger.tags,
-)
-if "in_channels" not in p.encoder:
-    in_channels = int(train_dataset[0]["lr_dwi"].shape[0]) + 3
-else:
-    in_channels = p.encoder.in_channels
-
-# Wrap the entire training & validation loop in a try...except statement.
+# Wrap the entire loop in a try...except statement to save out a failure indicator file.
 try:
+    system_state_dict = torch.load(p.model_weight_f)
+    encoder_state_dict = system_state_dict["encoder"]
+
+    decoder_state_dict = system_state_dict["decoder"]
+
+    if "in_channels" not in p.encoder:
+        in_channels = int(test_dataset[0]["lr_dwi"].shape[0]) + 3
+    else:
+        in_channels = p.encoder.in_channels
+
     encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
-    # decoder = ContRepDecoder(**decoder_kwargs)
+    encoder.load_state_dict(encoder_state_dict)
+    encoder.to(device)
+
     decoder = Decoder(**p.decoder.to_dict())
-    recon_decoder = INREncoder(
-        in_channels=encoder.out_channels,
-        interior_channels=48,
-        out_channels=9,
-        n_res_units=2,
-        n_dense_units=2,
-        activate_fn=p.encoder.activate_fn,
-        input_coord_channels=False,
+    decoder.load_state_dict(decoder_state_dict)
+    decoder.to(device)
+    del (
+        system_state_dict,
+        encoder_state_dict,
+        decoder_state_dict,
     )
+    with open(model_pred_res_dir / "model_description.txt", "a") as f:
+        f.write(f"encoder layers: \n{str(encoder)}\n")
+        f.write(f"decoder layers: \n{str(decoder)}\n")
 
-    fabric.print(encoder)
-    fabric.print(decoder)
-    fabric.print(recon_decoder)
-
-    optim_encoder = torch.optim.AdamW(
-        encoder.parameters(), **p.train.optim.encoder.to_dict()
-    )
-    encoder, optim_encoder = fabric.setup(encoder, optim_encoder)
-    optim_decoder = torch.optim.AdamW(
-        decoder.parameters(), **p.train.optim.decoder.to_dict()
-    )
-    decoder, optim_decoder = fabric.setup(decoder, optim_decoder)
-    optim_recon_decoder = torch.optim.AdamW(
-        recon_decoder.parameters(), **p.train.optim.recon_decoder.to_dict()
-    )
-    recon_decoder, optim_recon_decoder = fabric.setup(
-        recon_decoder, optim_recon_decoder
-    )
-    loss_fn = torch.nn.MSELoss(reduction="mean")
-    recon_loss_fn = torch.nn.MSELoss(reduction="mean")
-
-    # The datasets will usually produce volumes of different shapes due to the possible
-    # random re-sampling, so the batch must be padded, and the padded masks must be
-    # used to calculate the loss.
-    def _pad_list_data_collate_to_tensor(d, **kwargs):
-        ret = monai.data.utils.pad_list_data_collate(d, **kwargs)
-        return {
-            k: monai.utils.convert_to_tensor(v, track_meta=False)
-            if isinstance(v, monai.data.MetaObj)
-            else v
-            for k, v in ret.items()
-        }
-
-    train_dataloader = monai.data.DataLoader(
-        train_dataset,
-        batch_size=p.train.batch_size,
-        shuffle=True,
-        pin_memory=True,
-        collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
-        ),
-        **p.train.dataloader.to_dict(),
-    )
-    val_dataloader = monai.data.DataLoader(
-        val_dataset,
+    test_dataloader = monai.data.DataLoader(
+        test_dataset,
         batch_size=1,
+        num_workers=0,
         shuffle=True,
         pin_memory=True,
-        num_workers=0,
-        collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
-        ),
     )
-    train_dataloader, val_dataloader = fabric.setup_dataloaders(
-        train_dataloader, val_dataloader
-    )
-    val_viz_subj_id = None
 
-    encoder.train()
-    decoder.train()
-    recon_decoder.train()
-    losses = dict(
-        loss=list(),
-        epoch=list(),
-        step=list(),
-        encoder_grad_norm=list(),
-        decoder_grad_norm=list(),
-        recon_decoder_grad_norm=list(),
-    )
-    step = 0
-    train_dwi_recon_epoch_proportion = p.train.dwi_recon_epoch_proportion
-    train_recon = False
+    encoder.eval()
+    decoder.eval()
 
-    epochs = p.train.max_epochs
-    for epoch in range(epochs):
-        fabric.print(f"\nEpoch {epoch}\n", "=" * 10)
-        if epoch <= math.floor(epochs * train_dwi_recon_epoch_proportion):
-            if not train_recon:
-                train_recon = True
-        else:
-            train_recon = False
+    with torch.no_grad():
+        print("Starting inference", flush=True)
+        for batch_dict in test_dataloader:
+            subj_id = batch_dict["subj_id"]
+            if len(subj_id) == 1:
+                subj_id = subj_id[0]
+            print(f"Starting {subj_id}", flush=True)
 
-        for batch_dict in train_dataloader:
-
-            x = batch_dict["lr_dwi"]
-            x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
-            x_affine_vox2world = batch_dict["affine_lr_vox2world"]
-            x_vox_size = batch_dict["lr_vox_size"]
+            x = batch_dict["lr_dwi"].to(device)
+            batch_size = x.shape[0]
+            x_mask = batch_dict["lr_brain_mask"].to(torch.bool).to(device)
+            x_affine_vox2world = batch_dict["affine_lr_vox2world"].to(device)
+            x_vox_size = batch_dict["lr_vox_size"].to(device)
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
             )
 
-            y = batch_dict["fodf"]
-            y_mask = batch_dict["brain_mask"].to(torch.bool)
-            y_affine_vox2world = batch_dict["affine_vox2world"]
-            y_vox_size = batch_dict["vox_size"]
+            y = batch_dict["fodf"].to(device)
+            y_mask = batch_dict["brain_mask"].to(torch.bool).to(device)
+            y_affine_vox2world = batch_dict["affine_vox2world"].to(device)
+            y_vox_size = batch_dict["vox_size"].to(device)
             y_coords = pitn.affine.affine_coordinate_grid(
                 y_affine_vox2world, tuple(y.shape[2:])
             )
-
-            optim_encoder.zero_grad()
-            optim_decoder.zero_grad()
-            optim_recon_decoder.zero_grad()
+            # Fix an edge case in the affine_coordinate_grid function.
+            if batch_size == 1:
+                if x_coords.shape[0] != 1:
+                    x_coords.unsqueeze_(0)
+                if y_coords.shape[0] != 1:
+                    y_coords.unsqueeze_(0)
 
             # Concatenate the input world coordinates as input features into the
             # encoder. Mask out the x coordinates that are not to be considered.
@@ -1232,150 +1021,99 @@ try:
             x = torch.cat([x, x_coords_encoder], dim=1)
             ctx_v = encoder(x)
 
-            if not train_recon:
-                y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-                y_coord_mask = einops.rearrange(y_mask, "b 1 x y z -> b x y z 1")
-                pred_fodf = decoder(
+            # Whole-volume inference is memory-prohibitive, so use a sliding
+            # window inference method on the encoded volume.
+            # Transform y_coords into a coordinates-first shape, for the interface, and
+            # attach the mask for compatibility with the sliding inference function.
+            y_slide_window = torch.cat(
+                [
+                    einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
+                    y_mask.to(y_coords),
+                ],
+                dim=1,
+            )
+            fn_coordify = lambda x: einops.rearrange(
+                x, "b coord x y z -> b x y z coord"
+            )
+            # Keep the whole volume on the CPU, and only transfer the sliding windows
+            # to the GPU.
+            pred_fodf = monai.inferers.sliding_window_inference(
+                y_slide_window.cpu(),
+                roi_size=(96, 96, 96),
+                sw_batch_size=batch_size,
+                predictor=lambda q: decoder(
+                    # Rearrange back into coord-last format.
+                    query_world_coord=fn_coordify(q[:, :-1]).to(device),
+                    query_world_coord_mask=fn_coordify(q[:, -1:].bool()).to(device),
                     context_v=ctx_v,
                     context_world_coord_grid=x_coords,
-                    query_world_coord=y_coords,
-                    query_world_coord_mask=y_coord_mask,
                     affine_context_vox2world=x_affine_vox2world,
                     affine_query_vox2world=y_affine_vox2world,
                     context_vox_size_world=x_vox_size,
                     query_vox_size_world=y_vox_size,
-                )
-                loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
-                loss_recon = y.new_zeros(1)
-                recon_pred = None
-            else:
-                recon_pred = recon_decoder(ctx_v)
-                # Index bvals to be 2 b=0s, 2 b=1000s, and 2 b=3000s.
-                recon_y = x[:, (0, 1, 2, 11, 12, 13, -3, -2, -1)]
-                x_mask_broad = torch.broadcast_to(x_mask, recon_y.shape)
-                loss_recon = recon_loss_fn(
-                    recon_pred[x_mask_broad], recon_y[x_mask_broad]
-                )
-                loss_fodf = recon_y.new_zeros(1)
-                pred_fodf = None
-
-            loss = loss_fodf + loss_recon
-
-            fabric.backward(loss)
-            for model in (encoder, decoder, recon_decoder):
-                if train_recon and model is decoder:
-                    continue
-                elif not train_recon and model is recon_decoder:
-                    continue
-
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    5.0,
-                    error_if_nonfinite=True,
-                )
-            optim_encoder.step()
-            optim_decoder.step()
-            optim_recon_decoder.step()
-
-            encoder_grad_norm = calc_grad_norm(encoder)
-            recon_decoder_grad_norm = (
-                calc_grad_norm(recon_decoder) if train_recon else 0
+                ).cpu(),
+                overlap=0,
+                padding_mode="replicate",
             )
-            decoder_grad_norm = calc_grad_norm(decoder) if not train_recon else 0
-            to_track = {
-                "loss": loss.detach().cpu().item(),
-                "grad_norm_encoder": encoder_grad_norm,
-            }
-            # Depending on whether or not the reconstruction decoder is training,
-            # select which metrics to track at this time.
-            if train_recon:
-                to_track = {
-                    **to_track,
-                    **{
-                        "loss_recon": loss_recon.detach().cpu().item(),
-                        "grad_norm_recon_decoder": recon_decoder_grad_norm,
-                    },
-                }
-            else:
-                to_track = {
-                    **to_track,
-                    **{
-                        "loss_pred_fodf": loss_fodf.detach().cpu().item(),
-                        "grad_norm_decoder": decoder_grad_norm,
-                    },
-                }
-            aim_run.track(
-                to_track,
-                context={
-                    "subset": "train",
-                },
-                step=step,
-                epoch=epoch,
+
+            # Write out prediction to a .nii.gz file.
+            input_vox_size = x_vox_size.flatten().cpu().numpy()[0]
+            native_vox_size = y_vox_size.flatten().cpu().numpy()[0]
+            pred_f = (
+                model_pred_res_dir
+                / f"{subj_id}_{model}_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
             )
-            fabric.print(
-                f"| {loss.detach().cpu().item()}",
-                end=" ",
-                flush=(step % 10) == 0,
-            )
-            losses["loss"].append(loss.detach().cpu().item())
-            losses["epoch"].append(epoch)
-            losses["step"].append(step)
-            losses["encoder_grad_norm"].append(encoder_grad_norm)
-            losses["recon_decoder_grad_norm"].append(recon_decoder_grad_norm)
-            losses["decoder_grad_norm"].append(decoder_grad_norm)
+            pred_affine = y_affine_vox2world[0].cpu().numpy()
+            pred_fodf_vol = einops.rearrange(
+                pred_fodf.detach().cpu().numpy(), "1 c x y z -> x y z c"
+            ).astype(np.float32)
+            pred_im = nib.Nifti1Image(pred_fodf_vol, affine=pred_affine)
+            # Crop/pad prediction to align with the fodf image created directly from
+            # mrtrix. This should not change any of the prediction values, only align
+            # the images for easier comparison.
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                tmp_pred_dir = Path(tmpdirname)
+                tmp_pred_f = str((tmp_pred_dir / "tmp_pred_im.nii.gz").resolve())
+                nib.save(pred_im, tmp_pred_f)
 
-            step += 1
+                # Do the resampling with mrtrix directly.
+                subj_source_files = (
+                    pitn.data.datasets2.HCPfODFINRDataset.get_fodf_subj_dict(
+                        subj_id, root_dir=hcp_full_res_fodf_dir
+                    )
+                )
+                subj_source_fodf_f = str(subj_source_files["fodf"].resolve())
+                resample_pred_f = str(
+                    (tmp_pred_dir / "tmp_pred_im_aligned.nii.gz").resolve()
+                )
+                subprocess.run(
+                    [
+                        "mrgrid",
+                        tmp_pred_f,
+                        "regrid",
+                        "-template",
+                        subj_source_fodf_f,
+                        "-interp",
+                        "nearest",
+                        "-scale",
+                        "1,1,1",
+                        "-datatype",
+                        "float32",
+                        resample_pred_f,
+                        "-quiet",
+                    ],
+                    # env=os.environ,
+                    timeout=60,
+                    check=True,
+                )
 
-        optim_encoder.zero_grad(set_to_none=True)
-        optim_decoder.zero_grad(set_to_none=True)
-        optim_recon_decoder.zero_grad(set_to_none=True)
-        # Delete some training inputs to relax memory constraints in whole-
-        # volume inference inside validation step.
-        del x, x_coords, y, y_coords, pred_fodf, recon_pred
+                shutil.move(resample_pred_f, pred_f)
 
-        fabric.print("\n==Validation==", flush=True)
-        aim_run, val_viz_subj_id = validate_stage(
-            fabric,
-            encoder,
-            decoder,
-            val_dataloader=val_dataloader,
-            step=step,
-            epoch=epoch,
-            aim_run=aim_run,
-            val_viz_subj_id=val_viz_subj_id,
-        )
+            print(f"Finished {subj_id}", flush=True)
 
 except KeyboardInterrupt as e:
-    aim_run.add_tag("STOPPED")
     (tmp_res_dir / "STOPPED").touch()
     raise e
 except Exception as e:
-    aim_run.add_tag("FAILED")
     (tmp_res_dir / "FAILED").touch()
     raise e
-finally:
-    aim_run.close()
-
-# Sync all pytorch-lightning processes.
-fabric.barrier()
-if fabric.is_global_zero:
-    torch.save(
-        {
-            "encoder": encoder.state_dict(),
-            "decoder": decoder.state_dict(),
-            "recon_decoder": recon_decoder.state_dict(),
-            "epoch": epoch,
-            "step": step,
-            "aim_run_hash": aim_run.hash,
-            "optim_encoder": optim_encoder.state_dict(),
-            "optim_decoder": optim_decoder.state_dict(),
-            "optim_recon_decoder": optim_recon_decoder.state_dict(),
-        },
-        Path(tmp_res_dir) / f"state_dict_epoch_{epoch}_step_{step}.pt",
-    )
-    fabric.print("=" * 40)
-    losses = pd.DataFrame.from_dict(losses)
-    losses.to_csv(Path(tmp_res_dir) / "train_losses.csv")
-
-
-# %%

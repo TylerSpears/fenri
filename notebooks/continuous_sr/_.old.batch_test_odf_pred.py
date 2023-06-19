@@ -314,7 +314,7 @@ with warnings.catch_warnings(record=True) as warn_list:
 
     # Validation dataset.
     test_paths_dataset = pitn.data.datasets.HCPfODFINRDataset(
-        subj_ids=p.test.subj_ids,
+        subj_ids=p.test.subj_ids[:2],  #!DEBUG
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         lr_dwi_root_dir=hcp_low_res_data_dir,
