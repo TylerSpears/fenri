@@ -243,7 +243,7 @@ p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=14, persistent_workers=True, prefetch_factor=2)
+p.train.dataloader = dict(num_workers=15, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
@@ -334,7 +334,7 @@ assert hcp_full_res_data_dir.exists()
 assert hcp_full_res_fodf_dir.exists()
 
 # %%
-# Define hte bval/bvec sub-sample scheme according to the parameter dict kwargs.
+# Define the bval/bvec sub-sample scheme according to the parameter dict kwargs.
 bval_sub_sample_fn = partial(
     pitn.data.datasets2.sub_select_dwi_from_bval,
     **p.bval_sub_sample_fn_kwargs.to_dict(),
@@ -363,7 +363,7 @@ with warnings.catch_warnings(record=True) as warn_list:
             bval_sub_sample_fn=bval_sub_sample_fn,
         ),
         copy_cache=False,
-        num_workers=12,
+        num_workers=8,
     )
 
 train_dataset = pitn.data.datasets2.HCPfODFINRPatchDataset(
@@ -660,6 +660,10 @@ tmp_res_dir.mkdir(parents=True)
 fabric = lightning.Fabric(accelerator="gpu", devices=1, precision=32)
 fabric.launch()
 device = fabric.device
+
+if fabric.is_global_zero:
+    if "cuda" in device.type:
+        torch.cuda.empty_cache()
 
 aim_run = setup_logger_run(
     run_kwargs={

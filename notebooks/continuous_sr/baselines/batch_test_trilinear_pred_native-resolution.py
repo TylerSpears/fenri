@@ -92,12 +92,14 @@ dotenv.load_dotenv(stream=io.StringIO(proc_out), override=True)
 # %%
 # torch setup
 # allow for CUDA usage, if available
-if torch.cuda.is_available():
+#! A GPU for linear interpolation is a bit overkill...
+# if torch.cuda.is_available():
+if False:
     # Pick only one device for the default, may use multiple GPUs for training later.
     if "CUDA_PYTORCH_DEVICE_IDX" in os.environ.keys():
         dev_idx = int(os.environ["CUDA_PYTORCH_DEVICE_IDX"])
     else:
-        dev_idx = 0
+        dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -116,11 +118,10 @@ if torch.cuda.is_available():
         print("CuDNN convolution optimization enabled.")
         # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
         torch.backends.cudnn.allow_tf32 = True
-
 else:
     device = torch.device("cpu")
 # keep device as the cpu
-# device = torch.device('cpu')
+device = torch.device("cpu")
 print(device)
 
 # %%
@@ -159,202 +160,202 @@ p.scale_prefilter_kwargs = dict(
 # Do Tri-linear interpolation on all subjects.
 p.test.subj_ids = [
     # holdout subjects that have been processed
-    # "581450",
-    # "126426",
-    # "191336",
-    # "251833",
-    # "581450",
-    # "601127",
-    # "825048",
-    # # test set subjects
-    # "110613",
-    # "112112",
-    # "123420",
-    # "124422",
-    # "126628",
-    # "129028",
-    # "130013",
-    # "133019",
-    # "134425",
-    # "135225",
-    # "138837",
-    # "139637",
-    # "139839",
-    # "143830",
-    # "144428",
-    # "144933",
-    # "148840",
-    # "149539",
-    # "150019",
-    # "151526",
-    # "153227",
-    # "153732",
-    # "155231",
-    # "162329",
-    # "187850",
-    # "189349",
-    # "192843",
-    # "193239",
-    # "198451",
-    # "220721",
-    # "268850",
-    # "270332",
-    # "299154",
-    # "314225",
-    # "316633",
-    # "350330",
-    # "368551",
-    # "453542",
-    # "480141",
-    # "492754",
-    # "497865",
-    # "500222",
-    # "519647",
-    # "567961",
-    # "571144",
-    # "656253",
-    # "656657",
-    # "677968",
-    # "683256",
-    # "704238",
-    # "727654",
-    # "731140",
-    # "765056",
-    # "767464",
-    # "917558",
-    # "930449",
-    # "972566",
-    # "978578",
-    # "993675",
-    # "994273",
-    # # ====================== remaining subj ids
-    # "100206",
-    # "100307",
-    # "101006",
-    # "101410",
-    # "102109",
-    # "103515",
-    # "104820",
-    # "105115",
-    # "105620",
-    # "106824",
-    # "107422",
-    # "108222",
-    # "110007",
-    # "111211",
-    # "111413",
-    # "113215",
-    # "114419",
-    # "118124",
-    # "118730",
-    # "118932",
-    # "119126",
-    # "119833",
-    # "120010",
-    # "121618",
-    # "121719",
-    # "122317",
-    # "122418",
-    # "122822",
-    # "123117",
-    # "123723",
-    # "123925",
-    # "126325",
-    # "127832",
-    # "127933",
-    # "129331",
-    # "129634",
-    # "130316",
-    # "130720",
-    # "131924",
-    # "133827",
-    # "137229",
-    # "140420",
-    # "141422",
-    # "143224",
-    # "143325",
-    # "144125",
-    # "145127",
-    # "146331",
-    # "146836",
-    # "147030",
-    # "147737",
-    # "148032",
-    # "148941",
-    # "149236",
-    # "151021",
-    # "151324",
-    # "151425",
-    # "154532",
-    # "154734",
-    # "154835",
-    # "156435",
-    # "156536",
-    # "156637",
-    # "158540",
-    # "159946",
-    # "160123",
-    # "160931",
-    # "163331",
-    # "164030",
-    # "164939",
-    # "165032",
-    # "168341",
-    # "169545",
-    # "171532",
-    # "172029",
-    # "172433",
-    # "173536",
-    # "173940",
-    # "174841",
-    # "175035",
-    # "178849",
-    # "179346",
-    # "180735",
-    # "180836",
-    # "181131",
-    # "183741",
-    # "185038",
-    # "185139",
-    # "185947",
-    # "186545",
-    # "187547",
-    # "191942",
-    # "192237",
-    # "192540",
-    # "193441",
-    # "194645",
-    # "195647",
-    # "195849",
-    # "196750",
-    # "198047",
-    # "198350",
-    # "199150",
-    # "199352",
-    # "200210",
-    # "200513",
-    # "201818",
-    # "202113",
-    # "202820",
-    # "204016",
-    # "204420",
-    # "204622",
-    # "205119",
-    # "207426",
-    # "208226",
-    # "209935",
-    # "211922",
-    # "213522",
-    # "217429",
-    # "227432",
-    # "228434",
-    # "236130",
-    # "245333",
-    # "248339",
-    # "250427",
-    # "250932",
-    # "255639",
-    # "255740",
+    "581450",
+    "126426",
+    "191336",
+    "251833",
+    "581450",
+    "601127",
+    "825048",
+    # test set subjects
+    "110613",
+    "112112",
+    "123420",
+    "124422",
+    "126628",
+    "129028",
+    "130013",
+    "133019",
+    "134425",
+    "135225",
+    "138837",
+    "139637",
+    "139839",
+    "143830",
+    "144428",
+    "144933",
+    "148840",
+    "149539",
+    "150019",
+    "151526",
+    "153227",
+    "153732",
+    "155231",
+    "162329",
+    "187850",
+    "189349",
+    "192843",
+    "193239",
+    "198451",
+    "220721",
+    "268850",
+    "270332",
+    "299154",
+    "314225",
+    "316633",
+    "350330",
+    "368551",
+    "453542",
+    "480141",
+    "492754",
+    "497865",
+    "500222",
+    "519647",
+    "567961",
+    "571144",
+    "656253",
+    "656657",
+    "677968",
+    "683256",
+    "704238",
+    "727654",
+    "731140",
+    "765056",
+    "767464",
+    "917558",
+    "930449",
+    "972566",
+    "978578",
+    "993675",
+    "994273",
+    # ====================== remaining subj ids
+    "100206",
+    "100307",
+    "101006",
+    "101410",
+    "102109",
+    "103515",
+    "104820",
+    "105115",
+    "105620",
+    "106824",
+    "107422",
+    "108222",
+    "110007",
+    "111211",
+    "111413",
+    "113215",
+    "114419",
+    "118124",
+    "118730",
+    "118932",
+    "119126",
+    "119833",
+    "120010",
+    "121618",
+    "121719",
+    "122317",
+    "122418",
+    "122822",
+    "123117",
+    "123723",
+    "123925",
+    "126325",
+    "127832",
+    "127933",
+    "129331",
+    "129634",
+    "130316",
+    "130720",
+    "131924",
+    "133827",
+    "137229",
+    "140420",
+    "141422",
+    "143224",
+    "143325",
+    "144125",
+    "145127",
+    "146331",
+    "146836",
+    "147030",
+    "147737",
+    "148032",
+    "148941",
+    "149236",
+    "151021",
+    "151324",
+    "151425",
+    "154532",
+    "154734",
+    "154835",
+    "156435",
+    "156536",
+    "156637",
+    "158540",
+    "159946",
+    "160123",
+    "160931",
+    "163331",
+    "164030",
+    "164939",
+    "165032",
+    "168341",
+    "169545",
+    "171532",
+    "172029",
+    "172433",
+    "173536",
+    "173940",
+    "174841",
+    "175035",
+    "178849",
+    "179346",
+    "180735",
+    "180836",
+    "181131",
+    "183741",
+    "185038",
+    "185139",
+    "185947",
+    "186545",
+    "187547",
+    "191942",
+    "192237",
+    "192540",
+    "193441",
+    "194645",
+    "195647",
+    "195849",
+    "196750",
+    "198047",
+    "198350",
+    "199150",
+    "199352",
+    "200210",
+    "200513",
+    "201818",
+    "202113",
+    "202820",
+    "204016",
+    "204420",
+    "204622",
+    "205119",
+    "207426",
+    "208226",
+    "209935",
+    "211922",
+    "213522",
+    "217429",
+    "227432",
+    "228434",
+    "236130",
+    "245333",
+    "248339",
+    "250427",
+    "250932",
+    "255639",
+    "255740",
     "256540",
     "275645",
     "286650",
@@ -412,6 +413,7 @@ p.test.subj_ids = [
     "580650",
     "580751",
     "581349",
+    # =======================
     "587664",
     "588565",
     "604537",
@@ -719,10 +721,10 @@ def mrtrix_msmt_sph_deconv(
 # %%
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
-# ts = ts.replace(":", "_")
-# experiment_name = f"{ts}_{p.experiment_name}"
-# tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
-tmp_res_dir = Path(p.tmp_results_dir) / "2023-06-21T14_51_23_trilin-pred_native-res"
+ts = ts.replace(":", "_")
+experiment_name = f"{ts}_{p.experiment_name}"
+tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
+# tmp_res_dir = Path(p.tmp_results_dir) / "2023-06-21T14_51_23_trilin-pred_native-res"
 tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
@@ -736,8 +738,8 @@ try:
         test_dataset,
         batch_size=1,
         shuffle=False,
-        pin_memory=True,
-        num_workers=2,
+        pin_memory=False,
+        num_workers=3,
         persistent_workers=True,
         prefetch_factor=1,
     )
@@ -794,8 +796,8 @@ try:
             input_vox_size = x_vox_size.flatten().cpu().numpy()[0]
             native_vox_size = y_vox_size.flatten().cpu().numpy()[0]
 
-            # Store the predicted DWI in subdirectory, fit the odfs to the prediction,
-            # then bring the wm odf to the root directory.
+            # Store the predicted DWI in subdirectory, ~~fit the odfs to the prediction,
+            # then bring the wm odf to the root directory.~~
 
             subj_odf_fit_dir = model_pred_res_dir / subj_id
             subj_odf_fit_dir.mkdir(parents=True, exist_ok=True)
@@ -813,10 +815,10 @@ try:
                 subj_odf_fit_dir
                 / f"{subj_id}_{model}_dwi_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
             )
-            final_pred_wm_odf_coeff_f = (
-                model_pred_res_dir
-                / f"{subj_id}_{model}_postproc_wm_odf-coeff_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
-            )
+            # final_pred_wm_odf_coeff_f = (
+            #     model_pred_res_dir
+            #     / f"{subj_id}_{model}_postproc_wm_odf-coeff_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
+            # )
             # Crop/pad prediction to align with the fodf image created directly from
             # mrtrix. This should not change any of the prediction values, only align
             # the images for easier comparison.
@@ -857,8 +859,8 @@ try:
                 )
 
                 dwi_im = nib.load(tmp_pred_dwi_f)
-                brain_mask_im = nib.load(subj_source_files["mask"])
-                freesurfer_seg_im = nib.load(subj_source_files["freesurfer_seg"])
+                # brain_mask_im = nib.load(subj_source_files["mask"])
+                # freesurfer_seg_im = nib.load(subj_source_files["freesurfer_seg"])
                 bval_ = bval.squeeze().cpu().numpy().astype(np.float32)
                 bval_ = bval_.flatten()[None]
                 bval_f = tmp_pred_dir / "bvals"
@@ -868,22 +870,23 @@ try:
                     bvec_ = bvec_.T
                 bvec_f = tmp_pred_dir / "bvecs"
                 np.savetxt(bvec_f, bvec_, fmt="%g")
-                print(f"Fitting fod coefficients {subj_id}")
-                fodf_fit_fs = mrtrix_msmt_sph_deconv(
-                    dwi_im=dwi_im,
-                    bval=bval_,
-                    bvec=bvec_,
-                    brain_mask_im=brain_mask_im,
-                    freesurfer_seg_im=freesurfer_seg_im,
-                    target_directory=tmp_pred_dir,
-                )
-                print(f"Done fitting fod coefficients {subj_id}")
+                # print(f"Fitting fod coefficients {subj_id}")
+                # fodf_fit_fs = mrtrix_msmt_sph_deconv(
+                #     dwi_im=dwi_im,
+                #     bval=bval_,
+                #     bvec=bvec_,
+                #     brain_mask_im=brain_mask_im,
+                #     freesurfer_seg_im=freesurfer_seg_im,
+                #     target_directory=tmp_pred_dir,
+                # )
+                # print(f"Done fitting fod coefficients {subj_id}")
+                fodf_fit_fs = dict()
                 fodf_fit_fs["dwi"] = Path(tmp_pred_dwi_f)
                 fodf_fit_fs["bval"] = Path(bval_f)
                 fodf_fit_fs["bvec"] = Path(bvec_f)
 
-                tmp_wm_fodf_f = fodf_fit_fs.pop("wm_odf_coeff")
-                shutil.move(tmp_wm_fodf_f, final_pred_wm_odf_coeff_f)
+                # tmp_wm_fodf_f = fodf_fit_fs.pop("wm_odf_coeff")
+                # shutil.move(tmp_wm_fodf_f, final_pred_wm_odf_coeff_f)
                 for f in fodf_fit_fs.values():
                     target_fname = Path(f).name
                     if target_fname.endswith(".nii.gz"):

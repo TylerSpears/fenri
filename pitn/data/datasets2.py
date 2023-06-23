@@ -251,7 +251,7 @@ class HCPfODFINRDataset(monai.data.Dataset):
             new_bvec = pitn.affine.transform_coords(bvec.T, aff).T
             return new_bvec
 
-        tfs.append(monai.transforms.Lambdad("bvec", bvec_las2ras, overwrite=True))
+        # tfs.append(monai.transforms.Lambdad("bvec", bvec_las2ras, overwrite=True))
         tfs.append(
             monai.transforms.CastToTyped(("brain_mask", "fivett"), dtype=torch.uint8)
         )

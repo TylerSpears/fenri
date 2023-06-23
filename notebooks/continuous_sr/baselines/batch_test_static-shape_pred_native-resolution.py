@@ -23,6 +23,8 @@ import collections
 import copy
 import datetime
 import functools
+import gc
+import importlib.util
 import inspect
 import io
 import itertools
@@ -43,7 +45,6 @@ from functools import partial
 from pathlib import Path
 from pprint import pprint as ppr
 
-import aim
 import dotenv
 import einops
 
@@ -66,10 +67,19 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import INREncoder, SimplifiedDecoder
 from natsort import natsorted
 
 import pitn
+
+# Crazy hack for relative imports in interactive mode...
+# <https://docs.python.org/3/library/importlib.html#importing-a-source-file-directly>
+mod_path = Path("../inr_networks.py")
+mod_name = "inr_networks"
+spec = importlib.util.spec_from_file_location(mod_name, mod_path)
+inr_networks = importlib.util.module_from_spec(spec)
+sys.modules[mod_name] = inr_networks
+spec.loader.exec_module(inr_networks)
+from inr_networks import StaticSizeDecoder, StaticSizeUpsampleEncoder
 
 plt.rcParams.update({"figure.autolayout": True})
 plt.rcParams.update({"figure.facecolor": [1.0, 1.0, 1.0, 1.0]})
@@ -109,7 +119,7 @@ if torch.cuda.is_available():
     if "CUDA_PYTORCH_DEVICE_IDX" in os.environ.keys():
         dev_idx = int(os.environ["CUDA_PYTORCH_DEVICE_IDX"])
     else:
-        dev_idx = 0
+        dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -128,7 +138,8 @@ if torch.cuda.is_available():
         print("CuDNN convolution optimization enabled.")
         # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
         torch.backends.cudnn.allow_tf32 = True
-
+    gc.collect()
+    torch.cuda.empty_cache()
 else:
     device = torch.device("cpu")
 # keep device as the cpu
@@ -167,6 +178,8 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
+p.experiment_name = "static-shape_pred_native-res"
+p.model_name = "static-shape_CNN"
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # p.train_val_test_split_file = random.choice(
@@ -174,8 +187,8 @@ p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # )
 p.model_weight_f = str(
     Path(p.results_dir)
-    / "2023-06-20T03_20_54"
-    / "final_state_dict_epoch_49_step_21701.pt"
+    / "2023-06-22T16_01_59__static-shape-comparison_split-01"
+    / "final_state_dict_epoch_49_step_28351.pt"
 )
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
@@ -199,31 +212,31 @@ p.test.subj_ids = list(
         str,
         [
             # holdout subjects that have been processed
-            581450,
-            126426,
-            191336,
-            251833,
-            581450,
-            601127,
-            825048,
-            # test set subjects
-            110613,
-            112112,
-            123420,
-            124422,
-            126628,
-            129028,
-            130013,
-            133019,
-            134425,
-            135225,
-            138837,
-            139637,
-            139839,
-            143830,
-            144428,
-            144933,
-            148840,
+            # 581450,
+            # 126426,
+            # 191336,
+            # 251833,
+            # 581450,
+            # 601127,
+            # 825048,
+            # # test set subjects
+            # 110613,
+            # 112112,
+            # 123420,
+            # 124422,
+            # 126628,
+            # 129028,
+            # 130013,
+            # 133019,
+            # 134425,
+            # 135225,
+            # 138837,
+            # 139637,
+            # 139839,
+            # 143830,
+            # 144428,
+            # 144933,
+            # 148840,
             149539,
             150019,
             151526,
@@ -272,20 +285,21 @@ p.test.subj_ids = list(
 )
 # Network/model parameters.
 p.encoder = dict(
+    spatial_upscale_factor=p.baseline_lr_spacing_scale,
+    input_coord_channels=True,
     interior_channels=80,
     out_channels=96,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
-    input_coord_channels=True,
 )
 p.decoder = dict(
-    context_v_features=96,
-    out_features=45,
-    m_encode_num_freqs=36,
-    sigma_encode_scale=3.0,
-    n_internal_features=256,
-    n_internal_layers=3,
+    in_channels=p.encoder.out_channels,
+    interior_channels=48,
+    out_channels=45,
+    n_res_units=2,
+    n_dense_units=2,
+    activate_fn="relu",
 )
 
 # If a config file exists, override the defaults with those values.
@@ -391,28 +405,15 @@ print("=" * 10)
 # ## Testing
 
 # %%
-def batchwise_masked_mse(y_pred, y, mask):
-    masked_y_pred = y_pred.clone()
-    masked_y = y.clone()
-    masked_y_pred[~mask] = torch.nan
-    masked_y[~mask] = torch.nan
-    se = F.mse_loss(masked_y_pred, masked_y, reduction="none")
-    se = se.reshape(se.shape[0], -1)
-    mse = torch.nanmean(se, dim=1)
-    return mse
-
-
-# %%
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-experiment_name = f"{ts}_inr-pred-test_native-res"
+experiment_name = f"{ts}_{p.experiment_name}"
 tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
 tmp_res_dir.mkdir(parents=True)
 
 # %%
-model = "INR"
-model_pred_res_dir = tmp_res_dir / model
+model_pred_res_dir = tmp_res_dir / p.model_name
 model_pred_res_dir.mkdir(exist_ok=True)
 with open(model_pred_res_dir / "model_description.txt", "x") as f:
     f.write(f"model weights file: {str(p.model_weight_f)}\n")
@@ -423,19 +424,23 @@ with open(model_pred_res_dir / "model_description.txt", "x") as f:
 try:
     system_state_dict = torch.load(p.model_weight_f)
     encoder_state_dict = system_state_dict["encoder"]
-
     decoder_state_dict = system_state_dict["decoder"]
-
     if "in_channels" not in p.encoder:
         in_channels = int(test_dataset[0]["lr_dwi"].shape[0]) + 3
     else:
         in_channels = p.encoder.in_channels
 
-    encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
+    encoder = StaticSizeUpsampleEncoder(
+        **{**p.encoder.to_dict(), **{"in_channels": in_channels}}
+    )
+    # Initialize weight shape for the encoder.
+    encoder(torch.randn(1, in_channels, 20, 20, 20))
     encoder.load_state_dict(encoder_state_dict)
     encoder.to(device)
 
-    decoder = SimplifiedDecoder(**p.decoder.to_dict())
+    decoder = StaticSizeDecoder(**p.decoder.to_dict())
+    # Initialize weight shape for the decoder.
+    decoder(torch.randn(1, decoder.in_channels, 20, 20, 20))
     decoder.load_state_dict(decoder_state_dict)
     decoder.to(device)
     del (
@@ -450,7 +455,7 @@ try:
     test_dataloader = monai.data.DataLoader(
         test_dataset,
         batch_size=1,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True,
         num_workers=3,
         persistent_workers=True,
@@ -462,6 +467,9 @@ try:
 
     with torch.no_grad():
         print("Starting inference", flush=True)
+        if "cuda" in device.type:
+            gc.collect()
+            torch.cuda.empty_cache()
         for batch_dict in test_dataloader:
             subj_id = batch_dict["subj_id"]
             if len(subj_id) == 1:
@@ -478,18 +486,12 @@ try:
             )
 
             y = batch_dict["fodf"].to(device)
-            y_mask = batch_dict["brain_mask"].to(torch.bool).to(device)
-            y_affine_vox2world = batch_dict["affine_vox2world"].to(device)
             y_vox_size = batch_dict["vox_size"].to(device)
-            y_coords = pitn.affine.affine_coordinate_grid(
-                y_affine_vox2world, tuple(y.shape[2:])
-            )
-            # Fix an edge case in the affine_coordinate_grid function.
+            y_affine_vox2world = batch_dict["affine_vox2world"].to(device)
+            y_mask = batch_dict["brain_mask"].to(torch.bool).to(device)
             if batch_size == 1:
                 if x_coords.shape[0] != 1:
                     x_coords.unsqueeze_(0)
-                if y_coords.shape[0] != 1:
-                    y_coords.unsqueeze_(0)
 
             # Concatenate the input world coordinates as input features into the
             # encoder. Mask out the x coordinates that are not to be considered.
@@ -498,46 +500,13 @@ try:
                 x_coords * x_coord_mask, "b x y z coord -> b coord x y z"
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
-            ctx_v = encoder(x)
+            pred_fodf = encoder(x)
+            pred_fodf = decoder(pred_fodf)
+            # Pad or crop the prediction spatial size to match the target spatial size.
+            pred_fodf = decoder.crop_pad_to_match_gt_shape(
+                model_output=pred_fodf, ground_truth=y, mode="constant"
+            )
 
-            # Whole-volume inference is memory-prohibitive, so use a sliding
-            # window inference method on the encoded volume.
-            # Transform y_coords into a coordinates-first shape, for the interface, and
-            # attach the mask for compatibility with the sliding inference function.
-            y_slide_window = torch.cat(
-                [
-                    einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
-                    y_mask.to(y_coords),
-                ],
-                dim=1,
-            )
-            fn_coordify = lambda x: einops.rearrange(
-                x, "b coord x y z -> b x y z coord"
-            )
-            # Keep the whole volume on the CPU, and only transfer the sliding windows
-            # to the GPU.
-            pred_fodf = monai.inferers.sliding_window_inference(
-                y_slide_window.cpu(),
-                roi_size=(96, 96, 96),
-                sw_batch_size=batch_size,
-                predictor=lambda q: decoder(
-                    # Rearrange back into coord-last format.
-                    query_world_coord=fn_coordify(q[:, :-1]).to(
-                        device, non_blocking=True
-                    ),
-                    query_world_coord_mask=fn_coordify(q[:, -1:].bool()).to(
-                        device, non_blocking=True
-                    ),
-                    context_v=ctx_v,
-                    context_world_coord_grid=x_coords,
-                    affine_context_vox2world=x_affine_vox2world,
-                    affine_query_vox2world=y_affine_vox2world,
-                    context_vox_size_world=x_vox_size,
-                    query_vox_size_world=y_vox_size,
-                ).cpu(),
-                overlap=0,
-                padding_mode="replicate",
-            )
             print(f"Finished inference {subj_id}", flush=True)
 
             # Write out prediction to a .nii.gz file.
@@ -545,7 +514,7 @@ try:
             native_vox_size = y_vox_size.flatten().cpu().numpy()[0]
             pred_f = (
                 model_pred_res_dir
-                / f"{subj_id}_{model}_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
+                / f"{subj_id}_{p.model_name}_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
             )
             pred_affine = y_affine_vox2world[0].cpu().numpy()
             # Mask the prediction to reduce the file size.
@@ -557,11 +526,11 @@ try:
             # Crop/pad prediction to align with the fodf image created directly from
             # mrtrix. This should not change any of the prediction values, only align
             # the images for easier comparison.
+            print(f"Aligning and saving prediction image {subj_id}")
             with tempfile.TemporaryDirectory() as tmpdirname:
                 tmp_pred_dir = Path(tmpdirname)
                 tmp_pred_f = str((tmp_pred_dir / "tmp_pred_im.nii.gz").resolve())
                 nib.save(pred_im, tmp_pred_f)
-                print(f"Aligning and saving prediction image {subj_id}")
                 # Do the resampling with mrtrix directly.
                 subj_source_files = (
                     pitn.data.datasets2.HCPfODFINRDataset.get_fodf_subj_dict(
