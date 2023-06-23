@@ -1241,6 +1241,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
 
     _SAMPLE_KEYS = (
         "subj_id",
+        "bval",
+        "bvec",
         "fodf",
         "brain_mask",
         "fivett",
@@ -1447,6 +1449,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
         select_k_tf = monai.transforms.SelectItemsd(
             (
                 "subj_id",
+                "bval",
+                "bvec",
                 "affine_vox2world",
                 "affine_lr_vox2world",
                 "vox_size",
@@ -1460,6 +1464,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
         # Convert all MetaTensors to regular Tensors.
         to_tensor_tf = monai.transforms.ToTensord(
             (
+                "bval",
+                "bvec",
                 "affine_vox2world",
                 "affine_lr_vox2world",
                 "vox_size",

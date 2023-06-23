@@ -619,3 +619,35 @@
 
 2023-06-15 10:56:24  (rev 2)
      monai  {1.0.1 (conda-forge/noarch) -> 1.2.0 (conda-forge/noarch)}
+
+2023-06-20 00:47:06  (rev 3)
+    -pytorch-lightning-1.9.0 (conda-forge/noarch)
+
+2023-06-20 00:47:48  (rev 4)
+     lightning-utilities  {0.6.0.post0 (conda-forge/noarch) -> 0.8.0 (conda-forge/noarch)}
+     packaging  {23.1 (conda-forge/noarch) -> 20.9 (conda-forge/noarch)}
+    +arrow-1.2.3 (conda-forge/noarch)
+    +blessed-1.19.1 (conda-forge/noarch)
+    +croniter-1.3.15 (conda-forge/noarch)
+    +dateutils-0.6.12 (conda-forge/noarch)
+    +deepdiff-6.3.0 (conda-forge/noarch)
+    +fastapi-0.88.0 (conda-forge/noarch)
+    +h11-0.14.0 (conda-forge/noarch)
+    +inquirer-3.1.3 (conda-forge/noarch)
+    +itsdangerous-2.1.2 (conda-forge/noarch)
+    +lightning-2.0.3 (conda-forge/noarch)
+    +lightning-cloud-0.5.36 (conda-forge/noarch)
+    +ordered-set-4.1.0 (conda-forge/noarch)
+    +orjson-3.9.1 (conda-forge/linux-64)
+    +poetry-1.1.15 (conda-forge/linux-64)
+    +poetry-core-1.0.8 (conda-forge/linux-64)
+    +python-editor-1.0.4 (conda-forge/noarch)
+    +python-multipart-0.0.6 (conda-forge/noarch)
+    +pytorch-lightning-2.0.3 (conda-forge/noarch)
+    +pyyaml-6.0 (conda-forge/linux-64)
+    +readchar-4.0.5 (conda-forge/noarch)
+    +rich-13.3.1 (conda-forge/noarch)
+    +starlette-0.22.0 (conda-forge/noarch)
+    +starsessions-1.3.0 (conda-forge/noarch)
+    +uvicorn-0.22.0 (conda-forge/linux-64)
+    +websockets-11.0.3 (conda-forge/linux-64)

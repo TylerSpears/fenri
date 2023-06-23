@@ -27,7 +27,6 @@ google-cloud-storage==2.5.0
 google-crc32c==1.5.0
 google-resumable-media==2.3.3
 googleapis-common-protos==1.56.4
-h11==0.14.0
 jax==0.4.10
 jaxlib==0.4.10+cuda11.cudnn86
 jaxopt==0.7

@@ -419,6 +419,47 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "websockets",
+        "version": "11.0.3",
+        "summary": "An implementation of the WebSocket Protocol (RFC 6455 & 7692)",
+        "keywords": [
+          "WebSocket"
+        ],
+        "author_email": "Aymeric Augustin <aymeric.augustin@m4x.org>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Web Environment",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: BSD License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "homepage, https://github.com/aaugustin/websockets",
+          "changelog, https://websockets.readthedocs.io/en/stable/project/changelog.html",
+          "documentation, https://websockets.readthedocs.io/",
+          "funding, https://tidelift.com/subscription/pkg/pypi-websockets?utm_source=pypi-websockets&utm_medium=referral&utm_campaign=readme",
+          "tracker, https://github.com/aaugustin/websockets/issues"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/websockets-11.0.3.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/websockets_1683550121098/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "websocket-client",
         "version": "1.3.3",
         "summary": "WebSocket client for Python with low level API options",
@@ -718,7 +759,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "uvicorn",
-        "version": "0.19.0",
+        "version": "0.22.0",
         "summary": "The lightning-fast ASGI server.",
         "description_content_type": "text/markdown",
         "author_email": "Tom Christie <tom@tomchristie.com>",
@@ -748,7 +789,7 @@
           "pyyaml>=5.1; extra == 'standard'",
           "uvloop!=0.15.0,!=0.15.1,>=0.14.0; sys_platform != 'win32' and (sys_platform != 'cygwin' and platform_python_implementation != 'PyPy') and extra == 'standard'",
           "watchfiles>=0.13; extra == 'standard'",
-          "websockets>=10.0; extra == 'standard'"
+          "websockets>=10.4; extra == 'standard'"
         ],
         "requires_python": ">=3.7",
         "project_url": [
@@ -761,8 +802,12 @@
           "standard"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/uvicorn-0.19.0.dist-info",
-      "installer": "pip",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/uvicorn-0.22.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/uvicorn-split_1682667763783/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
       "requested": true
     },
     {
@@ -2629,45 +2674,106 @@
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "starlette",
-        "version": "0.14.2",
-        "platform": [
-          "UNKNOWN"
-        ],
-        "summary": "The little ASGI library that shines.",
+        "name": "starsessions",
+        "version": "1.3.0",
+        "summary": "Pluggable session support for Starlette.",
         "description_content_type": "text/markdown",
-        "home_page": "https://github.com/encode/starlette",
-        "author": "Tom Christie",
-        "author_email": "tom@tomchristie.com",
+        "keywords": [
+          "starlette",
+          "fastapi",
+          "asgi",
+          "session"
+        ],
+        "home_page": "https://github.com/alex-oleshkevich/starsessions",
+        "author": "alex.oleshkevich",
+        "author_email": "alex.oleshkevich@gmail.com",
         "classifier": [
-          "Development Status :: 3 - Alpha",
+          "Development Status :: 5 - Production/Stable",
           "Environment :: Web Environment",
           "Intended Audience :: Developers",
-          "License :: OSI Approved :: BSD License",
+          "License :: OSI Approved :: MIT License",
           "Operating System :: OS Independent",
-          "Topic :: Internet :: WWW/HTTP",
           "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.10",
           "Programming Language :: Python :: 3.6",
           "Programming Language :: Python :: 3.7",
           "Programming Language :: Python :: 3.8",
-          "Programming Language :: Python :: 3.9"
+          "Programming Language :: Python :: 3.9",
+          "Topic :: Software Development :: Libraries",
+          "Typing :: Typed"
         ],
         "requires_dist": [
-          "aiofiles ; extra == 'full'",
-          "graphene ; extra == 'full'",
-          "itsdangerous ; extra == 'full'",
-          "jinja2 ; extra == 'full'",
-          "python-multipart ; extra == 'full'",
-          "pyyaml ; extra == 'full'",
-          "requests ; extra == 'full'"
+          "aioredis (>=2.0.0,<3.0.0); extra == \"redis\"",
+          "itsdangerous (>=2.0.1,<3.0.0)",
+          "starlette (>=0,<1)"
         ],
-        "requires_python": ">=3.6",
+        "requires_python": ">=3.6.2,<4.0.0",
+        "project_url": [
+          "Documentation, https://github.com/alex-oleshkevich/starsessions",
+          "Repository, https://github.com/alex-oleshkevich/starsessions"
+        ],
+        "provides_extra": [
+          "redis"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/starsessions-1.3.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/starsessions_1659923701614/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "starlette",
+        "version": "0.22.0",
+        "summary": "The little ASGI library that shines.",
+        "description_content_type": "text/markdown",
+        "author_email": "Tom Christie <tom@tomchristie.com>",
+        "classifier": [
+          "Development Status :: 3 - Alpha",
+          "Environment :: Web Environment",
+          "Framework :: AnyIO",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: BSD License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Topic :: Internet :: WWW/HTTP"
+        ],
+        "requires_dist": [
+          "anyio<5,>=3.4.0",
+          "typing-extensions>=3.10.0; python_version < '3.10'",
+          "httpx>=0.22.0; extra == 'full'",
+          "itsdangerous; extra == 'full'",
+          "jinja2; extra == 'full'",
+          "python-multipart; extra == 'full'",
+          "pyyaml; extra == 'full'"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Homepage, https://github.com/encode/starlette",
+          "Documentation, https://www.starlette.io/",
+          "Changelog, https://www.starlette.io/release-notes/",
+          "Funding, https://github.com/sponsors/encode",
+          "Source, https://github.com/encode/starlette"
+        ],
         "provides_extra": [
           "full"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/starlette-0.14.2.dist-info",
-      "installer": "pip",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/starlette-0.22.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/starlette-recipe_1668726462865/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
       "requested": true
     },
     {
@@ -3855,6 +3961,36 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "rich",
+        "version": "13.3.1",
+        "summary": "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal",
+        "home_page": "https://github.com/Textualize/rich",
+        "author": "Will McGugan",
+        "author_email": "willmcgugan@gmail.com",
+        "maintainer": "None",
+        "maintainer_email": "None",
+        "requires_dist": [
+          "markdown-it-py (<3.0.0,>=2.1.0)",
+          "pygments (<3.0.0,>=2.14.0)",
+          "typing-extensions (<5.0,>=4.0.0) ; python_version < \"3.9\"",
+          "ipywidgets (<9,>=7.5.1) ; extra == 'jupyter'"
+        ],
+        "requires_python": ">=3.7.0",
+        "provides_extra": [
+          "jupyter"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/rich-13.3.1.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/rich-split_1674918300065/work/dist",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "retrying",
         "version": "1.3.3",
         "platform": [
@@ -4127,6 +4263,58 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "readchar",
+        "version": "4.0.5.dev0",
+        "summary": "Library to easily read single chars and key strokes",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "characters",
+          "keystrokes",
+          "stdin",
+          "command line"
+        ],
+        "home_page": "https://github.com/magmax/python-readchar",
+        "author": "Miguel \u00c1ngel Garc\u00eda",
+        "author_email": "miguelangel.garcia@gmail.com",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Console",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: Microsoft :: Windows",
+          "Operating System :: POSIX :: Linux",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Topic :: Software Development",
+          "Topic :: Software Development :: User Interfaces"
+        ],
+        "requires_dist": [
+          "setuptools (>=41.0)"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Download, https://pypi.org/project/readchar/#files",
+          "Bug Tracker, https://github.com/magmax/python-readchar/issues",
+          "Source Code, https://github.com/magmax/python-readchar"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/readchar-4.0.5.dev0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/readchar_1679045163536/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "qdldl",
         "version": "0.1.5.post2",
         "summary": "QDLDL, a free LDL factorization routine.",
@@ -4196,7 +4384,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "PyYAML",
-        "version": "5.4.1",
+        "version": "6.0",
         "platform": [
           "Any"
         ],
@@ -4212,19 +4400,18 @@
           "Operating System :: OS Independent",
           "Programming Language :: Cython",
           "Programming Language :: Python",
-          "Programming Language :: Python :: 2",
-          "Programming Language :: Python :: 2.7",
           "Programming Language :: Python :: 3",
           "Programming Language :: Python :: 3.6",
           "Programming Language :: Python :: 3.7",
           "Programming Language :: Python :: 3.8",
           "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
           "Programming Language :: Python :: Implementation :: CPython",
           "Programming Language :: Python :: Implementation :: PyPy",
           "Topic :: Software Development :: Libraries :: Python Modules",
           "Topic :: Text Processing :: Markup"
         ],
-        "requires_python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, !=3.5.*",
+        "requires_python": ">=3.6",
         "project_url": [
           "Bug Tracker, https://github.com/yaml/pyyaml/issues",
           "CI, https://github.com/yaml/pyyaml/actions",
@@ -4233,8 +4420,12 @@
           "Source Code, https://github.com/yaml/pyyaml"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/PyYAML-5.4.1.dist-info",
-      "installer": "pip",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/PyYAML-6.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/pyyaml_1666772395347/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
       "requested": true
     },
     {
@@ -4436,7 +4627,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "pytorch-lightning",
-        "version": "1.9.0",
+        "version": "2.0.3",
         "summary": "PyTorch Lightning is the lightweight PyTorch wrapper for ML researchers. Scale your models. Write less boilerplate.",
         "description_content_type": "text/markdown",
         "keywords": [
@@ -4459,98 +4650,89 @@
           "License :: OSI Approved :: Apache Software License",
           "Operating System :: OS Independent",
           "Programming Language :: Python :: 3",
-          "Programming Language :: Python :: 3.7",
           "Programming Language :: Python :: 3.8",
           "Programming Language :: Python :: 3.9",
           "Programming Language :: Python :: 3.10"
         ],
         "requires_dist": [
           "numpy (>=1.17.2)",
-          "torch (>=1.10.0)",
+          "torch (>=1.11.0)",
           "tqdm (>=4.57.0)",
           "PyYAML (>=5.4)",
           "fsspec[http] (>2021.06.0)",
           "torchmetrics (>=0.7.0)",
           "packaging (>=17.1)",
           "typing-extensions (>=4.0.0)",
-          "lightning-utilities (>=0.4.2)",
+          "lightning-utilities (>=0.7.0)",
           "matplotlib (>3.1) ; extra == 'all'",
           "omegaconf (>=2.0.5) ; extra == 'all'",
           "hydra-core (>=1.0.5) ; extra == 'all'",
           "jsonargparse[signatures] (>=4.18.0) ; extra == 'all'",
-          "rich (!=10.15.0.a,>=10.14.0) ; extra == 'all'",
+          "rich (>=12.3.0) ; extra == 'all'",
           "tensorboardX (>=2.2) ; extra == 'all'",
-          "fairscale (>=0.4.5) ; extra == 'all'",
-          "deepspeed (>=0.6.0) ; extra == 'all'",
-          "horovod (!=0.24.0,>=0.21.2) ; extra == 'all'",
-          "torchvision (>=0.11.1) ; extra == 'all'",
+          "torchvision (>=0.12.0) ; extra == 'all'",
           "gym[classic_control] (>=0.17.0) ; extra == 'all'",
           "ipython[all] (<8.7.1) ; extra == 'all'",
-          "hivemind (==1.1.5) ; (sys_platform == \"linux\") and extra == 'all'",
-          "deepspeed (>=0.6.0) ; extra == 'deepspeed'",
+          "torchmetrics (>=0.10.0) ; extra == 'all'",
+          "lightning-utilities (>=0.7.0) ; extra == 'all'",
+          "deepspeed (>=0.8.2) ; (platform_system != \"Windows\") and extra == 'all'",
+          "deepspeed (>=0.8.2) ; (platform_system != \"Windows\") and extra == 'deepspeed'",
           "matplotlib (>3.1) ; extra == 'dev'",
           "omegaconf (>=2.0.5) ; extra == 'dev'",
           "hydra-core (>=1.0.5) ; extra == 'dev'",
           "jsonargparse[signatures] (>=4.18.0) ; extra == 'dev'",
-          "rich (!=10.15.0.a,>=10.14.0) ; extra == 'dev'",
+          "rich (>=12.3.0) ; extra == 'dev'",
           "tensorboardX (>=2.2) ; extra == 'dev'",
-          "fairscale (>=0.4.5) ; extra == 'dev'",
-          "deepspeed (>=0.6.0) ; extra == 'dev'",
-          "horovod (!=0.24.0,>=0.21.2) ; extra == 'dev'",
-          "torchvision (>=0.11.1) ; extra == 'dev'",
+          "torchvision (>=0.12.0) ; extra == 'dev'",
           "gym[classic_control] (>=0.17.0) ; extra == 'dev'",
           "ipython[all] (<8.7.1) ; extra == 'dev'",
-          "coverage (==6.5.0) ; extra == 'dev'",
-          "codecov (==2.1.12) ; extra == 'dev'",
-          "pytest (==7.2.0) ; extra == 'dev'",
+          "torchmetrics (>=0.10.0) ; extra == 'dev'",
+          "lightning-utilities (>=0.7.0) ; extra == 'dev'",
+          "coverage (==7.2.5) ; extra == 'dev'",
+          "pytest (==7.3.1) ; extra == 'dev'",
           "pytest-cov (==4.0.0) ; extra == 'dev'",
           "pytest-forked (==1.4.0) ; extra == 'dev'",
           "pytest-rerunfailures (==10.3) ; extra == 'dev'",
-          "pre-commit (==2.20.0) ; extra == 'dev'",
           "cloudpickle (>=1.3) ; extra == 'dev'",
           "scikit-learn (>0.22.1) ; extra == 'dev'",
+          "onnx (<1.15.0) ; extra == 'dev'",
           "onnxruntime (<1.14.0) ; extra == 'dev'",
           "psutil (<5.9.5) ; extra == 'dev'",
           "pandas (>1.0) ; extra == 'dev'",
           "fastapi (<0.87.0) ; extra == 'dev'",
-          "uvicorn (<0.19.1) ; extra == 'dev'",
+          "uvicorn (<0.22.1) ; extra == 'dev'",
           "tensorboard (>=2.9.1) ; extra == 'dev'",
           "protobuf (<=3.20.1) ; extra == 'dev'",
-          "hivemind (==1.1.5) ; (sys_platform == \"linux\") and extra == 'dev'",
-          "torchvision (>=0.11.1) ; extra == 'examples'",
+          "deepspeed (>=0.8.2) ; (platform_system != \"Windows\") and extra == 'dev'",
+          "torchvision (>=0.12.0) ; extra == 'examples'",
           "gym[classic_control] (>=0.17.0) ; extra == 'examples'",
           "ipython[all] (<8.7.1) ; extra == 'examples'",
+          "torchmetrics (>=0.10.0) ; extra == 'examples'",
+          "lightning-utilities (>=0.7.0) ; extra == 'examples'",
           "matplotlib (>3.1) ; extra == 'extra'",
           "omegaconf (>=2.0.5) ; extra == 'extra'",
           "hydra-core (>=1.0.5) ; extra == 'extra'",
           "jsonargparse[signatures] (>=4.18.0) ; extra == 'extra'",
-          "rich (!=10.15.0.a,>=10.14.0) ; extra == 'extra'",
+          "rich (>=12.3.0) ; extra == 'extra'",
           "tensorboardX (>=2.2) ; extra == 'extra'",
-          "fairscale (>=0.4.5) ; extra == 'fairscale'",
-          "hivemind (==1.1.5) ; (sys_platform == \"linux\") and extra == 'hivemind'",
-          "horovod (!=0.24.0,>=0.21.2) ; extra == 'horovod'",
-          "fairscale (>=0.4.5) ; extra == 'strategies'",
-          "deepspeed (>=0.6.0) ; extra == 'strategies'",
-          "horovod (!=0.24.0,>=0.21.2) ; extra == 'strategies'",
-          "hivemind (==1.1.5) ; (sys_platform == \"linux\") and extra == 'strategies'",
-          "coverage (==6.5.0) ; extra == 'test'",
-          "codecov (==2.1.12) ; extra == 'test'",
-          "pytest (==7.2.0) ; extra == 'test'",
+          "deepspeed (>=0.8.2) ; (platform_system != \"Windows\") and extra == 'strategies'",
+          "coverage (==7.2.5) ; extra == 'test'",
+          "pytest (==7.3.1) ; extra == 'test'",
           "pytest-cov (==4.0.0) ; extra == 'test'",
           "pytest-forked (==1.4.0) ; extra == 'test'",
           "pytest-rerunfailures (==10.3) ; extra == 'test'",
-          "pre-commit (==2.20.0) ; extra == 'test'",
           "cloudpickle (>=1.3) ; extra == 'test'",
           "scikit-learn (>0.22.1) ; extra == 'test'",
+          "onnx (<1.15.0) ; extra == 'test'",
           "onnxruntime (<1.14.0) ; extra == 'test'",
           "psutil (<5.9.5) ; extra == 'test'",
           "pandas (>1.0) ; extra == 'test'",
           "fastapi (<0.87.0) ; extra == 'test'",
-          "uvicorn (<0.19.1) ; extra == 'test'",
+          "uvicorn (<0.22.1) ; extra == 'test'",
           "tensorboard (>=2.9.1) ; extra == 'test'",
           "protobuf (<=3.20.1) ; extra == 'test'"
         ],
-        "requires_python": ">=3.7",
+        "requires_python": ">=3.8",
         "project_url": [
           "Bug Tracker, https://github.com/Lightning-AI/lightning/issues",
           "Documentation, https://pytorch-lightning.rtfd.io/en/latest/",
@@ -4562,16 +4744,13 @@
           "dev",
           "examples",
           "extra",
-          "fairscale",
-          "hivemind",
-          "horovod",
           "strategies",
           "test"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/pytorch_lightning-1.9.0.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/pytorch_lightning-2.0.3.dist-info",
       "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/pytorch-lightning_1674873217324/work",
+        "url": "file:///home/conda/feedstock_root/build_artifacts/pytorch-lightning_1686243739155/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -4636,6 +4815,63 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/python_telegram_bot-13.13.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/python-telegram-bot_1656466439083/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "python-multipart",
+        "version": "0.0.6",
+        "summary": "A streaming multipart parser for Python",
+        "description_content_type": "text/x-rst",
+        "author_email": "Andrew Dunham <andrew@du.nham.ca>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Web Environment",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Topic :: Software Development :: Libraries :: Python Modules"
+        ],
+        "requires_dist": [
+          "atomicwrites==1.2.1; extra == 'dev'",
+          "attrs==19.2.0; extra == 'dev'",
+          "coverage==6.5.0; extra == 'dev'",
+          "hatch; extra == 'dev'",
+          "invoke==1.7.3; extra == 'dev'",
+          "more-itertools==4.3.0; extra == 'dev'",
+          "pbr==4.3.0; extra == 'dev'",
+          "pluggy==1.0.0; extra == 'dev'",
+          "py==1.11.0; extra == 'dev'",
+          "pytest-cov==4.0.0; extra == 'dev'",
+          "pytest-timeout==2.1.0; extra == 'dev'",
+          "pytest==7.2.0; extra == 'dev'",
+          "pyyaml==5.1; extra == 'dev'"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Homepage, https://github.com/andrew-d/python-multipart",
+          "Documentation, https://andrew-d.github.io/python-multipart/",
+          "Changelog, https://github.com/andrew-d/python-multipart/tags",
+          "Source, https://github.com/andrew-d/python-multipart"
+        ],
+        "provides_extra": [
+          "dev"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/python_multipart-0.0.6.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/python-multipart_1679167423335/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -4712,6 +4948,41 @@
       },
       "installer": "conda",
       "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "python-editor",
+        "version": "1.0.4",
+        "platform": [
+          "UNKNOWN"
+        ],
+        "summary": "Programmatically open an editor, capture the result.",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "editor",
+          "library",
+          "vim",
+          "emacs"
+        ],
+        "home_page": "https://github.com/fmoo/python-editor",
+        "author": "Peter Ruibal",
+        "author_email": "ruibalp@gmail.com",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python :: 2",
+          "Programming Language :: Python :: 2.7",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.4",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Topic :: Software Development :: Libraries"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/python_editor-1.0.4-py2.7.egg-info"
     },
     {
       "metadata": {
@@ -6397,6 +6668,127 @@
     },
     {
       "metadata": {
+        "metadata_version": "2.1",
+        "name": "poetry",
+        "version": "1.1.15",
+        "summary": "Python dependency management and packaging made easy.",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "packaging",
+          "dependency",
+          "poetry"
+        ],
+        "home_page": "https://python-poetry.org/",
+        "author": "S\u00e9bastien Eustace",
+        "author_email": "sebastien@eustace.io",
+        "classifier": [
+          "License :: OSI Approved :: MIT License",
+          "Programming Language :: Python :: 2",
+          "Programming Language :: Python :: 2.7",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Topic :: Software Development :: Build Tools",
+          "Topic :: Software Development :: Libraries :: Python Modules"
+        ],
+        "requires_dist": [
+          "cachecontrol[filecache] (>=0.12.4,<0.13.0); python_version < \"3.6\"",
+          "cachecontrol[filecache] (>=0.12.9,<0.13.0); python_version >= \"3.6\" and python_version < \"4.0\"",
+          "cachy (>=0.3.0,<0.4.0)",
+          "cleo (>=0.8.1,<0.9.0)",
+          "clikit (>=0.6.2,<0.7.0)",
+          "crashtest (>=0.3.0,<0.4.0); python_version >= \"3.6\" and python_version < \"4.0\"",
+          "functools32 (>=3.2.3,<4.0.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "futures (>=3.3.0,<4.0.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "glob2 (>=0.6,<0.7); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "html5lib (>=1.0,<2.0)",
+          "importlib-metadata (>=1.6.0,<2.0.0); python_version < \"3.8\"",
+          "keyring (>=18.0.1,<19.0.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "keyring (>=20.0.1,<21.0.0); python_version >= \"3.5\" and python_version < \"3.6\"",
+          "keyring (>=21.2.0); python_version >= \"3.6\" and python_version < \"4.0\"",
+          "packaging (>=20.4,<21.0)",
+          "pathlib2 (>=2.3,<3.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "pexpect (>=4.7.0,<5.0.0)",
+          "pkginfo (>=1.4,<2.0)",
+          "poetry-core (>=1.0.7,<1.1.0)",
+          "requests (>=2.18,<3.0)",
+          "requests-toolbelt (>=0.9.1,<0.10.0)",
+          "shellingham (>=1.1,<2.0)",
+          "subprocess32 (>=3.5,<4.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "tomlkit (>=0.7.0,<1.0.0)",
+          "typing (>=3.6,<4.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "virtualenv (>=20.0.26,<21.0.0)"
+        ],
+        "requires_python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*",
+        "project_url": [
+          "Documentation, https://python-poetry.org/docs",
+          "Repository, https://github.com/python-poetry/poetry"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/poetry-1.1.15.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/poetry_1661882896454/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "poetry-core",
+        "version": "1.0.8",
+        "summary": "Poetry PEP 517 Build Backend",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "packaging",
+          "dependency",
+          "poetry"
+        ],
+        "home_page": "https://github.com/python-poetry/poetry-core",
+        "author": "S\u00e9bastien Eustace",
+        "author_email": "sebastien@eustace.io",
+        "classifier": [
+          "License :: OSI Approved :: MIT License",
+          "Programming Language :: Python :: 2",
+          "Programming Language :: Python :: 2.7",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Topic :: Software Development :: Build Tools",
+          "Topic :: Software Development :: Libraries :: Python Modules"
+        ],
+        "requires_dist": [
+          "enum34 (>=1.1.10,<2.0.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "functools32 (>=3.2.3-2,<4.0.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "importlib-metadata (>=1.7.0,<2.0.0); python_version >= \"2.7\" and python_version < \"2.8\" or python_version >= \"3.5\" and python_version < \"3.8\"",
+          "pathlib2 (>=2.3.5,<3.0.0); python_version >= \"2.7\" and python_version < \"2.8\"",
+          "typing (>=3.7.4.1,<4.0.0.0); python_version >= \"2.7\" and python_version < \"2.8\""
+        ],
+        "requires_python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*",
+        "project_url": [
+          "Bug Tracker, https://github.com/python-poetry/poetry/issues",
+          "Repository, https://github.com/python-poetry/poetry-core"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/poetry_core-1.0.8.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/poetry-core_1648737032110/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
         "metadata_version": "1.2",
         "name": "ply",
         "version": "3.11",
@@ -7233,36 +7625,41 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "packaging",
-        "version": "23.1",
+        "version": "20.9",
+        "platform": [
+          "UNKNOWN"
+        ],
         "summary": "Core utilities for Python packages",
         "description_content_type": "text/x-rst",
-        "author_email": "Donald Stufft <donald@stufft.io>",
+        "home_page": "https://github.com/pypa/packaging",
+        "author": "Donald Stufft and individual contributors",
+        "author_email": "donald@stufft.io",
         "classifier": [
           "Development Status :: 5 - Production/Stable",
           "Intended Audience :: Developers",
           "License :: OSI Approved :: Apache Software License",
           "License :: OSI Approved :: BSD License",
           "Programming Language :: Python",
+          "Programming Language :: Python :: 2",
+          "Programming Language :: Python :: 2.7",
           "Programming Language :: Python :: 3",
-          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.4",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
           "Programming Language :: Python :: 3.7",
           "Programming Language :: Python :: 3.8",
           "Programming Language :: Python :: 3.9",
-          "Programming Language :: Python :: 3.10",
-          "Programming Language :: Python :: 3.11",
           "Programming Language :: Python :: Implementation :: CPython",
-          "Programming Language :: Python :: Implementation :: PyPy",
-          "Typing :: Typed"
+          "Programming Language :: Python :: Implementation :: PyPy"
         ],
-        "requires_python": ">=3.7",
-        "project_url": [
-          "Documentation, https://packaging.pypa.io/",
-          "Source, https://github.com/pypa/packaging"
-        ]
+        "requires_dist": [
+          "pyparsing (>=2.0.2)"
+        ],
+        "requires_python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/packaging-23.1.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/packaging-20.9.dist-info",
       "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/packaging_1681337016113/work",
+        "url": "file:///home/conda/feedstock_root/build_artifacts/packaging_1612459636436/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -7289,6 +7686,103 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/osqp-0.6.2.post0.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/osqp_1636447371639/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "orjson",
+        "version": "3.9.1",
+        "summary": "Fast, correct Python JSON library supporting dataclasses, datetimes, and numpy",
+        "description_content_type": "text/markdown; charset=UTF-8; variant=GFM",
+        "keywords": [
+          "fast",
+          "json",
+          "dataclass",
+          "dataclasses",
+          "datetime",
+          "rfc",
+          "8259",
+          "3339"
+        ],
+        "home_page": "https://github.com/ijl/orjson",
+        "author": "ijl <ijl@mailbox.org>",
+        "author_email": "ijl <ijl@mailbox.org>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: MacOS",
+          "Operating System :: Microsoft :: Windows",
+          "Operating System :: POSIX :: Linux",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python",
+          "Programming Language :: Rust",
+          "Typing :: Typed"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Changelog, https://github.com/ijl/orjson/blob/master/CHANGELOG.md"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/orjson-3.9.1.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/orjson_1686350104951/work/target/wheels/orjson-3.9.1-cp310-cp310-linux_x86_64.whl",
+        "archive_info": {
+          "hash": "sha256=b8aeeace74bc3e1346da68a0efdd1681bf90120bd77b85632eb484ec20c27824"
+        }
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "ordered-set",
+        "version": "4.1.0",
+        "summary": "An OrderedSet is a custom MutableSet that remembers its order, so that every",
+        "description_content_type": "text/markdown",
+        "author_email": "Elia Robyn Lake <gh@arborelia.net>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: MIT License",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy"
+        ],
+        "requires_dist": [
+          "pytest ; extra == \"dev\"",
+          "black ; extra == \"dev\"",
+          "mypy ; extra == \"dev\""
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Home, https://github.com/rspeer/ordered-set"
+        ],
+        "provides_extra": [
+          "dev"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/ordered_set-4.1.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/ordered-set_1643221357603/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -10012,8 +10506,403 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "lightning",
+        "version": "2.0.3",
+        "summary": "Use Lightning Apps to build everything from production-ready, multi-cloud ML systems to simple research demos.",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "deep learning",
+          "pytorch",
+          "AI"
+        ],
+        "home_page": "https://github.com/Lightning-AI/lightning",
+        "download_url": "https://github.com/Lightning-AI/lightning",
+        "author": "Lightning AI et al.",
+        "author_email": "pytorch@lightning.ai",
+        "classifier": [
+          "Environment :: Console",
+          "Natural Language :: English",
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "Topic :: Scientific/Engineering :: Artificial Intelligence",
+          "Topic :: Scientific/Engineering :: Information Analysis",
+          "License :: OSI Approved :: Apache Software License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10"
+        ],
+        "requires_dist": [
+          "Jinja2 (<5.0)",
+          "PyYAML (<8.0)",
+          "PyYAML (<8.0,>=5.4)",
+          "arrow (<3.0,>=1.2.0)",
+          "beautifulsoup4 (<6.0,>=4.8.0)",
+          "click (<10.0)",
+          "croniter (<1.4.0,>=1.3.0)",
+          "dateutils (<2.0)",
+          "deepdiff (<8.0,>=5.7.0)",
+          "fastapi (<0.89.0,>=0.69.0)",
+          "fsspec (<2024.0,>=2022.5.0)",
+          "fsspec[http] (<2025.0,>2021.06.0)",
+          "inquirer (<5.0,>=2.10.0)",
+          "lightning-cloud (>=0.5.34)",
+          "lightning-utilities (<2.0,>=0.7.0)",
+          "numpy (<3.0,>=1.17.2)",
+          "packaging",
+          "packaging (<25.0,>=17.1)",
+          "psutil (<7.0)",
+          "pydantic (<4.0,>=1.7.4)",
+          "python-multipart (<2.0,>=0.0.5)",
+          "requests (<4.0)",
+          "rich (<15.0,>=12.3.0)",
+          "starlette",
+          "starsessions (<2.0,>=1.2.1)",
+          "torch (<4.0,>=1.11.0)",
+          "torchmetrics (<2.0,>=0.7.0)",
+          "tqdm (<6.0,>=4.57.0)",
+          "traitlets (<7.0,>=5.3.0)",
+          "typing-extensions (<6.0,>=4.0.0)",
+          "urllib3 (<3.0)",
+          "uvicorn (<2.0)",
+          "websocket-client (<3.0)",
+          "websockets (<12.0)",
+          "pytorch-lightning",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'all'",
+          "docker (<7.0,>=5.0.0) ; extra == 'all'",
+          "gym[classic_control] (<1.0,>=0.17.0) ; extra == 'all'",
+          "hydra-core (<2.0,>=1.0.5) ; extra == 'all'",
+          "ipython[all] (<9.0) ; extra == 'all'",
+          "jsonargparse[signatures] (<5.0,>=4.18.0) ; extra == 'all'",
+          "lightning-fabric (>=1.9.0) ; extra == 'all'",
+          "lightning-utilities (<1.0,>=0.7.0) ; extra == 'all'",
+          "lightning-utilities (<1.0,>=0.8.0) ; extra == 'all'",
+          "lightning-api-access (>=0.0.3) ; extra == 'all'",
+          "matplotlib (<4.0,>3.1) ; extra == 'all'",
+          "omegaconf (<3.0,>=2.0.5) ; extra == 'all'",
+          "panel (<1.0,>=0.12.7) ; extra == 'all'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'all'",
+          "redis (<5.0,>=4.0.1) ; extra == 'all'",
+          "rich (<14.0,>=12.3.0) ; extra == 'all'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'all'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'all'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'all'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'all'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'all'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'all'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'app-all'",
+          "docker (<7.0,>=5.0.0) ; extra == 'app-all'",
+          "lightning-fabric (>=1.9.0) ; extra == 'app-all'",
+          "lightning-api-access (>=0.0.3) ; extra == 'app-all'",
+          "panel (<1.0,>=0.12.7) ; extra == 'app-all'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'app-all'",
+          "redis (<5.0,>=4.0.1) ; extra == 'app-all'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'app-all'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'app-all'",
+          "docker (<7.0,>=5.0.0) ; extra == 'app-cloud'",
+          "redis (<5.0,>=4.0.1) ; extra == 'app-cloud'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'app-cloud'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'app-components'",
+          "lightning-fabric (>=1.9.0) ; extra == 'app-components'",
+          "lightning-api-access (>=0.0.3) ; extra == 'app-components'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'app-components'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'app-dev'",
+          "coverage (==7.2.5) ; extra == 'app-dev'",
+          "docker (<7.0,>=5.0.0) ; extra == 'app-dev'",
+          "httpx ; extra == 'app-dev'",
+          "lightning-fabric (>=1.9.0) ; extra == 'app-dev'",
+          "lightning-api-access (>=0.0.3) ; extra == 'app-dev'",
+          "panel (<1.0,>=0.12.7) ; extra == 'app-dev'",
+          "playwright (==1.32.1) ; extra == 'app-dev'",
+          "psutil ; extra == 'app-dev'",
+          "pympler ; extra == 'app-dev'",
+          "pytest-asyncio (==0.20.3) ; extra == 'app-dev'",
+          "pytest-cov (==4.0.0) ; extra == 'app-dev'",
+          "pytest-doctestplus (>=0.9.0) ; extra == 'app-dev'",
+          "pytest-rerunfailures (<12.0) ; extra == 'app-dev'",
+          "pytest-timeout (==2.1.0) ; extra == 'app-dev'",
+          "pytest (==7.3.1) ; extra == 'app-dev'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'app-dev'",
+          "redis (<5.0,>=4.0.1) ; extra == 'app-dev'",
+          "requests-mock ; extra == 'app-dev'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'app-dev'",
+          "setuptools (<68.0) ; extra == 'app-dev'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'app-dev'",
+          "trio (<0.22.0) ; extra == 'app-dev'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'app-extra'",
+          "docker (<7.0,>=5.0.0) ; extra == 'app-extra'",
+          "lightning-fabric (>=1.9.0) ; extra == 'app-extra'",
+          "lightning-api-access (>=0.0.3) ; extra == 'app-extra'",
+          "panel (<1.0,>=0.12.7) ; extra == 'app-extra'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'app-extra'",
+          "redis (<5.0,>=4.0.1) ; extra == 'app-extra'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'app-extra'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'app-extra'",
+          "coverage (==7.2.5) ; extra == 'app-test'",
+          "httpx ; extra == 'app-test'",
+          "playwright (==1.32.1) ; extra == 'app-test'",
+          "psutil ; extra == 'app-test'",
+          "pympler ; extra == 'app-test'",
+          "pytest-asyncio (==0.20.3) ; extra == 'app-test'",
+          "pytest-cov (==4.0.0) ; extra == 'app-test'",
+          "pytest-doctestplus (>=0.9.0) ; extra == 'app-test'",
+          "pytest-rerunfailures (<12.0) ; extra == 'app-test'",
+          "pytest-timeout (==2.1.0) ; extra == 'app-test'",
+          "pytest (==7.3.1) ; extra == 'app-test'",
+          "requests-mock ; extra == 'app-test'",
+          "setuptools (<68.0) ; extra == 'app-test'",
+          "trio (<0.22.0) ; extra == 'app-test'",
+          "panel (<1.0,>=0.12.7) ; extra == 'app-ui'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'app-ui'",
+          "docker (<7.0,>=5.0.0) ; extra == 'cloud'",
+          "redis (<5.0,>=4.0.1) ; extra == 'cloud'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'cloud'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'components'",
+          "lightning-fabric (>=1.9.0) ; extra == 'components'",
+          "lightning-api-access (>=0.0.3) ; extra == 'components'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'components'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'dev'",
+          "click (==8.1.3) ; extra == 'dev'",
+          "cloudpickle (<3.0,>=1.3) ; extra == 'dev'",
+          "coverage (==7.2.5) ; extra == 'dev'",
+          "docker (<7.0,>=5.0.0) ; extra == 'dev'",
+          "fastapi (<1.0) ; extra == 'dev'",
+          "gym[classic_control] (<1.0,>=0.17.0) ; extra == 'dev'",
+          "httpx ; extra == 'dev'",
+          "hydra-core (<2.0,>=1.0.5) ; extra == 'dev'",
+          "ipython[all] (<9.0) ; extra == 'dev'",
+          "jsonargparse[signatures] (<5.0,>=4.18.0) ; extra == 'dev'",
+          "lightning-fabric (>=1.9.0) ; extra == 'dev'",
+          "lightning-utilities (<1.0,>=0.7.0) ; extra == 'dev'",
+          "lightning-utilities (<1.0,>=0.8.0) ; extra == 'dev'",
+          "lightning-api-access (>=0.0.3) ; extra == 'dev'",
+          "matplotlib (<4.0,>3.1) ; extra == 'dev'",
+          "omegaconf (<3.0,>=2.0.5) ; extra == 'dev'",
+          "onnx (<2.0) ; extra == 'dev'",
+          "onnxruntime (<2.0) ; extra == 'dev'",
+          "pandas (<3.0,>1.0) ; extra == 'dev'",
+          "panel (<1.0,>=0.12.7) ; extra == 'dev'",
+          "playwright (==1.32.1) ; extra == 'dev'",
+          "protobuf (<=3.20.1) ; extra == 'dev'",
+          "psutil ; extra == 'dev'",
+          "psutil (<6.0) ; extra == 'dev'",
+          "pympler ; extra == 'dev'",
+          "pytest-asyncio (==0.20.3) ; extra == 'dev'",
+          "pytest-cov (==4.0.0) ; extra == 'dev'",
+          "pytest-doctestplus (>=0.9.0) ; extra == 'dev'",
+          "pytest-forked (==1.4.0) ; extra == 'dev'",
+          "pytest-rerunfailures (<12.0) ; extra == 'dev'",
+          "pytest-rerunfailures (==10.3) ; extra == 'dev'",
+          "pytest-timeout (==2.1.0) ; extra == 'dev'",
+          "pytest (==7.3.1) ; extra == 'dev'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'dev'",
+          "redis (<5.0,>=4.0.1) ; extra == 'dev'",
+          "requests-mock ; extra == 'dev'",
+          "rich (<14.0,>=12.3.0) ; extra == 'dev'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'dev'",
+          "scikit-learn (<2.0,>0.22.1) ; extra == 'dev'",
+          "setuptools (<68.0) ; extra == 'dev'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'dev'",
+          "tensorboard (<3.0,>=2.9.1) ; extra == 'dev'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'dev'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'dev'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'dev'",
+          "trio (<0.22.0) ; extra == 'dev'",
+          "uvicorn (<1.0) ; extra == 'dev'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'dev'",
+          "gym[classic_control] (<1.0,>=0.17.0) ; extra == 'examples'",
+          "ipython[all] (<9.0) ; extra == 'examples'",
+          "lightning-utilities (<1.0,>=0.7.0) ; extra == 'examples'",
+          "lightning-utilities (<1.0,>=0.8.0) ; extra == 'examples'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'examples'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'examples'",
+          "aiohttp (<4.0,>=3.8.0) ; extra == 'extra'",
+          "docker (<7.0,>=5.0.0) ; extra == 'extra'",
+          "hydra-core (<2.0,>=1.0.5) ; extra == 'extra'",
+          "jsonargparse[signatures] (<5.0,>=4.18.0) ; extra == 'extra'",
+          "lightning-fabric (>=1.9.0) ; extra == 'extra'",
+          "lightning-api-access (>=0.0.3) ; extra == 'extra'",
+          "matplotlib (<4.0,>3.1) ; extra == 'extra'",
+          "omegaconf (<3.0,>=2.0.5) ; extra == 'extra'",
+          "panel (<1.0,>=0.12.7) ; extra == 'extra'",
+          "pytorch-lightning (>=1.9.0) ; extra == 'extra'",
+          "redis (<5.0,>=4.0.1) ; extra == 'extra'",
+          "rich (<14.0,>=12.3.0) ; extra == 'extra'",
+          "s3fs (<2023.0,>=2022.5.0) ; extra == 'extra'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'extra'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'extra'",
+          "lightning-utilities (<1.0,>=0.8.0) ; extra == 'fabric-all'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'fabric-all'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'fabric-all'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'fabric-all'",
+          "click (==8.1.3) ; extra == 'fabric-dev'",
+          "coverage (==7.2.5) ; extra == 'fabric-dev'",
+          "lightning-utilities (<1.0,>=0.8.0) ; extra == 'fabric-dev'",
+          "pytest-cov (==4.0.0) ; extra == 'fabric-dev'",
+          "pytest-rerunfailures (==10.3) ; extra == 'fabric-dev'",
+          "pytest (==7.3.1) ; extra == 'fabric-dev'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'fabric-dev'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'fabric-dev'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'fabric-dev'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'fabric-dev'",
+          "lightning-utilities (<1.0,>=0.8.0) ; extra == 'fabric-examples'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'fabric-examples'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'fabric-examples'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'fabric-strategies'",
+          "click (==8.1.3) ; extra == 'fabric-test'",
+          "coverage (==7.2.5) ; extra == 'fabric-test'",
+          "pytest-cov (==4.0.0) ; extra == 'fabric-test'",
+          "pytest-rerunfailures (==10.3) ; extra == 'fabric-test'",
+          "pytest (==7.3.1) ; extra == 'fabric-test'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'fabric-test'",
+          "gym[classic_control] (<1.0,>=0.17.0) ; extra == 'pytorch-all'",
+          "hydra-core (<2.0,>=1.0.5) ; extra == 'pytorch-all'",
+          "ipython[all] (<9.0) ; extra == 'pytorch-all'",
+          "jsonargparse[signatures] (<5.0,>=4.18.0) ; extra == 'pytorch-all'",
+          "lightning-utilities (<1.0,>=0.7.0) ; extra == 'pytorch-all'",
+          "matplotlib (<4.0,>3.1) ; extra == 'pytorch-all'",
+          "omegaconf (<3.0,>=2.0.5) ; extra == 'pytorch-all'",
+          "rich (<14.0,>=12.3.0) ; extra == 'pytorch-all'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'pytorch-all'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'pytorch-all'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'pytorch-all'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'pytorch-all'",
+          "cloudpickle (<3.0,>=1.3) ; extra == 'pytorch-dev'",
+          "coverage (==7.2.5) ; extra == 'pytorch-dev'",
+          "fastapi (<1.0) ; extra == 'pytorch-dev'",
+          "gym[classic_control] (<1.0,>=0.17.0) ; extra == 'pytorch-dev'",
+          "hydra-core (<2.0,>=1.0.5) ; extra == 'pytorch-dev'",
+          "ipython[all] (<9.0) ; extra == 'pytorch-dev'",
+          "jsonargparse[signatures] (<5.0,>=4.18.0) ; extra == 'pytorch-dev'",
+          "lightning-utilities (<1.0,>=0.7.0) ; extra == 'pytorch-dev'",
+          "matplotlib (<4.0,>3.1) ; extra == 'pytorch-dev'",
+          "omegaconf (<3.0,>=2.0.5) ; extra == 'pytorch-dev'",
+          "onnx (<2.0) ; extra == 'pytorch-dev'",
+          "onnxruntime (<2.0) ; extra == 'pytorch-dev'",
+          "pandas (<3.0,>1.0) ; extra == 'pytorch-dev'",
+          "protobuf (<=3.20.1) ; extra == 'pytorch-dev'",
+          "psutil (<6.0) ; extra == 'pytorch-dev'",
+          "pytest-cov (==4.0.0) ; extra == 'pytorch-dev'",
+          "pytest-forked (==1.4.0) ; extra == 'pytorch-dev'",
+          "pytest-rerunfailures (==10.3) ; extra == 'pytorch-dev'",
+          "pytest (==7.3.1) ; extra == 'pytorch-dev'",
+          "rich (<14.0,>=12.3.0) ; extra == 'pytorch-dev'",
+          "scikit-learn (<2.0,>0.22.1) ; extra == 'pytorch-dev'",
+          "tensorboard (<3.0,>=2.9.1) ; extra == 'pytorch-dev'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'pytorch-dev'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'pytorch-dev'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'pytorch-dev'",
+          "uvicorn (<1.0) ; extra == 'pytorch-dev'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'pytorch-dev'",
+          "gym[classic_control] (<1.0,>=0.17.0) ; extra == 'pytorch-examples'",
+          "ipython[all] (<9.0) ; extra == 'pytorch-examples'",
+          "lightning-utilities (<1.0,>=0.7.0) ; extra == 'pytorch-examples'",
+          "torchmetrics (<1.0,>=0.10.0) ; extra == 'pytorch-examples'",
+          "torchvision (<1.0,>=0.12.0) ; extra == 'pytorch-examples'",
+          "hydra-core (<2.0,>=1.0.5) ; extra == 'pytorch-extra'",
+          "jsonargparse[signatures] (<5.0,>=4.18.0) ; extra == 'pytorch-extra'",
+          "matplotlib (<4.0,>3.1) ; extra == 'pytorch-extra'",
+          "omegaconf (<3.0,>=2.0.5) ; extra == 'pytorch-extra'",
+          "rich (<14.0,>=12.3.0) ; extra == 'pytorch-extra'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'pytorch-extra'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'pytorch-strategies'",
+          "cloudpickle (<3.0,>=1.3) ; extra == 'pytorch-test'",
+          "coverage (==7.2.5) ; extra == 'pytorch-test'",
+          "fastapi (<1.0) ; extra == 'pytorch-test'",
+          "onnx (<2.0) ; extra == 'pytorch-test'",
+          "onnxruntime (<2.0) ; extra == 'pytorch-test'",
+          "pandas (<3.0,>1.0) ; extra == 'pytorch-test'",
+          "protobuf (<=3.20.1) ; extra == 'pytorch-test'",
+          "psutil (<6.0) ; extra == 'pytorch-test'",
+          "pytest-cov (==4.0.0) ; extra == 'pytorch-test'",
+          "pytest-forked (==1.4.0) ; extra == 'pytorch-test'",
+          "pytest-rerunfailures (==10.3) ; extra == 'pytorch-test'",
+          "pytest (==7.3.1) ; extra == 'pytorch-test'",
+          "scikit-learn (<2.0,>0.22.1) ; extra == 'pytorch-test'",
+          "tensorboard (<3.0,>=2.9.1) ; extra == 'pytorch-test'",
+          "uvicorn (<1.0) ; extra == 'pytorch-test'",
+          "deepspeed (<1.0,>=0.8.2) ; (platform_system != \"Windows\") and extra == 'strategies'",
+          "click (==8.1.3) ; extra == 'test'",
+          "cloudpickle (<3.0,>=1.3) ; extra == 'test'",
+          "coverage (==7.2.5) ; extra == 'test'",
+          "fastapi (<1.0) ; extra == 'test'",
+          "httpx ; extra == 'test'",
+          "onnx (<2.0) ; extra == 'test'",
+          "onnxruntime (<2.0) ; extra == 'test'",
+          "pandas (<3.0,>1.0) ; extra == 'test'",
+          "playwright (==1.32.1) ; extra == 'test'",
+          "protobuf (<=3.20.1) ; extra == 'test'",
+          "psutil ; extra == 'test'",
+          "psutil (<6.0) ; extra == 'test'",
+          "pympler ; extra == 'test'",
+          "pytest-asyncio (==0.20.3) ; extra == 'test'",
+          "pytest-cov (==4.0.0) ; extra == 'test'",
+          "pytest-doctestplus (>=0.9.0) ; extra == 'test'",
+          "pytest-forked (==1.4.0) ; extra == 'test'",
+          "pytest-rerunfailures (<12.0) ; extra == 'test'",
+          "pytest-rerunfailures (==10.3) ; extra == 'test'",
+          "pytest-timeout (==2.1.0) ; extra == 'test'",
+          "pytest (==7.3.1) ; extra == 'test'",
+          "requests-mock ; extra == 'test'",
+          "scikit-learn (<2.0,>0.22.1) ; extra == 'test'",
+          "setuptools (<68.0) ; extra == 'test'",
+          "tensorboard (<3.0,>=2.9.1) ; extra == 'test'",
+          "tensorboardX (<3.0,>=2.2) ; extra == 'test'",
+          "trio (<0.22.0) ; extra == 'test'",
+          "uvicorn (<1.0) ; extra == 'test'",
+          "panel (<1.0,>=0.12.7) ; extra == 'ui'",
+          "streamlit (<2.0,>=1.13.0) ; extra == 'ui'"
+        ],
+        "requires_python": ">=3.8",
+        "project_url": [
+          "Bug Tracker, https://github.com/Lightning-AI/lightning/issues",
+          "Documentation, https://lightning.ai/lightning-docs",
+          "Source Code, https://github.com/Lightning-AI/lightning"
+        ],
+        "provides_extra": [
+          "all",
+          "app-all",
+          "app-cloud",
+          "app-components",
+          "app-dev",
+          "app-extra",
+          "app-test",
+          "app-ui",
+          "cloud",
+          "components",
+          "dev",
+          "examples",
+          "extra",
+          "fabric-all",
+          "fabric-dev",
+          "fabric-examples",
+          "fabric-strategies",
+          "fabric-test",
+          "pytorch-all",
+          "pytorch-dev",
+          "pytorch-examples",
+          "pytorch-extra",
+          "pytorch-strategies",
+          "pytorch-test",
+          "strategies",
+          "test",
+          "ui"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/lightning-2.0.3.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/lightning_1686243675944/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "lightning-utilities",
-        "version": "0.6.0.post0",
+        "version": "0.8.0",
         "summary": "PyTorch Lightning Sample project.",
         "description_content_type": "text/markdown",
         "keywords": [
@@ -10043,7 +10932,8 @@
           "importlib-metadata (>=4.0.0) ; python_version < \"3.8\"",
           "fire ; extra == 'cli'",
           "sphinx (<5.0,>=4.0) ; extra == 'docs'",
-          "coverage (==6.5.0) ; extra == 'test'"
+          "coverage (==6.5.0) ; extra == 'test'",
+          "mypy (>=1.0.0) ; extra == 'typing'"
         ],
         "requires_python": ">=3.7",
         "project_url": [
@@ -10054,12 +10944,54 @@
         "provides_extra": [
           "cli",
           "docs",
-          "test"
+          "test",
+          "typing"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/lightning_utilities-0.6.0.post0.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/lightning_utilities-0.8.0.dist-info",
       "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/lightning-utilities_1674618983304/work",
+        "url": "file:///home/conda/feedstock_root/build_artifacts/lightning-utilities_1678644635474/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "lightning-cloud",
+        "version": "0.5.36",
+        "summary": "Lightning Cloud",
+        "description_content_type": "text/x-rst",
+        "home_page": "https://lightning.ai",
+        "author": "Grid.ai",
+        "author_email": "grid-eng@grid.ai",
+        "classifier": [
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "License :: OSI Approved :: Apache Software License"
+        ],
+        "requires_dist": [
+          "click",
+          "fastapi",
+          "pyjwt",
+          "python-multipart",
+          "requests",
+          "rich",
+          "six",
+          "urllib3",
+          "uvicorn",
+          "websocket-client"
+        ],
+        "requires_python": ">=3.7.0"
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/lightning_cloud-0.5.36.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/lightning-cloud_1684530799200/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -11180,6 +12112,47 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "itsdangerous",
+        "version": "2.1.2",
+        "platform": [
+          "UNKNOWN"
+        ],
+        "summary": "Safely pass data to untrusted environments and back.",
+        "description_content_type": "text/x-rst",
+        "home_page": "https://palletsprojects.com/p/itsdangerous/",
+        "author": "Armin Ronacher",
+        "author_email": "armin.ronacher@active-4.com",
+        "maintainer": "Pallets",
+        "maintainer_email": "contact@palletsprojects.com",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: BSD License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Donate, https://palletsprojects.com/donate",
+          "Documentation, https://itsdangerous.palletsprojects.com/",
+          "Changes, https://itsdangerous.palletsprojects.com/changes/",
+          "Source Code, https://github.com/pallets/itsdangerous/",
+          "Issue Tracker, https://github.com/pallets/itsdangerous/issues/",
+          "Twitter, https://twitter.com/PalletsTeam",
+          "Chat, https://discord.gg/pallets"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/itsdangerous-2.1.2.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/itsdangerous_1648147185463/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "isort",
         "version": "5.10.1",
         "summary": "A Python utility / library to sort Python imports.",
@@ -11618,6 +12591,53 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/ipdb-0.13.9.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/ipdb_1624508252788/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "inquirer",
+        "version": "3.1.3",
+        "summary": "Collection of common interactive command line user interfaces, based on Inquirer.js",
+        "description_content_type": "text/markdown",
+        "home_page": "https://github.com/magmax/python-inquirer",
+        "author": "Miguel \u00c1ngel Garc\u00eda",
+        "author_email": "miguelangel.garcia@gmail.com",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Console",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Topic :: Software Development :: Libraries :: Application Frameworks",
+          "Topic :: Software Development :: User Interfaces"
+        ],
+        "requires_dist": [
+          "blessed (>=1.19.0)",
+          "python-editor (>=1.0.4)",
+          "readchar (>=3.0.6)"
+        ],
+        "requires_python": ">=3.8",
+        "project_url": [
+          "Documentation, https://magmax.org/python-inquirer",
+          "Repository, https://github.com/magmax/python-inquirer"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/inquirer-3.1.3.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/inquirer_1678135536462/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -12207,7 +13227,11 @@
         "requires_python": ">=3.7"
       },
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/h11-0.14.0.dist-info",
-      "installer": "pip",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/h11_1664132893548/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
       "requested": true
     },
     {
@@ -13376,87 +14400,83 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "fastapi",
-        "version": "0.67.0",
+        "version": "0.88.0",
         "summary": "FastAPI framework, high performance, easy to learn, fast to code, ready for production",
         "description_content_type": "text/markdown",
-        "home_page": "https://github.com/tiangolo/fastapi",
-        "author": "Sebasti\u00e1n Ram\u00edrez",
-        "author_email": "tiangolo@gmail.com",
+        "author_email": "Sebasti\u00e1n Ram\u00edrez <tiangolo@gmail.com>",
         "classifier": [
-          "Intended Audience :: Information Technology",
-          "Intended Audience :: System Administrators",
-          "Operating System :: OS Independent",
-          "Programming Language :: Python :: 3",
-          "Programming Language :: Python",
-          "Topic :: Internet",
-          "Topic :: Software Development :: Libraries :: Application Frameworks",
-          "Topic :: Software Development :: Libraries :: Python Modules",
-          "Topic :: Software Development :: Libraries",
-          "Topic :: Software Development",
-          "Typing :: Typed",
           "Development Status :: 4 - Beta",
           "Environment :: Web Environment",
           "Framework :: AsyncIO",
+          "Framework :: FastAPI",
           "Intended Audience :: Developers",
+          "Intended Audience :: Information Technology",
+          "Intended Audience :: System Administrators",
           "License :: OSI Approved :: MIT License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3",
           "Programming Language :: Python :: 3 :: Only",
-          "Programming Language :: Python :: 3.6",
           "Programming Language :: Python :: 3.7",
           "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Topic :: Internet",
+          "Topic :: Internet :: WWW/HTTP",
           "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
-          "Topic :: Internet :: WWW/HTTP"
+          "Topic :: Software Development",
+          "Topic :: Software Development :: Libraries",
+          "Topic :: Software Development :: Libraries :: Application Frameworks",
+          "Topic :: Software Development :: Libraries :: Python Modules",
+          "Typing :: Typed"
         ],
         "requires_dist": [
-          "starlette ==0.14.2",
-          "pydantic >=1.6.2,!=1.7,!=1.7.1,!=1.7.2,!=1.7.3,!=1.8,!=1.8.1,<2.0.0",
-          "requests >=2.24.0,<3.0.0 ; extra == \"all\"",
-          "aiofiles >=0.5.0,<0.6.0 ; extra == \"all\"",
-          "jinja2 >=2.11.2,<3.0.0 ; extra == \"all\"",
-          "python-multipart >=0.0.5,<0.0.6 ; extra == \"all\"",
-          "itsdangerous >=1.1.0,<2.0.0 ; extra == \"all\"",
-          "pyyaml >=5.3.1,<6.0.0 ; extra == \"all\"",
-          "graphene >=2.1.8,<3.0.0 ; extra == \"all\"",
-          "ujson >=4.0.1,<5.0.0 ; extra == \"all\"",
-          "orjson >=3.2.1,<4.0.0 ; extra == \"all\"",
-          "email_validator >=1.1.1,<2.0.0 ; extra == \"all\"",
-          "uvicorn[standard] >=0.12.0,<0.14.0 ; extra == \"all\"",
-          "async_exit_stack >=1.0.1,<2.0.0 ; extra == \"all\"",
-          "async_generator >=1.10,<2.0.0 ; extra == \"all\"",
-          "python-jose[cryptography] >=3.3.0,<4.0.0 ; extra == \"dev\"",
-          "passlib[bcrypt] >=1.7.2,<2.0.0 ; extra == \"dev\"",
-          "autoflake >=1.3.1,<2.0.0 ; extra == \"dev\"",
-          "flake8 >=3.8.3,<4.0.0 ; extra == \"dev\"",
-          "uvicorn[standard] >=0.12.0,<0.14.0 ; extra == \"dev\"",
-          "graphene >=2.1.8,<3.0.0 ; extra == \"dev\"",
-          "mkdocs >=1.1.2,<2.0.0 ; extra == \"doc\"",
-          "mkdocs-material >=7.1.9,<8.0.0 ; extra == \"doc\"",
-          "markdown-include >=0.6.0,<0.7.0 ; extra == \"doc\"",
-          "mkdocs-markdownextradata-plugin >=0.1.7,<0.2.0 ; extra == \"doc\"",
-          "typer-cli >=0.0.12,<0.0.13 ; extra == \"doc\"",
-          "pyyaml >=5.3.1,<6.0.0 ; extra == \"doc\"",
-          "pytest >=6.2.4,<7.0.0 ; extra == \"test\"",
-          "pytest-cov >=2.12.0,<3.0.0 ; extra == \"test\"",
-          "pytest-asyncio >=0.14.0,<0.15.0 ; extra == \"test\"",
-          "mypy ==0.812 ; extra == \"test\"",
-          "flake8 >=3.8.3,<4.0.0 ; extra == \"test\"",
-          "black ==20.8b1 ; extra == \"test\"",
-          "isort >=5.0.6,<6.0.0 ; extra == \"test\"",
-          "requests >=2.24.0,<3.0.0 ; extra == \"test\"",
-          "httpx >=0.14.0,<0.15.0 ; extra == \"test\"",
-          "email_validator >=1.1.1,<2.0.0 ; extra == \"test\"",
-          "sqlalchemy >=1.3.18,<1.4.0 ; extra == \"test\"",
-          "peewee >=3.13.3,<4.0.0 ; extra == \"test\"",
-          "databases[sqlite] >=0.3.2,<0.4.0 ; extra == \"test\"",
-          "orjson >=3.2.1,<4.0.0 ; extra == \"test\"",
-          "ujson >=4.0.1,<5.0.0 ; extra == \"test\"",
-          "async_exit_stack >=1.0.1,<2.0.0 ; extra == \"test\"",
-          "async_generator >=1.10,<2.0.0 ; extra == \"test\"",
-          "python-multipart >=0.0.5,<0.0.6 ; extra == \"test\"",
-          "aiofiles >=0.5.0,<0.6.0 ; extra == \"test\"",
-          "flask >=1.1.2,<2.0.0 ; extra == \"test\""
+          "pydantic!=1.7,!=1.7.1,!=1.7.2,!=1.7.3,!=1.8,!=1.8.1,<2.0.0,>=1.6.2",
+          "starlette==0.22.0",
+          "email-validator>=1.1.1; extra == 'all'",
+          "httpx>=0.23.0; extra == 'all'",
+          "itsdangerous>=1.1.0; extra == 'all'",
+          "jinja2>=2.11.2; extra == 'all'",
+          "orjson>=3.2.1; extra == 'all'",
+          "python-multipart>=0.0.5; extra == 'all'",
+          "pyyaml>=5.3.1; extra == 'all'",
+          "ujson!=4.0.2,!=4.1.0,!=4.2.0,!=4.3.0,!=5.0.0,!=5.1.0,>=4.0.1; extra == 'all'",
+          "uvicorn[standard]>=0.12.0; extra == 'all'",
+          "pre-commit<3.0.0,>=2.17.0; extra == 'dev'",
+          "ruff==0.0.138; extra == 'dev'",
+          "uvicorn[standard]<0.19.0,>=0.12.0; extra == 'dev'",
+          "mdx-include<2.0.0,>=1.4.1; extra == 'doc'",
+          "mkdocs-markdownextradata-plugin<0.3.0,>=0.1.7; extra == 'doc'",
+          "mkdocs-material<9.0.0,>=8.1.4; extra == 'doc'",
+          "mkdocs<2.0.0,>=1.1.2; extra == 'doc'",
+          "pyyaml<7.0.0,>=5.3.1; extra == 'doc'",
+          "typer[all]<0.7.0,>=0.6.1; extra == 'doc'",
+          "anyio[trio]<4.0.0,>=3.2.1; extra == 'test'",
+          "black==22.10.0; extra == 'test'",
+          "coverage[toml]<7.0,>=6.5.0; extra == 'test'",
+          "databases[sqlite]<0.7.0,>=0.3.2; extra == 'test'",
+          "email-validator<2.0.0,>=1.1.1; extra == 'test'",
+          "flask<3.0.0,>=1.1.2; extra == 'test'",
+          "httpx<0.24.0,>=0.23.0; extra == 'test'",
+          "isort<6.0.0,>=5.0.6; extra == 'test'",
+          "mypy==0.982; extra == 'test'",
+          "orjson<4.0.0,>=3.2.1; extra == 'test'",
+          "passlib[bcrypt]<2.0.0,>=1.7.2; extra == 'test'",
+          "peewee<4.0.0,>=3.13.3; extra == 'test'",
+          "pytest<8.0.0,>=7.1.3; extra == 'test'",
+          "python-jose[cryptography]<4.0.0,>=3.3.0; extra == 'test'",
+          "python-multipart<0.0.6,>=0.0.5; extra == 'test'",
+          "pyyaml<7.0.0,>=5.3.1; extra == 'test'",
+          "ruff==0.0.138; extra == 'test'",
+          "sqlalchemy<=1.4.41,>=1.3.18; extra == 'test'",
+          "types-orjson==3.6.2; extra == 'test'",
+          "types-ujson==5.5.0; extra == 'test'",
+          "ujson!=4.0.2,!=4.1.0,!=4.2.0,!=4.3.0,!=5.0.0,!=5.1.0,<6.0.0,>=4.0.1; extra == 'test'"
         ],
-        "requires_python": ">=3.6",
+        "requires_python": ">=3.7",
         "project_url": [
+          "Homepage, https://github.com/tiangolo/fastapi",
           "Documentation, https://fastapi.tiangolo.com/"
         ],
         "provides_extra": [
@@ -13466,8 +14486,12 @@
           "test"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/fastapi-0.67.0.dist-info",
-      "installer": "pip",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/fastapi-0.88.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/fastapi_1669571890356/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
       "requested": true
     },
     {
@@ -14215,6 +15239,50 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "deepdiff",
+        "version": "6.3.0",
+        "summary": "Deep Difference and Search of any Python object/data. Recreate objects by adding adding deltas to each other.",
+        "description_content_type": "text/markdown",
+        "home_page": "https://github.com/seperman/deepdiff",
+        "download_url": "https://github.com/seperman/deepdiff/tarball/master",
+        "author": "Seperman",
+        "author_email": "sep@zepworks.com",
+        "classifier": [
+          "Intended Audience :: Developers",
+          "Operating System :: OS Independent",
+          "Topic :: Software Development",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: Implementation :: PyPy",
+          "Development Status :: 5 - Production/Stable",
+          "License :: OSI Approved :: MIT License"
+        ],
+        "requires_dist": [
+          "ordered-set (<4.2.0,>=4.0.2)",
+          "click (==8.1.3) ; extra == 'cli'",
+          "pyyaml (==6.0) ; extra == 'cli'",
+          "orjson ; extra == 'optimize'"
+        ],
+        "requires_python": ">=3.7",
+        "provides_extra": [
+          "cli",
+          "optimize"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/deepdiff-6.3.0.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/deepdiff_1679103797842/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "decorator",
         "version": "5.1.1",
         "platform": [
@@ -14287,6 +15355,41 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/debugpy-1.6.3.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/debugpy_1666826309679/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "dateutils",
+        "version": "0.6.12",
+        "platform": [
+          "UNKNOWN"
+        ],
+        "summary": "Various utilities for working with date and datetime objects",
+        "description_content_type": "text/markdown",
+        "home_page": "https://github.com/jmcantrell/python-dateutils",
+        "author": "Jeremy Cantrell",
+        "author_email": "jmcantrell@gmail.com",
+        "classifier": [
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: BSD License",
+          "Natural Language :: English",
+          "Operating System :: POSIX :: Linux",
+          "Programming Language :: Python"
+        ],
+        "requires_dist": [
+          "python-dateutil",
+          "pytz",
+          "argparse ; python_version < \"2.7\""
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/dateutils-0.6.12.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/dateutils_1603450192521/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -14667,6 +15770,53 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/cryptography-39.0.1.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/cryptography-split_1675828607645/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "croniter",
+        "version": "1.3.15",
+        "summary": "croniter provides iteration for datetime object with cron like format",
+        "keywords": [
+          "datetime",
+          "iterator",
+          "cron"
+        ],
+        "home_page": "http://github.com/kiorky/croniter",
+        "author": "Matsumoto Taichi, kiorky",
+        "author_email": "taichino@gmail.com, kiorky@cryptelium.net",
+        "classifier": [
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: POSIX",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 2",
+          "Programming Language :: Python :: 2.6",
+          "Programming Language :: Python :: 2.7",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.4",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Topic :: Software Development :: Libraries :: Python Modules"
+        ],
+        "requires_dist": [
+          "python-dateutil"
+        ],
+        "requires_python": ">=2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*"
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/croniter-1.3.15.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/croniter_1685103477055/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -15715,6 +16865,72 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "blessed",
+        "version": "1.19.1",
+        "summary": "Easy, practical library for making terminal apps, by providing an elegant, well-documented interface to Colors, Keyboard input, and screen Positioning capabilities.",
+        "keywords": [
+          "terminal",
+          "sequences",
+          "tty",
+          "curses",
+          "ncurses",
+          "formatting",
+          "style",
+          "color",
+          "console",
+          "keyboard",
+          "ansi",
+          "xterm"
+        ],
+        "home_page": "https://github.com/jquast/blessed",
+        "author": "Jeff Quast, Erik Rose, Avram Lubkin",
+        "author_email": "contact@jeffquast.com",
+        "classifier": [
+          "Intended Audience :: Developers",
+          "Natural Language :: English",
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Console",
+          "Environment :: Console :: Curses",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: POSIX",
+          "Operating System :: Microsoft :: Windows",
+          "Programming Language :: Python :: 2",
+          "Programming Language :: Python :: 2.7",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.4",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Topic :: Software Development :: Libraries",
+          "Topic :: Software Development :: User Interfaces",
+          "Topic :: Terminals",
+          "Typing :: Typed"
+        ],
+        "requires_dist": [
+          "wcwidth (>=0.1.4)",
+          "six (>=1.9.0)",
+          "jinxed (>=1.1.0) ; platform_system == \"Windows\"",
+          "ordereddict (==1.1) ; python_version < \"2.7\"",
+          "backports.functools-lru-cache (>=1.2.1) ; python_version < \"3.2\""
+        ],
+        "requires_python": ">=2.7",
+        "project_url": [
+          "Documentation, https://blessed.readthedocs.io"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/blessed-1.19.1.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/blessed_1666523113356/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "bleach",
         "version": "5.0.1",
         "summary": "An easy safelist-based HTML-sanitizing tool.",
@@ -16470,6 +17686,57 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/asn1crypto-1.5.1.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/asn1crypto_1647369152656/work",
+        "dir_info": {}
+      },
+      "installer": "conda",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "arrow",
+        "version": "1.2.3",
+        "summary": "Better dates & times for Python",
+        "description_content_type": "text/x-rst",
+        "keywords": [
+          "arrow",
+          "date",
+          "time",
+          "datetime",
+          "timestamp",
+          "timezone",
+          "humanize"
+        ],
+        "home_page": "https://arrow.readthedocs.io",
+        "author": "Chris Smith",
+        "author_email": "crsmithdev@gmail.com",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "Topic :: Software Development :: Libraries :: Python Modules",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10"
+        ],
+        "requires_dist": [
+          "python-dateutil (>=2.7.0)",
+          "typing-extensions ; python_version < \"3.8\""
+        ],
+        "requires_python": ">=3.6",
+        "project_url": [
+          "Repository, https://github.com/arrow-py/arrow",
+          "Bug Reports, https://github.com/arrow-py/arrow/issues",
+          "Documentation, https://arrow.readthedocs.io"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/arrow-1.2.3.dist-info",
+      "direct_url": {
+        "url": "file:///home/conda/feedstock_root/build_artifacts/arrow_1662382474514/work",
         "dir_info": {}
       },
       "installer": "conda",

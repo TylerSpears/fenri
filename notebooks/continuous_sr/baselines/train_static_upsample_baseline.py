@@ -1,23 +1,6 @@
 # -*- coding: utf-8 -*-
-# ---
-# jupyter:
-#   jupytext:
-#     cell_metadata_filter: -all
-#     comment_magics: true
-#     formats: ipynb,py:percent
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.14.0
-#   kernelspec:
-#     display_name: pitn
-#     language: python
-#     name: python3
-# ---
-
 # %% [markdown]
-# # Continuous-Space Super-Resolution of fODFs in Diffusion MRI
+# # Static Super-Res CNN Baseline
 #
 # Code by:
 #
@@ -39,6 +22,7 @@ import collections
 import copy
 import datetime
 import functools
+import importlib.util
 import inspect
 import io
 import itertools
@@ -83,12 +67,21 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import Decoder, INREncoder, SimplifiedDecoder
 
 # from lightning_fabric.fabric import Fabric
 from natsort import natsorted
 
 import pitn
+
+# Crazy hack for relative imports in interactive mode...
+# <https://docs.python.org/3/library/importlib.html#importing-a-source-file-directly>
+mod_path = Path("../inr_networks.py")
+mod_name = "inr_networks"
+spec = importlib.util.spec_from_file_location(mod_name, mod_path)
+inr_networks = importlib.util.module_from_spec(spec)
+sys.modules[mod_name] = inr_networks
+spec.loader.exec_module(inr_networks)
+from inr_networks import INREncoder, StaticSizeDecoder, StaticSizeUpsampleEncoder
 
 plt.rcParams.update({"figure.autolayout": True})
 plt.rcParams.update({"figure.facecolor": [1.0, 1.0, 1.0, 1.0]})
@@ -97,10 +90,6 @@ plt.rcParams.update({"image.cmap": "gray"})
 # Set print options for ndarrays/tensors.
 np.set_printoptions(suppress=True, threshold=100, linewidth=88)
 torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
-
-# %%
-# MAIN
-# if __name__ == "__main__":
 
 # %%
 # Update notebook's environment variables with direnv.
@@ -190,12 +179,12 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "inr_simplified-decoder_split-01"
+p.experiment_name = "baseline-sr-cnn_split-01"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = (
-    Path("./data_splits") / "HCP_train-val-test_split_01_seed_332781572.csv"
+    Path("../data_splits") / "HCP_train-val-test_split_01_seed_332781572.csv"
 )
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
@@ -206,7 +195,7 @@ p.aim_logger = dict(
     meta_params=dict(run_name=p.experiment_name),
     tags=("PITN", "INR", "HCP", "super-res", "dMRI"),
 )
-p.checkpoint_epoch_ratios = (0.33, 0.66)
+p.checkpoint_epoch_ratios = [0.5]
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
 # See `sub_select_dwi_from_bval` function in `pitn`.
@@ -236,11 +225,15 @@ p.train = dict(
     sample_mask_key="wm_mask",
 )
 p.train.augment = dict(
+    # augmentation_prob=0.0,  #!testing/debug
     # augmentation_prob=1.0,  #!testing/debug
     augmentation_prob=0.3,
     baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
     scale_prefilter_kwargs=p.scale_prefilter_kwargs,
-    augment_iso_scale_factor_lr_spacing_mm_low_high=(1.61, 2.0),
+    augment_iso_scale_factor_lr_spacing_mm_low_high=(
+        p.baseline_lr_spacing_scale,
+        p.baseline_lr_spacing_scale,
+    ),
     augment_rand_rician_noise_kwargs={"prob": 0.0},
     augment_rand_rotate_90_kwargs={"prob": 0.5},
     augment_rand_flip_kwargs={"prob": 0.5},
@@ -250,24 +243,25 @@ p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=15, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=14, persistent_workers=True, prefetch_factor=2)
 
 # Network/model parameters.
 p.encoder = dict(
+    spatial_upscale_factor=p.baseline_lr_spacing_scale,
+    input_coord_channels=True,
     interior_channels=80,
     out_channels=96,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
-    input_coord_channels=True,
 )
 p.decoder = dict(
-    context_v_features=96,
-    out_features=45,
-    m_encode_num_freqs=36,
-    sigma_encode_scale=3.0,
-    n_internal_features=256,
-    n_internal_layers=3,
+    in_channels=p.encoder.out_channels,
+    interior_channels=48,
+    out_channels=45,
+    n_res_units=2,
+    n_dense_units=2,
+    activate_fn="relu",
 )
 
 
@@ -404,13 +398,13 @@ print("=" * 10)
 
 # %%
 # #!DEBUG
-DEBUG_VAL_SUBJS = 4
+DEBUG_VAL_SUBJS = 2
 with warnings.catch_warnings(record=True) as warn_list:
 
-    print("DEBUG Val subject numbers")
+    # print("DEBUG Val subject numbers")
     val_ds = pitn.data.datasets2.HCPfODFINRDataset(
-        subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],  #!DEBUG
-        # subj_ids=p.val.subj_ids,
+        # subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],  #!DEBUG
+        subj_ids=p.val.subj_ids,
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         transform=pitn.data.datasets2.HCPfODFINRDataset.default_pre_sample_tf(
@@ -520,23 +514,15 @@ def validate_stage(
             batch_size = x.shape[0]
             x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
             x_affine_vox2world = batch_dict["affine_lr_vox2world"]
-            x_vox_size = batch_dict["lr_vox_size"]
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
             )
 
             y = batch_dict["fodf"]
             y_mask = batch_dict["brain_mask"].to(torch.bool)
-            y_affine_vox2world = batch_dict["affine_vox2world"]
-            y_vox_size = batch_dict["vox_size"]
-            y_coords = pitn.affine.affine_coordinate_grid(
-                y_affine_vox2world, tuple(y.shape[2:])
-            )
             if batch_size == 1:
                 if x_coords.shape[0] != 1:
                     x_coords.unsqueeze_(0)
-                if y_coords.shape[0] != 1:
-                    y_coords.unsqueeze_(0)
 
             # Concatenate the input world coordinates as input features into the
             # encoder. Mask out the x coordinates that are not to be considered.
@@ -545,44 +531,16 @@ def validate_stage(
                 x_coords * x_coord_mask, "b x y z coord -> b coord x y z"
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
-            ctx_v = encoder(x)
-
-            # Whole-volume inference is memory-prohibitive, so use a sliding
-            # window inference method on the encoded volume.
-            # Transform y_coords into a coordinates-first shape, for the interface, and
-            # attach the mask for compatibility with the sliding inference function.
-            y_slide_window = torch.cat(
-                [
-                    einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
-                    y_mask.to(y_coords),
-                ],
-                dim=1,
-            )
-            fn_coordify = lambda x: einops.rearrange(
-                x, "b coord x y z -> b x y z coord"
-            )
-            pred_fodf = monai.inferers.sliding_window_inference(
-                y_slide_window,
-                roi_size=(48, 48, 48),
-                sw_batch_size=y_coords.shape[0],
-                predictor=lambda q: decoder(
-                    # Rearrange back into coord-last format.
-                    query_world_coord=fn_coordify(q[:, :-1]),
-                    query_world_coord_mask=fn_coordify(q[:, -1:].bool()),
-                    context_v=ctx_v,
-                    context_world_coord_grid=x_coords,
-                    affine_context_vox2world=x_affine_vox2world,
-                    affine_query_vox2world=y_affine_vox2world,
-                    context_vox_size_world=x_vox_size,
-                    query_vox_size_world=y_vox_size,
-                ),
-                overlap=0,
-                padding_mode="replicate",
+            y_pred = encoder(x)
+            y_pred = decoder(y_pred)
+            # Pad or crop the prediction spatial size to match the target spatial size.
+            y_pred = decoder.crop_pad_to_match_gt_shape(
+                model_output=y_pred, ground_truth=y, mode="constant"
             )
 
             y_mask_broad = torch.broadcast_to(y_mask, y.shape)
             # Calculate performance metrics
-            mse_loss = batchwise_masked_mse(pred_fodf, y, mask=y_mask_broad)
+            mse_loss = batchwise_masked_mse(y_pred, y, mask=y_mask_broad)
             val_metrics["mse"].append(mse_loss.detach().cpu().flatten())
 
             # If visualization subj_id is in this batch, create the visual and log it.
@@ -590,9 +548,9 @@ def validate_stage(
                 with mpl.rc_context({"font.size": 6.0}):
                     fig = plt.figure(dpi=175, figsize=(10, 6))
                     fig = pitn.viz.plot_fodf_coeff_slices(
-                        pred_fodf,
+                        y_pred,
                         y,
-                        torch.abs(pred_fodf - y) * y_mask_broad,
+                        torch.abs(y_pred - y) * y_mask_broad,
                         col_headers=("Predicted",) * 3
                         + ("Target",) * 3
                         + ("|Pred - GT|",) * 3,
@@ -632,7 +590,7 @@ def validate_stage(
                         dtype=int,
                     ).flatten(),
                 }
-                error_fodf = F.mse_loss(pred_fodf, y, reduction="none")
+                error_fodf = F.mse_loss(y_pred, y, reduction="none")
                 error_fodf = einops.rearrange(
                     error_fodf, "b sh_idx x y z -> b x y z sh_idx"
                 )
@@ -675,7 +633,7 @@ def validate_stage(
                     plt.close(fig)
             fabric.print(f"MSE {val_metrics['mse'][-1].item()}")
             fabric.print("Finished validation subj ", subj_id)
-            del pred_fodf
+            del y_pred
 
     val_metrics["mse"] = torch.cat(val_metrics["mse"])
     # Log metrics
@@ -717,12 +675,14 @@ else:
 
 # Wrap the entire training & validation loop in a try...except statement.
 try:
-    encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
+    encoder = StaticSizeUpsampleEncoder(
+        **{**p.encoder.to_dict(), **{"in_channels": in_channels}}
+    )
     # Initialize weight shape for the encoder.
     encoder(torch.randn(1, in_channels, 20, 20, 20))
-    decoder = SimplifiedDecoder(**p.decoder.to_dict())
+    decoder = StaticSizeDecoder(**p.decoder.to_dict())
     recon_decoder = INREncoder(
-        in_channels=encoder.out_channels,
+        in_channels=encoder.interior_channels,
         interior_channels=48,
         out_channels=9,
         n_res_units=2,
@@ -730,8 +690,10 @@ try:
         activate_fn=p.encoder.activate_fn,
         input_coord_channels=False,
     )
-    # Initialize weight shape for the recon decoder.
+    # Initialize weight shape for all models.
+    encoder(torch.randn(1, encoder.in_channels, 20, 20, 20))
     recon_decoder(torch.randn(1, recon_decoder.in_channels, 20, 20, 20))
+    decoder(torch.randn(1, decoder.in_channels, 20, 20, 20))
     fabric.print(p.to_dict())
     fabric.print(encoder)
     fabric.print(decoder)
@@ -850,20 +812,18 @@ try:
         for batch_dict in train_dataloader:
 
             x = batch_dict["lr_dwi"]
+            batch_size = x.shape[0]
             x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
             x_affine_vox2world = batch_dict["affine_lr_vox2world"]
-            x_vox_size = batch_dict["lr_vox_size"]
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
             )
 
             y = batch_dict["fodf"]
             y_mask = batch_dict["brain_mask"].to(torch.bool)
-            y_affine_vox2world = batch_dict["affine_vox2world"]
-            y_vox_size = batch_dict["vox_size"]
-            y_coords = pitn.affine.affine_coordinate_grid(
-                y_affine_vox2world, tuple(y.shape[2:])
-            )
+            if batch_size == 1:
+                if x_coords.shape[0] != 1:
+                    x_coords.unsqueeze_(0)
 
             optim_encoder.zero_grad()
             optim_decoder.zero_grad()
@@ -876,25 +836,21 @@ try:
                 x_coords * x_coord_mask, "b x y z coord -> b coord x y z"
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
-            ctx_v = encoder(x)
 
             if not train_recon:
-                y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-                y_coord_mask = einops.rearrange(y_mask, "b 1 x y z -> b x y z 1")
-                pred_fodf = decoder(
-                    context_v=ctx_v,
-                    context_world_coord_grid=x_coords,
-                    query_world_coord=y_coords,
-                    query_world_coord_mask=y_coord_mask,
-                    affine_context_vox2world=x_affine_vox2world,
-                    affine_query_vox2world=y_affine_vox2world,
-                    context_vox_size_world=x_vox_size,
-                    query_vox_size_world=y_vox_size,
+                ctx_v = encoder(x)
+                pred_fodf = decoder(ctx_v)
+                pred_fodf = decoder.crop_pad_to_match_gt_shape(
+                    model_output=pred_fodf, ground_truth=y, mode="constant"
                 )
+                y_mask_broad = torch.broadcast_to(y_mask, y.shape)
                 loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
                 loss_recon = y.new_zeros(1)
                 recon_pred = None
             else:
+                # Run encoder without the upsampling layers to keep the same spatial
+                # shape.
+                ctx_v = encoder(x, upsample=False)
                 recon_pred = recon_decoder(ctx_v)
                 # Index bvals to be 2 b=0s, 2 b=1000s, and 2 b=3000s.
                 recon_y = x[:, (0, 1, 2, 11, 12, 13, -3, -2, -1)]
@@ -977,7 +933,7 @@ try:
         optim_recon_decoder.zero_grad(set_to_none=True)
         # Delete some training inputs to relax memory constraints in whole-
         # volume inference inside validation step.
-        del x, x_coords, y, y_coords, pred_fodf, recon_pred
+        del x, x_coords, y, pred_fodf, recon_pred
 
         fabric.print("\n==Validation==", flush=True)
         fabric.barrier()

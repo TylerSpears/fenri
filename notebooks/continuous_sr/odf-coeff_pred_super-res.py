@@ -1,7 +1,20 @@
 # -*- coding: utf-8 -*-
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     comment_magics: true
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.14.0
+# ---
+
+# %%
 
 # %% [markdown]
-# # Batch Prediction in Subject Native Resolution for fODF INR
+# # Prediction in Arbitrary Resolution for fODF INR
 #
 # Code by:
 #
@@ -66,7 +79,7 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import INREncoder, SimplifiedDecoder
+from inr_networks import Decoder, INREncoder, SimplifiedDecoder
 from natsort import natsorted
 
 import pitn
@@ -109,7 +122,7 @@ if torch.cuda.is_available():
     if "CUDA_PYTORCH_DEVICE_IDX" in os.environ.keys():
         dev_idx = int(os.environ["CUDA_PYTORCH_DEVICE_IDX"])
     else:
-        dev_idx = 0
+        dev_idx = 1
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -167,13 +180,14 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
+p.target_vox_spacing = 2.0
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
 # )
 p.model_weight_f = str(
-    Path(p.results_dir)
+    Path(p.tmp_results_dir)
     / "2023-06-20T03_20_54"
     / "final_state_dict_epoch_49_step_21701.pt"
 )
@@ -189,7 +203,7 @@ p.bval_sub_sample_fn_kwargs = dict(
     },
 )
 # 1.25mm -> 2.0mm
-p.baseline_lr_spacing_scale = 1.6
+p.baseline_lr_spacing_scale = 1.89
 p.scale_prefilter_kwargs = dict(
     sigma_scale_coeff=2.5,
     sigma_truncate=4.0,
@@ -198,78 +212,11 @@ p.test.subj_ids = list(
     map(
         str,
         [
-            # holdout subjects that have been processed
             581450,
-            126426,
-            191336,
-            251833,
-            581450,
-            601127,
-            825048,
-            # test set subjects
-            110613,
-            112112,
-            123420,
-            124422,
-            126628,
-            129028,
-            130013,
-            133019,
-            134425,
-            135225,
-            138837,
-            139637,
-            139839,
-            143830,
-            144428,
-            144933,
-            148840,
-            149539,
-            150019,
-            151526,
-            153227,
-            153732,
-            155231,
-            162329,
-            187850,
-            189349,
-            192843,
-            193239,
-            198451,
-            220721,
-            268850,
-            270332,
-            299154,
-            314225,
-            316633,
-            350330,
-            368551,
-            453542,
-            480141,
-            492754,
-            497865,
-            500222,
-            519647,
-            567961,
-            571144,
-            656253,
-            656657,
-            677968,
-            683256,
-            704238,
-            727654,
-            731140,
-            765056,
-            767464,
-            917558,
-            930449,
-            972566,
-            978578,
-            993675,
-            994273,
         ],
     )
 )
+
 # Network/model parameters.
 p.encoder = dict(
     interior_channels=80,
@@ -363,14 +310,14 @@ with warnings.catch_warnings(record=True) as warn_list:
             scale_prefilter_kwargs=p.scale_prefilter_kwargs,
         ),
     )
-    # test_dataset = monai.data.CacheDataset(
-    #     test_dataset,
-    #     cache_num=1,
-    #     transform=None,
-    #     progress=True,
-    #     copy_cache=False,
-    #     num_workers=1,
-    # )
+    test_dataset = monai.data.CacheDataset(
+        test_dataset,
+        cache_num=1,
+        transform=None,
+        progress=True,
+        copy_cache=False,
+        num_workers=1,
+    )
 
 print("=" * 10)
 print("Warnings caught:")
@@ -406,7 +353,7 @@ def batchwise_masked_mse(y_pred, y, mask):
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-experiment_name = f"{ts}_inr-pred-test_native-res"
+experiment_name = f"{ts}_inr-pred-test_super-res_blank-ctx_to-2mm_non-init-nets"
 tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
 tmp_res_dir.mkdir(parents=True)
 
@@ -432,11 +379,11 @@ try:
         in_channels = p.encoder.in_channels
 
     encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
-    encoder.load_state_dict(encoder_state_dict)
+    # encoder.load_state_dict(encoder_state_dict) #!DEBUG
     encoder.to(device)
 
     decoder = SimplifiedDecoder(**p.decoder.to_dict())
-    decoder.load_state_dict(decoder_state_dict)
+    # decoder.load_state_dict(decoder_state_dict) #!DEBUG
     decoder.to(device)
     del (
         system_state_dict,
@@ -452,7 +399,7 @@ try:
         batch_size=1,
         shuffle=True,
         pin_memory=True,
-        num_workers=3,
+        num_workers=2,
         persistent_workers=True,
         prefetch_factor=1,
     )
@@ -476,20 +423,49 @@ try:
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
             )
-
-            y = batch_dict["fodf"].to(device)
-            y_mask = batch_dict["brain_mask"].to(torch.bool).to(device)
-            y_affine_vox2world = batch_dict["affine_vox2world"].to(device)
-            y_vox_size = batch_dict["vox_size"].to(device)
-            y_coords = pitn.affine.affine_coordinate_grid(
-                y_affine_vox2world, tuple(y.shape[2:])
-            )
             # Fix an edge case in the affine_coordinate_grid function.
             if batch_size == 1:
                 if x_coords.shape[0] != 1:
                     x_coords.unsqueeze_(0)
-                if y_coords.shape[0] != 1:
-                    y_coords.unsqueeze_(0)
+
+            # Calculate the new coordinates given the target vox spacing.
+            input_vox_size = x_vox_size.flatten().cpu().numpy()[0]
+            scale_x2sr = p.target_vox_spacing / input_vox_size
+            # We don't need a particular voxel buffer here, only that the SR fov is
+            # totally contained within the src fov by some amount > 0.
+            sr_affine_vox2world = pitn.data.datasets2._random_iso_center_scale_affine(
+                x_affine_vox2world[0].cpu(),
+                x[0].cpu(),
+                scale_low=scale_x2sr,
+                scale_high=scale_x2sr,
+                n_delta_buffer_scaled_vox=0,
+            )
+            sr_affine_vox2world = sr_affine_vox2world[None]
+            sr_spatial_shape = pitn.affine.transform_coords(
+                x_coords[0, -1, -1, -1].to(sr_affine_vox2world),
+                torch.linalg.inv(sr_affine_vox2world),
+            )
+            sr_spatial_shape = tuple(
+                torch.floor(sr_spatial_shape).int().cpu().numpy().tolist()
+            )
+            # Be careful to keep all the "super-sized" tensors on the cpu!
+            sr_coords = pitn.affine.affine_coordinate_grid(
+                sr_affine_vox2world.to(torch.float32).cpu(), sr_spatial_shape
+            )
+
+            # Fix an edge case in the affine_coordinate_grid function.
+            if batch_size == 1:
+                if sr_coords.shape[0] != 1:
+                    sr_coords.unsqueeze_(0)
+
+            # Interpolate a mask for the sr volume.
+            sr_mask = pitn.affine.sample_vol(
+                x_mask.cpu(),
+                sr_coords.cpu(),
+                affine_vox2mm=x_affine_vox2world.cpu(),
+                mode="nearest",
+                align_corners=True,
+            )
 
             # Concatenate the input world coordinates as input features into the
             # encoder. Mask out the x coordinates that are not to be considered.
@@ -499,15 +475,23 @@ try:
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
             ctx_v = encoder(x)
+            # !DEBUG>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+            meds = torch.median(
+                ctx_v.reshape(ctx_v.shape[1], -1), dim=1
+            ).values.reshape(1, ctx_v.shape[1], 1, 1, 1)
+            ctx_v = (ctx_v * 0) + meds
+
+            # sr_coords = sr_coords * 0
+            # !DEBUG<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
             # Whole-volume inference is memory-prohibitive, so use a sliding
             # window inference method on the encoded volume.
             # Transform y_coords into a coordinates-first shape, for the interface, and
             # attach the mask for compatibility with the sliding inference function.
-            y_slide_window = torch.cat(
+            sr_slide_window = torch.cat(
                 [
-                    einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
-                    y_mask.to(y_coords),
+                    einops.rearrange(sr_coords.cpu(), "b x y z coord -> b coord x y z"),
+                    sr_mask.to(sr_coords).cpu(),
                 ],
                 dim=1,
             )
@@ -517,7 +501,7 @@ try:
             # Keep the whole volume on the CPU, and only transfer the sliding windows
             # to the GPU.
             pred_fodf = monai.inferers.sliding_window_inference(
-                y_slide_window.cpu(),
+                sr_slide_window.cpu(),
                 roi_size=(96, 96, 96),
                 sw_batch_size=batch_size,
                 predictor=lambda q: decoder(
@@ -531,70 +515,31 @@ try:
                     context_v=ctx_v,
                     context_world_coord_grid=x_coords,
                     affine_context_vox2world=x_affine_vox2world,
-                    affine_query_vox2world=y_affine_vox2world,
+                    affine_query_vox2world=sr_affine_vox2world,
                     context_vox_size_world=x_vox_size,
-                    query_vox_size_world=y_vox_size,
+                    query_vox_size_world=torch.ones_like(x_vox_size)
+                    * p.target_vox_spacing,
                 ).cpu(),
                 overlap=0,
                 padding_mode="replicate",
-            )
-            print(f"Finished inference {subj_id}", flush=True)
-
+            ).cpu()
+            print(f"Done with inference subject {subj_id}", flush=True)
+            # Mask out the prediction, otherwise the file size will be considerably
+            # larger.
+            pred_fodf *= sr_mask.cpu()
             # Write out prediction to a .nii.gz file.
-            input_vox_size = x_vox_size.flatten().cpu().numpy()[0]
-            native_vox_size = y_vox_size.flatten().cpu().numpy()[0]
             pred_f = (
                 model_pred_res_dir
-                / f"{subj_id}_{model}_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
+                / f"{subj_id}_{model}_prediction_{input_vox_size}mm-to-{p.target_vox_spacing}mm.nii.gz"
             )
-            pred_affine = y_affine_vox2world[0].cpu().numpy()
-            # Mask the prediction to reduce the file size.
-            pred_fodf = pred_fodf.detach().cpu() * y_mask.detach().cpu()
+            pred_affine = sr_affine_vox2world[0].cpu().numpy()
             pred_fodf_vol = einops.rearrange(
-                pred_fodf.numpy(), "1 c x y z -> x y z c"
+                pred_fodf.detach().cpu().numpy(), "1 c x y z -> x y z c"
             ).astype(np.float32)
             pred_im = nib.Nifti1Image(pred_fodf_vol, affine=pred_affine)
-            # Crop/pad prediction to align with the fodf image created directly from
-            # mrtrix. This should not change any of the prediction values, only align
-            # the images for easier comparison.
-            with tempfile.TemporaryDirectory() as tmpdirname:
-                tmp_pred_dir = Path(tmpdirname)
-                tmp_pred_f = str((tmp_pred_dir / "tmp_pred_im.nii.gz").resolve())
-                nib.save(pred_im, tmp_pred_f)
-                print(f"Aligning and saving prediction image {subj_id}")
-                # Do the resampling with mrtrix directly.
-                subj_source_files = (
-                    pitn.data.datasets2.HCPfODFINRDataset.get_fodf_subj_dict(
-                        subj_id, root_dir=hcp_full_res_fodf_dir
-                    )
-                )
-                subj_source_fodf_f = str(subj_source_files["fodf"].resolve())
-                resample_pred_f = str(
-                    (tmp_pred_dir / "tmp_pred_im_aligned.nii.gz").resolve()
-                )
-                subprocess.run(
-                    [
-                        "mrgrid",
-                        tmp_pred_f,
-                        "regrid",
-                        "-template",
-                        subj_source_fodf_f,
-                        "-interp",
-                        "nearest",
-                        "-scale",
-                        "1,1,1",
-                        "-datatype",
-                        "float32",
-                        resample_pred_f,
-                        "-quiet",
-                    ],
-                    # env=os.environ,
-                    timeout=60,
-                    check=True,
-                )
 
-                shutil.move(resample_pred_f, pred_f)
-
+            print(f"Saving prediction {subj_id}", flush=True)
+            nib.save(pred_im, pred_f)
             print(f"Finished {subj_id}", flush=True)
 
 except KeyboardInterrupt as e:
