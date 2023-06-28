@@ -72,6 +72,59 @@ def sub_select_dwi_from_bval(
     return {"dwi": dwi[keep_mask], "bval": bval[keep_mask], "bvec": bvec[:, keep_mask]}
 
 
+class SubSelectDWIfromBvald(monai.transforms.MapTransform):
+    backend = [
+        monai.utils.enums.TransformBackends.TORCH,
+        monai.utils.enums.TransformBackends.NUMPY,
+    ]
+
+    def __init__(
+        self,
+        dwi_key,
+        bval_key,
+        bvec_key,
+        bval_sub_sample_fn: Callable[
+            [torch.Tensor, torch.Tensor, torch.Tensor], DWIDataDict
+        ],
+        allow_missing_keys: bool = False,
+    ):
+        keys = [dwi_key]
+        super().__init__(keys, allow_missing_keys)
+        self.dwi_key = dwi_key
+        self.bval_key = bval_key
+        self.bvec_key = bvec_key
+        self.bval_sub_sample_fn = bval_sub_sample_fn
+
+    def __call__(self, data: dict) -> dict:
+        d = dict(data)
+        bval = d[self.bval_key]
+        bvec = d[self.bvec_key]
+        for k_i, dwi_key in enumerate(self.key_iterator(d)):
+            # We only expect one dwi key to be changed.
+            assert k_i == 0
+            overwrite_dict = self.bval_sub_sample_fn(
+                dwi=d[dwi_key],
+                bval=bval,
+                bvec=bvec,
+            )
+            d[dwi_key] = overwrite_dict["dwi"]
+
+            d[self.bval_key] = overwrite_dict["bval"]
+            d[self.bvec_key] = overwrite_dict["bvec"]
+
+        return d
+
+
+# Save the affine as its own field.
+def _extract_affine(src_vol):
+    aff = src_vol.affine
+    if torch.is_tensor(aff):
+        aff = torch.clone(aff).to(torch.float32)
+    else:
+        aff = np.array(np.asarray(aff), copy=True, dtype=np.float32)
+    return aff
+
+
 class HCPfODFINRDataset(monai.data.Dataset):
 
     _SAMPLE_KEYS = (
@@ -251,17 +304,22 @@ class HCPfODFINRDataset(monai.data.Dataset):
             new_bvec = pitn.affine.transform_coords(bvec.T, aff).T
             return new_bvec
 
+        # At least with mrtrix, the bvecs do not need to be flipped, even though
+        # the DWIs are reoriented from LAS to RAS. I don't know why, but the odf lobes
+        # end up being flipped incorrectly (L-R) if the bvec_las2ras function is used.
         # tfs.append(monai.transforms.Lambdad("bvec", bvec_las2ras, overwrite=True))
+
         tfs.append(
             monai.transforms.CastToTyped(("brain_mask", "fivett"), dtype=torch.uint8)
         )
 
         if bval_sub_sample_fn is not None:
             tfs.append(
-                monai.transforms.adaptor(
-                    bval_sub_sample_fn,
-                    {"dwi": "dwi", "bval": "bval", "bvec": "bvec"},
-                    inputs=["dwi", "bval", "bvec"],
+                SubSelectDWIfromBvald(
+                    dwi_key="dwi",
+                    bval_key="bval",
+                    bvec_key="bvec",
+                    bval_sub_sample_fn=bval_sub_sample_fn,
                 )
             )
         # Re-cast the bvec and bval into non meta-tensors.
@@ -336,6 +394,23 @@ class HCPfODFINRDataset(monai.data.Dataset):
                     write_to_keys=["sampling_mask"],
                 )
             )
+        # Apply distance transform to sampling mask, to focus sampling on the more
+        # concentrated regions.
+        def distance_transform_mask(m: torch.Tensor):
+            m_np = m.cpu().numpy()[0]
+            dt = scipy.ndimage.distance_transform_edt(m_np)
+            return (
+                torch.from_numpy(dt)
+                .to(dtype=torch.float32, device=m.device)
+                .expand_as(m)
+            )
+
+        tfs.append(
+            monai.transforms.Lambdad(
+                "sampling_mask",
+                distance_transform_mask,
+            )
+        )
         # Rescale the sampling mask to add up to 1.0
         tfs.append(
             monai.transforms.Lambdad(
@@ -344,15 +419,15 @@ class HCPfODFINRDataset(monai.data.Dataset):
         )
 
         tfs.append(
-            monai.transforms.adaptor(
-                _extract_affine, outputs="affine_vox2world", inputs={"fodf": "src_vol"}
+            monai.transforms.Lambdad(
+                keys="fodf", func=_extract_affine, overwrite="affine_vox2world"
             )
         )
         tfs.append(
-            monai.transforms.adaptor(
-                monai.data.utils.affine_to_spacing,
-                outputs="vox_size",
-                inputs={"affine_vox2world": "affine"},
+            monai.transforms.Lambdad(
+                keys="affine_vox2world",
+                func=monai.data.utils.affine_to_spacing,
+                overwrite="vox_size",
             )
         )
 
@@ -450,16 +525,6 @@ class _EfficientRandWeightedCropd(monai.transforms.RandWeightedCropd):
         return ret
 
 
-# Save the affine as its own field.
-def _extract_affine(src_vol):
-    aff = src_vol.affine
-    if torch.is_tensor(aff):
-        aff = torch.clone(aff).to(torch.float32)
-    else:
-        aff = np.array(np.asarray(aff), copy=True, dtype=np.float32)
-    return aff
-
-
 def _get_extent_world(x_pre_img: torch.Tensor, affine: torch.Tensor) -> torch.Tensor:
     """Calculates the world coordinates that enumerate each voxel in the FOV.
 
@@ -526,84 +591,6 @@ def _random_iso_center_scale_affine(
     # Delta is in target space voxels, so we need to scale first, then translate.
     target_affine = src_affine @ (translate_aff @ scaling_affine)
     return target_affine
-
-
-# class CropLRInsideFRFoVd(monai.transforms.MapTransform):
-
-#     backend = monai.transforms.Crop.backend
-#     SPATIAL_COORD_PRECISION = 5
-
-#     def __init__(
-#         self,
-#         keys,
-#         affine_fr_vox2world_key,
-#         affine_lr_patch_vox2world_key,
-#         lr_vox_extent_fov_im_key,
-#         fr_vox_extent_fov_im_key,
-#         allow_missing_keys=False,
-#     ):
-#         monai.transforms.MapTransform.__init__(self, keys, allow_missing_keys)
-#         self.cropper = monai.transforms.Crop()
-#         self.affine_fr_vox2world_key = affine_fr_vox2world_key
-#         self.affine_lr_patch_vox2world_key = affine_lr_patch_vox2world_key
-#         self.lr_vox_extent_fov_im_key = lr_vox_extent_fov_im_key
-#         self.fr_vox_extent_fov_im_key = fr_vox_extent_fov_im_key
-
-#     def __call__(self, data) -> dict:
-#         d = dict(data)
-#         lr_fov_vox = tuple(d[self.lr_vox_extent_fov_im_key].shape[-3:])
-#         fr_fov_vox = tuple(d[self.fr_vox_extent_fov_im_key].shape[-3:])
-#         lr_affine_vox2world = torch.as_tensor(d[self.affine_lr_patch_vox2world_key])
-#         fr_affine_vox2world = torch.as_tensor(d[self.affine_fr_vox2world_key])
-#         shared_dtype = torch.result_type(lr_affine_vox2world, fr_affine_vox2world)
-#         lr_affine_vox2world = lr_affine_vox2world.to(shared_dtype)
-#         fr_affine_vox2world = fr_affine_vox2world.to(shared_dtype)
-
-#         # Get the bounding box of the FR fov in LR voxel coordinates. If the FR bbox has
-#         # voxel coordinates > 0 or < the LR fov shape, then the LR fov is out of bounds
-#         # w.r.t. the FR spatial extent, and must be cropped to be entirely contained
-#         # within the FR fov.
-#         # Map the FR fov bounds to LR vox coordinates.
-#         affine_fr_vox2lr_vox = (
-#             torch.linalg.inv(lr_affine_vox2world) @ fr_affine_vox2world
-#         )
-#         # Account for any floating point errors that may cause the bottom row in the
-#         # homogeneous matrix to be invalid.
-#         affine_fr_vox2lr_vox[-1] = torch.round(torch.abs(affine_fr_vox2lr_vox[-1]))
-
-#         # Find the lower corner of the bounding box.
-#         fr_fov_vox_low = (0,) * len(fr_fov_vox)
-#         fr_fov_vox_low = affine_fr_vox2lr_vox.new_tensor((0,) * len(fr_fov_vox))
-#         fr_fov_vox_high = affine_fr_vox2lr_vox.new_tensor(fr_fov_vox)
-
-#         # Calculate the bbox coordinates of the FR fov in LR voxels.
-#         bbox_fr_fov_in_lr_vox = pitn.affine.transform_coords(
-#             torch.stack([fr_fov_vox_low, fr_fov_vox_high], dim=0),
-#             affine_fr_vox2lr_vox,
-#         ).round(decimals=self.SPATIAL_COORD_PRECISION)
-#         # To find the desired slices that make the LR fov be contained within the FR fov,
-#         # round the bbox surrounding the FR fov, in LR voxels, to the next "interior" LR
-#         # voxel. Also, limit the slices to be within the LR fov.
-#         lr_fov_vox_low = (0,) * len(lr_fov_vox)
-#         lr_fov_vox_low = lr_affine_vox2world.new_tensor((0,) * len(lr_fov_vox))
-#         lr_fov_vox_high = lr_affine_vox2world.new_tensor(lr_fov_vox)
-#         bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov = (
-#             torch.maximum(
-#                 bbox_fr_fov_in_lr_vox[0].ceil().to(torch.int), lr_fov_vox_low
-#             ),
-#             torch.minimum(
-#                 bbox_fr_fov_in_lr_vox[1].floor().to(torch.int), lr_fov_vox_high
-#             ),
-#         )
-
-#         lr_slices = self.cropper.compute_slices(
-#             roi_start=bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov[0],
-#             roi_end=bbox_fr_fov_in_lr_vox_rounded_inside_fr_fov[1],
-#         )
-
-#         for key in self.key_iterator(d):
-#             d[key] = self.cropper(d[key], lr_slices)  # type: ignore
-#         return d
 
 
 class CropFRInsideFoVNLRVox(monai.transforms.MapTransform):
@@ -858,6 +845,23 @@ def prefilter_gaussian_blur(
     return vol_blur
 
 
+def pad_list_data_collate_update_affines_to_tensor(
+    d, meta_tensor_key_write_aff_key_pairs: tuple[tuple[str, str]] = tuple(), **kwargs
+):
+    # The datasets will usually produce volumes of different shapes due to the possible
+    # random re-sampling, so the batch must be padded, and the padded masks must be
+    # used to calculate the loss.
+    ret = monai.data.utils.pad_list_data_collate(d, **kwargs)
+    for meta_tensor_key, write_affine_key in meta_tensor_key_write_aff_key_pairs:
+        ret[write_affine_key] = ret[meta_tensor_key].affine.to(torch.float32)
+    return {
+        k: monai.utils.convert_to_tensor(v, track_meta=False)
+        if isinstance(v, monai.data.MetaObj)
+        else v
+        for k, v in ret.items()
+    }
+
+
 class HCPfODFINRPatchDataset(monai.data.PatchDataset):
 
     _SAMPLE_KEYS = (
@@ -910,6 +914,7 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         augment_rand_rician_noise_kwargs: dict = dict(),
         augment_rand_rotate_90_kwargs: dict = dict(),
         augment_rand_flip_kwargs: dict = dict(),
+        keep_metatensor_output: bool = False,
     ):
 
         VOL_KEYS = (
@@ -1227,11 +1232,12 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                 dtype=[torch.float32] * 6 + [torch.bool] * 5,
             ),
         )
-        feat_tfs.append(
-            monai.transforms.FromMetaTensord(
-                curr_vol_keys + curr_lr_vol_keys, data_type="tensor"
+        if not keep_metatensor_output:
+            feat_tfs.append(
+                monai.transforms.FromMetaTensord(
+                    curr_vol_keys + curr_lr_vol_keys, data_type="tensor"
+                )
             )
-        )
         feat_tfs.append(monai.transforms.SelectItemsd(all_tensor_keys + ("subj_id",)))
 
         return monai.transforms.Compose(feat_tfs)
@@ -1272,6 +1278,7 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
     def default_vol_tf(
         baseline_iso_scale_factor_lr_spacing_mm_low_high: float,
         scale_prefilter_kwargs: dict = dict(),
+        keep_metatensor_output: bool = False,
     ):
 
         VOL_KEYS = (
@@ -1305,10 +1312,15 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
 
         # Extract the vol affine matrix.
         feat_tfs.append(
-            monai.transforms.adaptor(
-                _extract_affine, outputs="affine_vox2world", inputs={"dwi": "src_vol"}
+            monai.transforms.Lambdad(
+                keys="dwi", func=_extract_affine, overwrite="affine_vox2world"
             )
         )
+        # feat_tfs.append(
+        #     monai.transforms.adaptor(
+        #         _extract_affine, outputs="affine_vox2world", inputs={"dwi": "src_vol"}
+        #     )
+        # )
         feat_tfs.append(
             monai.transforms.CopyItemsd(
                 keys=["affine_vox2world"],
@@ -1462,19 +1474,20 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
         feat_tfs.append(select_k_tf)
 
         # Convert all MetaTensors to regular Tensors.
-        to_tensor_tf = monai.transforms.ToTensord(
-            (
-                "bval",
-                "bvec",
-                "affine_vox2world",
-                "affine_lr_vox2world",
-                "vox_size",
-                "lr_vox_size",
+        if not keep_metatensor_output:
+            to_tensor_tf = monai.transforms.ToTensord(
+                (
+                    "bval",
+                    "bvec",
+                    "affine_vox2world",
+                    "affine_lr_vox2world",
+                    "vox_size",
+                    "lr_vox_size",
+                )
+                + curr_vol_keys
+                + curr_lr_vol_keys,
+                track_meta=False,
             )
-            + curr_vol_keys
-            + curr_lr_vol_keys,
-            track_meta=False,
-        )
-        feat_tfs.append(to_tensor_tf)
+            feat_tfs.append(to_tensor_tf)
 
         return monai.transforms.Compose(feat_tfs)

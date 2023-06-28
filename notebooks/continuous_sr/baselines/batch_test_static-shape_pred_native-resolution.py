@@ -119,7 +119,7 @@ if torch.cuda.is_available():
     if "CUDA_PYTORCH_DEVICE_IDX" in os.environ.keys():
         dev_idx = int(os.environ["CUDA_PYTORCH_DEVICE_IDX"])
     else:
-        dev_idx = 1
+        dev_idx = 0
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -217,7 +217,6 @@ p.test.subj_ids = list(
             # 191336,
             # 251833,
             # 581450,
-            # 601127,
             # 825048,
             # # test set subjects
             # 110613,
@@ -410,7 +409,8 @@ ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 ts = ts.replace(":", "_")
 experiment_name = f"{ts}_{p.experiment_name}"
 tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
-tmp_res_dir.mkdir(parents=True)
+# tmp_res_dir = Path(p.tmp_results_dir) / "2023-06-23T11_22_36_static-shape_pred_native-res/static-shape_CNN"
+tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
 model_pred_res_dir = tmp_res_dir / p.model_name

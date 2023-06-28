@@ -190,12 +190,14 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "inr_simplified-decoder_split-01"
+p.experiment_name = (
+    "test_inr_encoder-bn_standard-loss-weight_edt-sample-weight_split-02"
+)
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = (
-    Path("./data_splits") / "HCP_train-val-test_split_01_seed_332781572.csv"
+    Path("./data_splits") / "HCP_train-val-test_split_02_seed_533224960.csv"
 )
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
@@ -228,15 +230,14 @@ p.train = dict(
     patch_spatial_size=(36, 36, 36),
     batch_size=6,
     samples_per_subj_per_epoch=170,
-    # samples_per_subj_per_epoch=25,  #!testing/debug
+    # samples_per_subj_per_epoch=10,  #!DEBUG
     max_epochs=50,
-    # max_epochs=5,  #!testing/debug
-    dwi_recon_epoch_proportion=0.03,
-    # dwi_recon_epoch_proportion=0.01,  #!testing/debug
+    # max_epochs=3,  #!DEBUG
+    dwi_recon_epoch_proportion=0.001,
+    # dwi_recon_epoch_proportion=0.01,  #!DEBUG
     sample_mask_key="wm_mask",
 )
 p.train.augment = dict(
-    # augmentation_prob=1.0,  #!testing/debug
     augmentation_prob=0.3,
     baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
     scale_prefilter_kwargs=p.scale_prefilter_kwargs,
@@ -244,13 +245,14 @@ p.train.augment = dict(
     augment_rand_rician_noise_kwargs={"prob": 0.0},
     augment_rand_rotate_90_kwargs={"prob": 0.5},
     augment_rand_flip_kwargs={"prob": 0.5},
+    keep_metatensor_output=True,
 )
 # Optimizer kwargs for training.
 p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=15, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=17, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
@@ -260,6 +262,7 @@ p.encoder = dict(
     n_dense_units=3,
     activate_fn="relu",
     input_coord_channels=True,
+    post_batch_norm=True,
 )
 p.decoder = dict(
     context_v_features=96,
@@ -369,7 +372,7 @@ with warnings.catch_warnings(record=True) as warn_list:
             bval_sub_sample_fn=bval_sub_sample_fn,
         ),
         copy_cache=False,
-        num_workers=12,
+        num_workers=8,
     )
 
 train_dataset = pitn.data.datasets2.HCPfODFINRPatchDataset(
@@ -404,13 +407,13 @@ print("=" * 10)
 
 # %%
 # #!DEBUG
-DEBUG_VAL_SUBJS = 4
+DEBUG_VAL_SUBJS = 2
 with warnings.catch_warnings(record=True) as warn_list:
 
-    print("DEBUG Val subject numbers")
+    # print("DEBUG Val subject numbers")
     val_ds = pitn.data.datasets2.HCPfODFINRDataset(
-        subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],  #!DEBUG
-        # subj_ids=p.val.subj_ids,
+        # subj_ids=p.val.subj_ids[:DEBUG_VAL_SUBJS],  #!DEBUG
+        subj_ids=p.val.subj_ids,
         dwi_root_dir=hcp_full_res_data_dir,
         fodf_root_dir=hcp_full_res_fodf_dir,
         transform=pitn.data.datasets2.HCPfODFINRDataset.default_pre_sample_tf(
@@ -424,6 +427,7 @@ with warnings.catch_warnings(record=True) as warn_list:
         transform=pitn.data.datasets2.HCPfODFINRWholeBrainDataset.default_vol_tf(
             baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
             scale_prefilter_kwargs=p.scale_prefilter_kwargs,
+            keep_metatensor_output=True,
         ),
     )
     # Cache the transformations on the validation data.
@@ -467,20 +471,6 @@ def setup_logger_run(run_kwargs: dict, logger_meta_params: dict, logger_tags: li
     return aim_run
 
 
-# %%
-def calc_grad_norm(model, norm_type=2):
-    # https://discuss.pytorch.org/t/check-the-norm-of-gradients/27961/5
-    total_norm = 0
-    parameters = [
-        p for p in model.parameters() if p.grad is not None and p.requires_grad
-    ]
-    for p in parameters:
-        param_norm = p.grad.detach().data.norm(2)
-        total_norm += param_norm.item() ** 2
-    total_norm = total_norm**0.5
-    return total_norm
-
-
 def batchwise_masked_mse(y_pred, y, mask):
     masked_y_pred = y_pred.clone()
     masked_y = y.clone()
@@ -519,7 +509,7 @@ def validate_stage(
             x = batch_dict["lr_dwi"]
             batch_size = x.shape[0]
             x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
-            x_affine_vox2world = batch_dict["affine_lr_vox2world"]
+            x_affine_vox2world = batch_dict["affine_lr_vox2world"].to(x.dtype)
             x_vox_size = batch_dict["lr_vox_size"]
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
@@ -527,7 +517,7 @@ def validate_stage(
 
             y = batch_dict["fodf"]
             y_mask = batch_dict["brain_mask"].to(torch.bool)
-            y_affine_vox2world = batch_dict["affine_vox2world"]
+            y_affine_vox2world = batch_dict["affine_vox2world"].to(y.dtype)
             y_vox_size = batch_dict["vox_size"]
             y_coords = pitn.affine.affine_coordinate_grid(
                 y_affine_vox2world, tuple(y.shape[2:])
@@ -655,7 +645,7 @@ def validate_stage(
                     }
                 )
                 with mpl.rc_context({"font.size": 6.0}):
-                    fig = plt.figure(dpi=140, figsize=(6, 2))
+                    fig = plt.figure(dpi=100, figsize=(6, 2))
                     sns.boxplot(
                         data=error_df,
                         x="SH_idx",
@@ -717,6 +707,16 @@ else:
 
 # Wrap the entire training & validation loop in a try...except statement.
 try:
+
+    LOSS_ODF_COEFF_MEANS = torch.from_numpy(
+        np.array([0.17] + [0.002] * 5 + [0.002] * 9 + [0.0] * 13 + [0.0] * 17)
+    )
+    LOSS_ODF_COEFF_STDS = torch.from_numpy(
+        np.array([0.05] + [0.1] * 5 + [0.06] * 9 + [0.03] * 13 + [0.01] * 17)
+    )
+    LOSS_ODF_COEFF_MEANS = LOSS_ODF_COEFF_MEANS[None, :, None, None, None].to(device)
+    LOSS_ODF_COEFF_STDS = LOSS_ODF_COEFF_STDS[None, :, None, None, None].to(device)
+
     encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
     # Initialize weight shape for the encoder.
     encoder(torch.randn(1, in_channels, 20, 20, 20))
@@ -763,23 +763,21 @@ try:
     # The datasets will usually produce volumes of different shapes due to the possible
     # random re-sampling, so the batch must be padded, and the padded masks must be
     # used to calculate the loss.
-    def _pad_list_data_collate_to_tensor(d, **kwargs):
-        ret = monai.data.utils.pad_list_data_collate(d, **kwargs)
-        return {
-            k: monai.utils.convert_to_tensor(v, track_meta=False)
-            if isinstance(v, monai.data.MetaObj)
-            else v
-            for k, v in ret.items()
-        }
-
+    collate_fn = partial(
+        pitn.data.datasets2.pad_list_data_collate_update_affines_to_tensor,
+        meta_tensor_key_write_aff_key_pairs=[
+            ("lr_dwi", "affine_lr_vox2world"),
+            ("fodf", "affine_vox2world"),
+        ],
+        method="symmetric",
+        mode="constant",
+    )
     train_dataloader = monai.data.DataLoader(
         train_dataset,
         batch_size=p.train.batch_size,
         shuffle=True,
         pin_memory=True,
-        collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
-        ),
+        collate_fn=collate_fn,
         **p.train.dataloader.to_dict(),
     )
     val_dataloader = monai.data.DataLoader(
@@ -787,10 +785,8 @@ try:
         batch_size=1,
         shuffle=True,
         pin_memory=True,
-        num_workers=0,
-        collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
-        ),
+        num_workers=1,
+        collate_fn=collate_fn,
     )
     train_dataloader, val_dataloader = fabric.setup_dataloaders(
         train_dataloader, val_dataloader
@@ -851,7 +847,7 @@ try:
 
             x = batch_dict["lr_dwi"]
             x_mask = batch_dict["lr_brain_mask"].to(torch.bool)
-            x_affine_vox2world = batch_dict["affine_lr_vox2world"]
+            x_affine_vox2world = batch_dict["affine_lr_vox2world"].to(x.dtype)
             x_vox_size = batch_dict["lr_vox_size"]
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
@@ -859,7 +855,7 @@ try:
 
             y = batch_dict["fodf"]
             y_mask = batch_dict["brain_mask"].to(torch.bool)
-            y_affine_vox2world = batch_dict["affine_vox2world"]
+            y_affine_vox2world = batch_dict["affine_vox2world"].to(y.dtype)
             y_vox_size = batch_dict["vox_size"]
             y_coords = pitn.affine.affine_coordinate_grid(
                 y_affine_vox2world, tuple(y.shape[2:])
@@ -891,7 +887,27 @@ try:
                     context_vox_size_world=x_vox_size,
                     query_vox_size_world=y_vox_size,
                 )
-                loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
+
+                # Scale prediction and target to weigh the loss.
+                # Transform coefficients to a standard normal distribution.
+                # 45 x n_voxels
+                pred_fodf_standardized = (
+                    pred_fodf - LOSS_ODF_COEFF_MEANS
+                ) / LOSS_ODF_COEFF_STDS
+                y_standardized = (y - LOSS_ODF_COEFF_MEANS) / LOSS_ODF_COEFF_STDS
+                # Tissue weights
+                tissue_weight_mask = y_mask.to(pred_fodf)
+                tissue_weight_mask[batch_dict["gm_mask"]] = 0.3
+                tissue_weight_mask[batch_dict["csf_mask"]] = 0.1
+                tissue_weight_mask[batch_dict["wm_mask"]] = 1.0
+                pred_fodf_standardized *= tissue_weight_mask
+                y_standardized *= tissue_weight_mask
+                # Calculate loss over weighted prediction and target.
+                loss_fodf = loss_fn(
+                    pred_fodf_standardized[y_mask_broad], y_standardized[y_mask_broad]
+                )
+
+                # loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
                 loss_recon = y.new_zeros(1)
                 recon_pred = None
             else:

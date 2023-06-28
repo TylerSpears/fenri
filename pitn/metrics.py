@@ -15,6 +15,83 @@ from pitn._lazy_loader import LazyLoader
 pytorch_msssim = LazyLoader("pytorch_msssim", globals(), "pytorch_msssim")
 
 
+@torch.no_grad()
+def sphere_jensen_shannon_distance(
+    input_odf_coeffs, target_odf_coeffs, mask, theta, phi, sh_order=8
+):
+    epsilon = 1e-5
+    batch_size = input_odf_coeffs.shape[0]
+    if batch_size != 1:
+        raise NotImplementedError("ERROR: Batch size != 1 not implemented or tested")
+    input_sphere_samples = pitn.odf.sample_sphere_coords(
+        input_odf_coeffs * mask,
+        theta=theta,
+        phi=phi,
+        sh_order=sh_order,
+        sh_order_dim=1,
+        mask=mask,
+        force_nonnegative=True,
+    )
+    n_sphere_samples = input_sphere_samples.shape[1]
+    sphere_mask = mask.expand_as(input_sphere_samples)
+    # Mask and reshape to (n_vox x batch_size) x n_prob_samples
+    input_sphere_samples = einops.rearrange(
+        input_sphere_samples[sphere_mask],
+        "(b s v) -> (b v) s",
+        b=batch_size,
+        s=n_sphere_samples,
+    )
+    # Normalize to sum to 1.0, as a probability density.
+    input_sphere_samples /= torch.maximum(
+        torch.sum(input_sphere_samples, dim=1, keepdim=True),
+        input_odf_coeffs.new_zeros(1) + epsilon,
+    )
+    target_sphere_samples = pitn.odf.sample_sphere_coords(
+        target_odf_coeffs * mask,
+        theta=theta,
+        phi=phi,
+        sh_order=8,
+        sh_order_dim=1,
+        mask=mask,
+    )
+    target_sphere_samples = einops.rearrange(
+        target_sphere_samples[sphere_mask],
+        "(b s v) -> (b v) s",
+        b=batch_size,
+        s=n_sphere_samples,
+    )
+    # Normalize to sum to 1.0, as a probability density.
+    target_sphere_samples /= torch.maximum(
+        torch.sum(target_sphere_samples, dim=1, keepdim=True),
+        target_odf_coeffs.new_zeros(1) + epsilon,
+    )
+
+    Q_log_in = torch.log(input_sphere_samples.to(torch.float64))
+    P_log_target = torch.log(target_sphere_samples.to(torch.float64))
+    M_log = torch.log(
+        (input_sphere_samples + target_sphere_samples).to(torch.float64) / 2
+    )
+    del input_sphere_samples, target_sphere_samples
+    d_P_M = F.kl_div(M_log, P_log_target, reduction="none", log_target=True)
+    # Implement batchmean per-voxel.
+    # nan values from the kl divergence occur when the expected density is 0.0 and the
+    # log is -inf. The 'contribution' of that element is 0 as the limit approaches 0,
+    # so just adding the non-nan values should be valid.
+    d_P_M = d_P_M.nansum(1, keepdim=True) / d_P_M.shape[1]
+
+    d_Q_M = F.kl_div(M_log, Q_log_in, reduction="none", log_target=True)
+    d_Q_M = d_Q_M.nansum(1, keepdim=True) / d_Q_M.shape[1]
+
+    js_div = d_P_M / 2 + d_Q_M / 2
+    js_div = einops.rearrange(js_div, "(b v) s -> (b s v)", b=batch_size, s=1)
+    js_dist = torch.zeros_like(mask).to(input_odf_coeffs)
+    js_dist.masked_scatter_(mask, torch.sqrt(js_div).to(torch.float32)).to(
+        input_odf_coeffs
+    )
+
+    return js_dist
+
+
 class NormRMSEMetric(torch.nn.Module):
     def __init__(self, reduction="mean", normalization="min-max"):
         super().__init__()

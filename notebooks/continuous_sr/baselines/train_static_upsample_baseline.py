@@ -179,12 +179,12 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "baseline-sr-cnn_split-01"
+p.experiment_name = "baseline-sr-cnn_split-03"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = (
-    Path("../data_splits") / "HCP_train-val-test_split_01_seed_332781572.csv"
+    Path("../data_splits") / "HCP_train-val-test_split_03_seed_871113743.csv"
 )
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
@@ -193,7 +193,7 @@ p.aim_logger = dict(
     repo="aim://dali.cpe.virginia.edu:53800",
     experiment="PITN_INR",
     meta_params=dict(run_name=p.experiment_name),
-    tags=("PITN", "INR", "HCP", "super-res", "dMRI"),
+    tags=("PITN", "INR", "HCP", "super-res", "dMRI", "comparison"),
 )
 p.checkpoint_epoch_ratios = [0.5]
 ###############################################
@@ -217,11 +217,8 @@ p.train = dict(
     patch_spatial_size=(36, 36, 36),
     batch_size=6,
     samples_per_subj_per_epoch=170,
-    # samples_per_subj_per_epoch=25,  #!testing/debug
     max_epochs=50,
-    # max_epochs=5,  #!testing/debug
     dwi_recon_epoch_proportion=0.03,
-    # dwi_recon_epoch_proportion=0.01,  #!testing/debug
     sample_mask_key="wm_mask",
 )
 p.train.augment = dict(
@@ -243,7 +240,7 @@ p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=15, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=19, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(

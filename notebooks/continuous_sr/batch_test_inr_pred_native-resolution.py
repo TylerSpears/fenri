@@ -204,7 +204,6 @@ p.test.subj_ids = list(
             191336,
             251833,
             581450,
-            601127,
             825048,
             # test set subjects
             110613,

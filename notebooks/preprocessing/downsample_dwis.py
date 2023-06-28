@@ -134,7 +134,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "trilin-pred_native-res"
+p.experiment_name = "downsample-dwi_fit-odf_scale-2.00mm"
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # p.train_val_test_split_file = random.choice(
@@ -160,110 +160,110 @@ p.scale_prefilter_kwargs = dict(
 # Do Tri-linear interpolation on all subjects.
 p.test.subj_ids = [
     # holdout subjects that have been processed
-    "581450",
-    "126426",
-    "191336",
-    "251833",
-    "581450",
-    "825048",
-    # test set subjects
-    "110613",
-    "112112",
-    "123420",
-    "124422",
-    "126628",
-    "129028",
-    "130013",
-    "133019",
-    "134425",
-    "135225",
-    "138837",
-    "139637",
-    "139839",
-    "143830",
-    "144428",
-    "144933",
-    "148840",
-    "149539",
-    "150019",
-    "151526",
-    "153227",
-    "153732",
-    "155231",
-    "162329",
-    "187850",
-    "189349",
-    "192843",
-    "193239",
-    "198451",
-    "220721",
-    "268850",
-    "270332",
-    "299154",
-    "314225",
-    "316633",
-    "350330",
-    "368551",
-    "453542",
-    "480141",
-    "492754",
-    "497865",
-    "500222",
-    "519647",
-    "567961",
-    "571144",
-    "656253",
-    "656657",
-    "677968",
-    "683256",
-    "704238",
-    "727654",
-    "731140",
-    "765056",
-    "767464",
-    "917558",
-    "930449",
-    "972566",
-    "978578",
-    "993675",
-    "994273",
+    # "581450",
+    # "126426",
+    # "191336",
+    # "251833",
+    # "581450",
+    # "825048",
+    # # test set subjects
+    # "110613",
+    # "112112",
+    # "123420",
+    # "124422",
+    # "126628",
+    # "129028",
+    # "130013",
+    # "133019",
+    # "134425",
+    # "135225",
+    # "138837",
+    # "139637",
+    # "139839",
+    # "143830",
+    # "144428",
+    # "144933",
+    # "148840",
+    # "149539",
+    # "150019",
+    # "151526",
+    # "153227",
+    # "153732",
+    # "155231",
+    # "162329",
+    # "187850",
+    # "189349",
+    # "192843",
+    # "193239",
+    # "198451",
+    # "220721",
+    # "268850",
+    # "270332",
+    # "299154",
+    # "314225",
+    # "316633",
+    # "350330",
+    # "368551",
+    # "453542",
+    # "480141",
+    # "492754",
+    # "497865",
+    # "500222",
+    # "519647",
+    # "567961",
+    # "571144",
+    # "656253",
+    # "656657",
+    # "677968",
+    # "683256",
+    # "704238",
+    # "727654",
+    # "731140",
+    # "765056",
+    # "767464",
+    # "917558",
+    # "930449",
+    # "972566",
+    # "978578",
+    # "993675",
+    # "994273",
     # ====================== remaining subj ids
-    # "100206",
-    # "100307",
-    # "101006",
-    # "101410",
-    # "102109",
-    # "103515",
-    # "104820",
-    # "105115",
-    # "105620",
-    # "106824",
-    # "107422",
-    # "108222",
-    # "110007",
-    # "111211",
-    # "111413",
-    # "113215",
-    # "114419",
-    # "118124",
-    # "118730",
-    # "118932",
-    # "119126",
-    # "119833",
-    # "120010",
-    # "121618",
-    # "121719",
-    # "122317",
-    # "122418",
-    # "122822",
-    # "123117",
-    # "123723",
-    # "123925",
-    # "126325",
-    # "127832",
-    # "127933",
-    # "129331",
-    # "129634",
+    "100206",
+    "100307",
+    "101006",
+    "101410",
+    "102109",
+    "103515",
+    "104820",
+    "105115",
+    "105620",
+    "106824",
+    "107422",
+    "108222",
+    "110007",
+    "111211",
+    "111413",
+    "113215",
+    "114419",
+    "118124",
+    "118730",
+    "118932",
+    "119126",
+    "119833",
+    "120010",
+    "121618",
+    "121719",
+    "122317",
+    "122418",
+    "122822",
+    "123117",
+    "123723",
+    "123925",
+    "126325",
+    "127832",
+    "127933",
+    "129331",
+    "129634",
     "130316",
     "130720",
     "131924",
@@ -517,9 +517,13 @@ ic(p.to_dict())
 # %%
 hcp_full_res_data_dir = Path("/data/srv/data/pitn/hcp")
 hcp_full_res_fodf_dir = Path("/data/srv/outputs/pitn/hcp/full-res/fodf")
+hcp_low_res_data_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/vol")
+hcp_low_res_fodf_dir = Path("/data/srv/outputs/pitn/hcp/downsample/scale-2.00mm/fodf")
 
 assert hcp_full_res_data_dir.exists()
 assert hcp_full_res_fodf_dir.exists()
+assert hcp_low_res_data_dir.exists()
+assert hcp_low_res_fodf_dir.exists()
 
 # %%
 # Define hte bval/bvec sub-sample scheme according to the parameter dict kwargs.
@@ -686,7 +690,7 @@ def mrtrix_msmt_sph_deconv(
             mask_f=brain_mask_f,
             freesurfer_seg_f=freesurfer_seg_f,
             target_fodf_f=fodf_f,
-            n_threads=5,
+            n_threads=3,
         )
 
         fit_fs = dict(
@@ -721,9 +725,11 @@ def mrtrix_msmt_sph_deconv(
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-experiment_name = f"{ts}_{p.experiment_name}"
-tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
-# tmp_res_dir = Path(p.tmp_results_dir) / "2023-06-21T14_51_23_trilin-pred_native-res"
+# experiment_name = f"{ts}_{p.experiment_name}"
+# tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
+tmp_res_dir = (
+    Path(p.tmp_results_dir) / "2023-06-25T18_28_56_downsample-dwi_fit-odf_scale-2.00mm"
+)
 tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
@@ -762,62 +768,36 @@ try:
                 x_affine_vox2world, tuple(x.shape[2:])
             )
 
-            y = batch_dict["fodf"].to(device)
-            y_mask = batch_dict["brain_mask"].to(torch.bool).to(device)
-            y_affine_vox2world = batch_dict["affine_vox2world"].to(device)
-            y_vox_size = batch_dict["vox_size"].to(device)
-            y_coords = pitn.affine.affine_coordinate_grid(
-                y_affine_vox2world, tuple(y.shape[2:])
-            )
-
-            # Fix an edge case in the affine_coordinate_grid function.
-            if batch_size == 1:
-                if x_coords.shape[0] != 1:
-                    x_coords.unsqueeze_(0)
-                if y_coords.shape[0] != 1:
-                    y_coords.unsqueeze_(0)
-
             bval = batch_dict["bval"]
             bvec = batch_dict["bvec"]
 
-            # Interpolate the dwi, then perform spherical deconv. on the prediction
-            pred_dwi = pitn.affine.sample_vol(
-                x,
-                coords_mm_xyz=y_coords,
-                affine_vox2mm=x_affine_vox2world,
-                mode="bilinear",
-                padding_mode="zeros",
-                align_corners=True,
-            )
-            print(f"Finished inference {subj_id}", flush=True)
+            pred_dwi = x
 
-            # Write out prediction to a .nii.gz file.
+            # Write out dwi to a .nii.gz file.
             input_vox_size = x_vox_size.flatten().cpu().numpy()[0]
-            native_vox_size = y_vox_size.flatten().cpu().numpy()[0]
 
-            # Store the predicted DWI in subdirectory, ~~fit the odfs to the prediction,
+            # Store the DWI in subdirectory, ~~fit the odfs to the prediction,
             # then bring the wm odf to the root directory.~~
 
             subj_odf_fit_dir = model_pred_res_dir / subj_id
             subj_odf_fit_dir.mkdir(parents=True, exist_ok=True)
-            pred_affine = y_affine_vox2world[0].cpu().numpy()
-            # Mask the prediction to reduce the file size.
-            pred_dwi = pred_dwi.detach().cpu() * y_mask.detach().cpu()
+            pred_affine = x_affine_vox2world[0].cpu().numpy()
+            # Mask the dwi to reduce the file size.
+            pred_dwi = pred_dwi.detach().cpu() * x_mask.detach().cpu()
             pred_dwi_vol = einops.rearrange(
                 pred_dwi.numpy(), "1 c x y z -> x y z c"
             ).astype(np.float32)
             pred_dwi_im = nib.Nifti1Image(pred_dwi_vol, affine=pred_affine)
 
-            # Final target filenames for the predicted DWI and the fitted wm odf coeffs.
+            # Final target filenames for the DWI and the fitted wm odf coeffs.
             # Other output filenames will be derived separately.
             pred_dwi_f = (
                 subj_odf_fit_dir
-                / f"{subj_id}_{model}_dwi_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
+                / f"{subj_id}_dwi_downsampled-{input_vox_size}mm.nii.gz"
             )
-            # final_pred_wm_odf_coeff_f = (
-            #     model_pred_res_dir
-            #     / f"{subj_id}_{model}_postproc_wm_odf-coeff_prediction_{input_vox_size}mm-to-{native_vox_size}mm.nii.gz"
-            # )
+            final_pred_wm_odf_coeff_f = (
+                subj_odf_fit_dir / "postproc_wm_msmt_csd_fod.nii.gz"
+            )
             # Crop/pad prediction to align with the fodf image created directly from
             # mrtrix. This should not change any of the prediction values, only align
             # the images for easier comparison.
@@ -832,7 +812,7 @@ try:
                 # Do the resampling with mrtrix directly.
                 subj_source_files = (
                     pitn.data.datasets2.HCPfODFINRDataset.get_fodf_subj_dict(
-                        subj_id, root_dir=hcp_full_res_fodf_dir
+                        subj_id, root_dir=hcp_low_res_fodf_dir
                     )
                 )
                 subj_source_fodf_f = str(subj_source_files["fodf"].resolve())
@@ -858,8 +838,8 @@ try:
                 )
 
                 dwi_im = nib.load(tmp_pred_dwi_f)
-                # brain_mask_im = nib.load(subj_source_files["mask"])
-                # freesurfer_seg_im = nib.load(subj_source_files["freesurfer_seg"])
+                brain_mask_im = nib.load(subj_source_files["mask"])
+                freesurfer_seg_im = nib.load(subj_source_files["freesurfer_seg"])
                 bval_ = bval.squeeze().cpu().numpy().astype(np.float32)
                 bval_ = bval_.flatten()[None]
                 bval_f = tmp_pred_dir / "bvals"
@@ -869,17 +849,17 @@ try:
                     bvec_ = bvec_.T
                 bvec_f = tmp_pred_dir / "bvecs"
                 np.savetxt(bvec_f, bvec_, fmt="%g")
-                # print(f"Fitting fod coefficients {subj_id}")
-                # fodf_fit_fs = mrtrix_msmt_sph_deconv(
-                #     dwi_im=dwi_im,
-                #     bval=bval_,
-                #     bvec=bvec_,
-                #     brain_mask_im=brain_mask_im,
-                #     freesurfer_seg_im=freesurfer_seg_im,
-                #     target_directory=tmp_pred_dir,
-                # )
-                # print(f"Done fitting fod coefficients {subj_id}")
-                fodf_fit_fs = dict()
+                print(f"Fitting fod coefficients {subj_id}")
+                fodf_fit_fs = mrtrix_msmt_sph_deconv(
+                    dwi_im=dwi_im,
+                    bval=bval_,
+                    bvec=bvec_,
+                    brain_mask_im=brain_mask_im,
+                    freesurfer_seg_im=freesurfer_seg_im,
+                    target_directory=tmp_pred_dir,
+                )
+                print(f"Done fitting fod coefficients {subj_id}")
+                # fodf_fit_fs = dict()
                 fodf_fit_fs["dwi"] = Path(tmp_pred_dwi_f)
                 fodf_fit_fs["bval"] = Path(bval_f)
                 fodf_fit_fs["bvec"] = Path(bvec_f)

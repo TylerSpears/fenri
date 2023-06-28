@@ -20,6 +20,7 @@ class INREncoder(torch.nn.Module):
         n_res_units: int,
         n_dense_units: int,
         activate_fn,
+        post_batch_norm: bool = False,
     ):
         super().__init__()
 
@@ -31,6 +32,7 @@ class INREncoder(torch.nn.Module):
             n_res_units=n_res_units,
             n_dense_units=n_dense_units,
             activate_fn=activate_fn,
+            post_batch_norm=post_batch_norm,
         )
 
         self.in_channels = in_channels
@@ -38,6 +40,7 @@ class INREncoder(torch.nn.Module):
         self.input_coord_channels = input_coord_channels
         self.interior_channels = interior_channels
         self.out_channels = out_channels
+        self.post_batch_norm = post_batch_norm
 
         if isinstance(activate_fn, str):
             activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
@@ -116,6 +119,10 @@ class INREncoder(torch.nn.Module):
                 padding_mode="reflect",
             ),
         )
+        if self.post_batch_norm:
+            self.output_batch_norm = torch.nn.BatchNorm3d(self.out_channels)
+        else:
+            self.output_batch_norm = torch.nn.Identity()
 
     def forward(self, x: torch.Tensor):
         y = self.pre_conv(x)
@@ -123,6 +130,8 @@ class INREncoder(torch.nn.Module):
         y = self.cascade(y)
         y = self.activate_fn(y)
         y = self.post_conv(y)
+        if self.post_batch_norm:
+            y = self.output_batch_norm(y)
 
         return y
 
