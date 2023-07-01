@@ -645,7 +645,7 @@ def validate_stage(
 
     encoder.train(mode=encoder_was_training)
     decoder.train(mode=decoder_was_training)
-    return aim_run, val_viz_subj_id
+    return aim_run, val_viz_subj_id, val_metrics["mse"]
 
 
 # %%
@@ -769,6 +769,7 @@ try:
     train_recon = False
 
     epochs = p.train.max_epochs
+    curr_best_val_score = 1e8
     checkpoint_epochs = np.floor(np.array(p.checkpoint_epoch_ratios) * epochs)
     checkpoint_epochs = set(checkpoint_epochs.astype(int).tolist())
     curr_checkpoint = 0
@@ -935,7 +936,7 @@ try:
         fabric.print("\n==Validation==", flush=True)
         fabric.barrier()
         if fabric.is_global_zero:
-            aim_run, val_viz_subj_id = validate_stage(
+            aim_run, val_viz_subj_id, val_score = validate_stage(
                 fabric,
                 encoder,
                 decoder,
@@ -945,7 +946,34 @@ try:
                 aim_run=aim_run,
                 val_viz_subj_id=val_viz_subj_id,
             )
+            curr_val_score = val_score.detach().cpu().mean().item()
         fabric.barrier()
+        # Start saving best performing models if the previous best val score was
+        # surpassed, and the current number of epcohs is >= half the total training
+        # amount.
+        if (curr_val_score < (curr_best_val_score - (0.05 * curr_best_val_score))) and (
+            epoch >= epochs / 3
+        ):
+            fabric.print("Saving new best validation score")
+            fabric.barrier()
+            if fabric.is_global_zero:
+                torch.save(
+                    {
+                        "encoder": encoder.state_dict(),
+                        "decoder": decoder.state_dict(),
+                        "epoch": epoch,
+                        "step": step,
+                        "aim_run_hash": aim_run.hash,
+                        "optim_encoder": optim_encoder.state_dict(),
+                        "optim_decoder": optim_decoder.state_dict(),
+                        "recon_decoder": recon_decoder.state_dict(),
+                        "optim_recon_decoder": optim_recon_decoder.state_dict(),
+                    },
+                    Path(tmp_res_dir)
+                    / f"best_val_score_state_dict_epoch_{epoch}_step_{step}.pt",
+                )
+                curr_best_val_score = curr_val_score
+            fabric.barrier()
 
         if epoch in checkpoint_epochs:
             fabric.print(f"Saving checkpoint {curr_checkpoint}")
