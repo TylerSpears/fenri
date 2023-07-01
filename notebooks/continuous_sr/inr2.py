@@ -190,14 +190,12 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = (
-    "test_inr_encoder-bn_standard-loss-weight_edt-sample-weight_split-02"
-)
+p.experiment_name = "test_inr_bvec-resample_fixed-mlp_subj_split-01.1"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = (
-    Path("./data_splits") / "HCP_train-val-test_split_02_seed_533224960.csv"
+    Path("./data_splits") / "HCP_train-val-test_split_01.1.csv"
 )
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
@@ -208,7 +206,7 @@ p.aim_logger = dict(
     meta_params=dict(run_name=p.experiment_name),
     tags=("PITN", "INR", "HCP", "super-res", "dMRI"),
 )
-p.checkpoint_epoch_ratios = (0.33, 0.66)
+p.checkpoint_epoch_ratios = (0.2, 0.33, 0.66)
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
 # See `sub_select_dwi_from_bval` function in `pitn`.
@@ -229,10 +227,9 @@ p.scale_prefilter_kwargs = dict(
 p.train = dict(
     patch_spatial_size=(36, 36, 36),
     batch_size=6,
-    samples_per_subj_per_epoch=170,
-    # samples_per_subj_per_epoch=10,  #!DEBUG
+    samples_per_subj_per_epoch=110,
+    # samples_per_subj_per_epoch=20, #!DEBUG
     max_epochs=50,
-    # max_epochs=3,  #!DEBUG
     dwi_recon_epoch_proportion=0.001,
     # dwi_recon_epoch_proportion=0.01,  #!DEBUG
     sample_mask_key="wm_mask",
@@ -678,7 +675,7 @@ def validate_stage(
 
     encoder.train(mode=encoder_was_training)
     decoder.train(mode=decoder_was_training)
-    return aim_run, val_viz_subj_id
+    return aim_run, val_viz_subj_id, val_metrics["mse"]
 
 
 # %%
@@ -720,6 +717,8 @@ try:
     encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
     # Initialize weight shape for the encoder.
     encoder(torch.randn(1, in_channels, 20, 20, 20))
+    decoder = SimplifiedDecoder(**p.decoder.to_dict())
+
     decoder = SimplifiedDecoder(**p.decoder.to_dict())
     recon_decoder = INREncoder(
         in_channels=encoder.out_channels,
@@ -806,6 +805,7 @@ try:
     train_recon = False
 
     epochs = p.train.max_epochs
+    curr_best_val_score = 1e8
     checkpoint_epochs = np.floor(np.array(p.checkpoint_epoch_ratios) * epochs)
     checkpoint_epochs = set(checkpoint_epochs.astype(int).tolist())
     curr_checkpoint = 0
@@ -913,7 +913,9 @@ try:
             else:
                 recon_pred = recon_decoder(ctx_v)
                 # Index bvals to be 2 b=0s, 2 b=1000s, and 2 b=3000s.
-                recon_y = x[:, (0, 1, 2, 11, 12, 13, -3, -2, -1)]
+                recon_y = torch.cat(
+                    [x[:, (0, 1, 2, 11, 12, 13)], x_coords.movedim(-1, 1)], dim=1
+                )
                 x_mask_broad = torch.broadcast_to(x_mask, recon_y.shape)
                 loss_recon = recon_loss_fn(
                     recon_pred[x_mask_broad], recon_y[x_mask_broad]
@@ -998,7 +1000,7 @@ try:
         fabric.print("\n==Validation==", flush=True)
         fabric.barrier()
         if fabric.is_global_zero:
-            aim_run, val_viz_subj_id = validate_stage(
+            aim_run, val_viz_subj_id, val_scores = validate_stage(
                 fabric,
                 encoder,
                 decoder,
@@ -1008,7 +1010,35 @@ try:
                 aim_run=aim_run,
                 val_viz_subj_id=val_viz_subj_id,
             )
+            curr_val_score = val_scores.detach().cpu().mean().item()
         fabric.barrier()
+
+        # Start saving best performing models if the previous best val score was
+        # surpassed, and the current number of epcohs is >= half the total training
+        # amount.
+        if (curr_val_score < (curr_best_val_score - (0.05 * curr_best_val_score))) and (
+            epoch >= epochs / 3
+        ):
+            fabric.print("Saving new best validation score")
+            fabric.barrier()
+            if fabric.is_global_zero:
+                torch.save(
+                    {
+                        "encoder": encoder.state_dict(),
+                        "decoder": decoder.state_dict(),
+                        "epoch": epoch,
+                        "step": step,
+                        "aim_run_hash": aim_run.hash,
+                        "optim_encoder": optim_encoder.state_dict(),
+                        "optim_decoder": optim_decoder.state_dict(),
+                        "recon_decoder": recon_decoder.state_dict(),
+                        "optim_recon_decoder": optim_recon_decoder.state_dict(),
+                    },
+                    Path(tmp_res_dir)
+                    / f"best_val_score_state_dict_epoch_{epoch}_step_{step}.pt",
+                )
+                curr_best_val_score = curr_val_score
+            fabric.barrier()
 
         if epoch in checkpoint_epochs:
             fabric.print(f"Saving checkpoint {curr_checkpoint}")

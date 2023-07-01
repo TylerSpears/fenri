@@ -66,7 +66,7 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import INREncoder, SimplifiedDecoder
+from inr_networks import BvecEncoder, INREncoder, SimplifiedDecoder
 from natsort import natsorted
 
 import pitn
@@ -173,9 +173,9 @@ p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
 # )
 p.model_weight_f = str(
-    Path(p.results_dir)
-    / "2023-06-20T03_20_54"
-    / "final_state_dict_epoch_49_step_21701.pt"
+    Path(p.tmp_results_dir)
+    / "2023-06-30T15_30_06"
+    / "final_state_dict_epoch_49_step_38501.pt"
 )
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
@@ -199,8 +199,6 @@ p.test.subj_ids = list(
         str,
         [
             # holdout subjects that have been processed
-            581450,
-            126426,
             191336,
             251833,
             581450,
@@ -220,7 +218,6 @@ p.test.subj_ids = list(
             139637,
             139839,
             143830,
-            144428,
             144933,
             148840,
             149539,
@@ -229,7 +226,6 @@ p.test.subj_ids = list(
             153227,
             153732,
             155231,
-            162329,
             187850,
             189349,
             192843,
@@ -247,7 +243,6 @@ p.test.subj_ids = list(
             480141,
             492754,
             497865,
-            500222,
             519647,
             567961,
             571144,
@@ -277,14 +272,15 @@ p.encoder = dict(
     n_dense_units=3,
     activate_fn="relu",
     input_coord_channels=True,
+    post_batch_norm=True,
 )
 p.decoder = dict(
     context_v_features=96,
     out_features=45,
     m_encode_num_freqs=36,
     sigma_encode_scale=3.0,
-    n_internal_features=256,
-    n_internal_layers=3,
+    n_internal_features=280,
+    n_internal_layers=4,
 )
 
 # If a config file exists, override the defaults with those values.
@@ -360,6 +356,7 @@ with warnings.catch_warnings(record=True) as warn_list:
         transform=pitn.data.datasets2.HCPfODFINRWholeBrainDataset.default_vol_tf(
             baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
             scale_prefilter_kwargs=p.scale_prefilter_kwargs,
+            keep_metatensor_output=False,  #!?
         ),
     )
     # test_dataset = monai.data.CacheDataset(
@@ -405,7 +402,7 @@ def batchwise_masked_mse(y_pred, y, mask):
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-experiment_name = f"{ts}_inr-pred-test_native-res"
+experiment_name = f"{ts}_inr-pred-test_resample-bvec_native-res_split-01.1"
 tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
 tmp_res_dir.mkdir(parents=True)
 
@@ -424,7 +421,6 @@ try:
     encoder_state_dict = system_state_dict["encoder"]
 
     decoder_state_dict = system_state_dict["decoder"]
-
     if "in_channels" not in p.encoder:
         in_channels = int(test_dataset[0]["lr_dwi"].shape[0]) + 3
     else:
@@ -449,7 +445,7 @@ try:
     test_dataloader = monai.data.DataLoader(
         test_dataset,
         batch_size=1,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True,
         num_workers=3,
         persistent_workers=True,
@@ -472,20 +468,19 @@ try:
             x = batch_dict["lr_dwi"].to(device)
             batch_size = x.shape[0]
             x_mask = batch_dict["lr_brain_mask"].to(torch.bool).to(device)
-            x_affine_vox2world = batch_dict["affine_lr_vox2world"].to(device)
-            x_vox_size = batch_dict["lr_vox_size"].to(device)
+            x_affine_vox2world = batch_dict["affine_lr_vox2world"].to(x)
+            x_vox_size = batch_dict["lr_vox_size"].to(x)
             x_coords = pitn.affine.affine_coordinate_grid(
                 x_affine_vox2world, tuple(x.shape[2:])
             )
 
             y = batch_dict["fodf"].to(device)
             y_mask = batch_dict["brain_mask"].to(torch.bool).to(device)
-            y_affine_vox2world = batch_dict["affine_vox2world"].to(device)
-            y_vox_size = batch_dict["vox_size"].to(device)
+            y_affine_vox2world = batch_dict["affine_vox2world"].to(y)
+            y_vox_size = batch_dict["vox_size"].to(y)
             y_coords = pitn.affine.affine_coordinate_grid(
                 y_affine_vox2world, tuple(y.shape[2:])
             )
-            # Fix an edge case in the affine_coordinate_grid function.
             if batch_size == 1:
                 if x_coords.shape[0] != 1:
                     x_coords.unsqueeze_(0)

@@ -43,6 +43,130 @@ class DWIDataDict(TypedDict):
     bvec: torch.Tensor
 
 
+def resample_dwi_to_grad_directions(
+    dwi: torch.Tensor,
+    src_bvec: torch.Tensor,
+    src_bval: torch.Tensor,
+    target_bvec: torch.Tensor,
+):
+    K = 5
+    bval_round_decimals = -2
+    # Assume that the src and target bvecs are referring to the same gradient strengths
+    # (bvals), just different orientations.
+    x_g = src_bvec.detach().cpu().numpy().T
+    y_g = target_bvec.detach().cpu().numpy().T
+    bval = src_bval.detach().cpu().numpy()
+    shells = np.round(bval, decimals=bval_round_decimals).astype(int)
+    # If target and source are b0s, then no re-weighting should be done, as there is no
+    # gradient.
+
+    d_cos = scipy.spatial.distance.cdist(y_g, x_g, "cosine")
+    sim = 1 - d_cos
+    sim = np.clip(np.abs(sim), a_min=None, a_max=1 - 1e-5)
+    l = np.arccos(sim)
+    # For each shell (excluding b=0), restrict the available dwis to only the matching
+    # shell.
+    unique_shells = set(np.unique(shells).tolist()) - {0}
+    for s in unique_shells:
+        s_mask = np.isclose(shells, s)
+        shell_intersection_mask = np.logical_and(s_mask[:, None], s_mask[None, :])
+        shell_dissimilar_mask = ~shell_intersection_mask
+        l[shell_dissimilar_mask * s_mask[:, None]] = np.inf
+
+    top_k_idx = np.argsort(l, axis=1, kind="stable")[:, :K]
+
+    w = np.take_along_axis(1 / np.clip(l, a_min=1e-5, a_max=None), top_k_idx, axis=1)
+    w = w / w.sum(axis=1, keepdims=True)
+
+    w = torch.from_numpy(w).to(dwi)
+    top_k_idx = torch.from_numpy(top_k_idx).to(dwi).long()
+    # Start with identity convolution, which will be left for the b0s.
+    w_conv = torch.eye(dwi.shape[0]).to(dwi)
+    shells = torch.from_numpy(shells).to(dwi.device)
+    for i_y in range(dwi.shape[0]):
+        shell_i = shells[i_y]
+        if shell_i == 0:
+            continue
+        top_k_i = top_k_idx[i_y]
+        w_i = w[i_y]
+        # zero-out the row for y_i
+        w_conv[i_y] = 0
+        w_conv[i_y, top_k_i] = w_i
+
+    w_conv = w_conv[:, :, None, None, None]
+    dwi_target = torch.nn.functional.conv3d(dwi[None], w_conv)
+    dwi_target = dwi_target[0]
+
+    # w = torch.from_numpy(w).to(dwi)
+
+    # top_k_idx = torch.from_numpy(top_k_idx).to(src_bval).long()
+    # # dwi_np = dwi.detach().cpu().numpy()
+    # dwi_target = monai.inferers.sliding_window_inference(
+    #     dwi[None],
+    #     roi_size=(72, 72, 72),
+    #     sw_batch_size=1,
+    #     predictor=lambda dw: torch.from_numpy(
+    #         einops.einsum(
+    #             np.take(dw[0].cpu().numpy(), top_k_idx, axis=0),
+    #             w,
+    #             "i j x y z,i j -> i x y z",
+    #         )
+    #     ).to(dw)[None],
+    #     overlap=0,
+    #     padding_mode="replicate",
+    # )[0]
+    # # Use ein. notation to weight and sum over K closest gradient directions.
+    # dwi_target = einops.einsum(
+    #     torch.take(dwi_np, top_k_idx, axis=0), w, "i j x y z,i j -> i x y z"
+    # )
+    # Re-assign the b0s
+    # b0_mask = torch.from_numpy(np.isclose(y_g, 0.0).all(1)).to(src_bval).bool()
+    # dwi_target[b0_mask] = dwi[b0_mask]
+
+    return dwi_target, target_bvec.to(src_bvec)
+
+
+class ResampleDWItoBvecd(monai.transforms.MapTransform):
+    backend = [
+        monai.utils.enums.TransformBackends.TORCH,
+        monai.utils.enums.TransformBackends.NUMPY,
+    ]
+
+    def __init__(
+        self,
+        dwi_key,
+        src_bvec_key,
+        src_bval_key,
+        target_bvec: torch.Tensor,
+        allow_missing_keys: bool = False,
+    ):
+        keys = [dwi_key]
+        super().__init__(keys, allow_missing_keys)
+        self.dwi_key = dwi_key
+        self.src_bvec_key = src_bvec_key
+        self.src_bval_key = src_bval_key
+        self.target_bvec = target_bvec
+
+    def __call__(self, data: dict) -> dict:
+        d = dict(data)
+        src_bvec = d[self.src_bvec_key]
+        src_bval = d[self.src_bval_key]
+        for k_i, dwi_key in enumerate(self.key_iterator(d)):
+            # We only expect one dwi key to be changed.
+            assert k_i == 0
+            new_dwi, new_bvec = resample_dwi_to_grad_directions(
+                d[dwi_key],
+                src_bvec=src_bvec,
+                src_bval=src_bval,
+                target_bvec=self.target_bvec,
+            )
+
+            d[dwi_key] = new_dwi
+            d[self.src_bvec_key] = new_bvec
+
+        return d
+
+
 def sub_select_dwi_from_bval(
     dwi: torch.Tensor,
     bval: torch.Tensor,
@@ -311,6 +435,14 @@ class HCPfODFINRDataset(monai.data.Dataset):
 
         tfs.append(
             monai.transforms.CastToTyped(("brain_mask", "fivett"), dtype=torch.uint8)
+        )
+        tfs.append(
+            ResampleDWItoBvecd(
+                "dwi",
+                src_bvec_key="bvec",
+                src_bval_key="bval",
+                target_bvec=pitn.data.HCP_STANDARD_3T_BVEC,
+            )
         )
 
         if bval_sub_sample_fn is not None:
@@ -878,6 +1010,8 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         "lr_brain_mask",
         "lr_vox_size",
         "affine_lr_vox2world",
+        "lr_bval",
+        "lr_bvec",
     )
 
     def __init__(
@@ -954,7 +1088,16 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         # Make copies of the patches that will be downsampled.
         feat_tfs.append(
             monai.transforms.CopyItemsd(
-                keys=("dwi", "brain_mask", "fivett", "wm_mask", "gm_mask", "csf_mask"),
+                keys=(
+                    "dwi",
+                    "brain_mask",
+                    "fivett",
+                    "wm_mask",
+                    "gm_mask",
+                    "csf_mask",
+                    "bval",
+                    "bvec",
+                ),
                 times=1,
                 names=(
                     "lr_dwi",
@@ -963,6 +1106,8 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                     "lr_wm_mask",
                     "lr_gm_mask",
                     "lr_csf_mask",
+                    "lr_bval",
+                    "lr_bvec",
                 ),
             )
         )
@@ -1137,9 +1282,7 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
         )
         feat_tfs.append(augment_branch_tf)
 
-        # Remove the bvec and bval, as we may have altered the orientation of the images
-        # and they are no longer correct (and are not used at this time). Also remove
-        # the full resolution DWI as it is not used, for now.
+        # Remove the full resolution DWI as it is not used, for now.
         feat_tfs.append(
             monai.transforms.DeleteItemsd(
                 keys=(
@@ -1195,6 +1338,8 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                     "affine_lr_vox2world",
                     "vox_size",
                     "lr_vox_size",
+                    "lr_bval",
+                    "lr_bvec",
                 )
                 + curr_vol_keys
                 + curr_lr_vol_keys,
@@ -1208,6 +1353,8 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                 "affine_lr_vox2world",
                 "vox_size",
                 "lr_vox_size",
+                "lr_bval",
+                "lr_bvec",
             )
             + curr_vol_keys
             + curr_lr_vol_keys
@@ -1221,6 +1368,8 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                     "lr_vox_size",
                     "fodf",
                     "lr_dwi",
+                    "lr_bval",
+                    "lr_bvec",
                 )
                 + (
                     "brain_mask",
@@ -1229,7 +1378,7 @@ class HCPfODFINRPatchDataset(monai.data.PatchDataset):
                     "csf_mask",
                     "lr_brain_mask",
                 ),
-                dtype=[torch.float32] * 6 + [torch.bool] * 5,
+                dtype=[torch.float32] * 8 + [torch.bool] * 5,
             ),
         )
         if not keep_metatensor_output:
@@ -1261,6 +1410,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
         "lr_brain_mask",
         "lr_vox_size",
         "affine_lr_vox2world",
+        "bval",
+        "bvec",
     )
 
     def __init__(
@@ -1331,7 +1482,16 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
         # Make copies of the vols that will be downsampled.
         feat_tfs.append(
             monai.transforms.CopyItemsd(
-                keys=("dwi", "brain_mask", "fivett", "wm_mask", "gm_mask", "csf_mask"),
+                keys=(
+                    "dwi",
+                    "brain_mask",
+                    "fivett",
+                    "wm_mask",
+                    "gm_mask",
+                    "csf_mask",
+                    "bval",
+                    "bvec",
+                ),
                 times=1,
                 names=(
                     "lr_dwi",
@@ -1340,6 +1500,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
                     "lr_wm_mask",
                     "lr_gm_mask",
                     "lr_csf_mask",
+                    "lr_bval",
+                    "lr_bvec",
                 ),
             )
         )
@@ -1467,6 +1629,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
                 "affine_lr_vox2world",
                 "vox_size",
                 "lr_vox_size",
+                "lr_bval",
+                "lr_bvec",
             )
             + curr_vol_keys
             + curr_lr_vol_keys,
@@ -1483,6 +1647,8 @@ class HCPfODFINRWholeBrainDataset(monai.data.Dataset):
                     "affine_lr_vox2world",
                     "vox_size",
                     "lr_vox_size",
+                    "lr_bval",
+                    "lr_bvec",
                 )
                 + curr_vol_keys
                 + curr_lr_vol_keys,

@@ -136,6 +136,200 @@ class INREncoder(torch.nn.Module):
         return y
 
 
+# Encoding model
+class BvecEncoder(torch.nn.Module):
+    def __init__(
+        self,
+        in_dwi_channels: int,
+        spatial_coord_channels: int,
+        interior_channels: int,
+        out_channels: int,
+        n_res_units: int,
+        n_dense_units: int,
+        activate_fn,
+        post_batch_norm: bool = False,
+    ):
+        super().__init__()
+
+        self.init_kwargs = dict(
+            in_dwi_channels=in_dwi_channels,
+            spatial_coord_channels=spatial_coord_channels,
+            interior_channels=interior_channels,
+            out_channels=out_channels,
+            n_res_units=n_res_units,
+            n_dense_units=n_dense_units,
+            activate_fn=activate_fn,
+            post_batch_norm=post_batch_norm,
+        )
+
+        self.in_dwi_channels = in_dwi_channels
+        self.in_bvec_channels = 3 * self.in_dwi_channels
+        self.pre_carn_in_channels = self.in_dwi_channels + self.in_bvec_channels
+        self.pre_carn_out_channels = self.in_dwi_channels
+
+        self.spatial_coord_channels = spatial_coord_channels
+        self.carn_in_channels = self.pre_carn_out_channels + self.spatial_coord_channels
+
+        self.interior_channels = interior_channels
+        self.out_channels = out_channels
+        self.post_batch_norm = post_batch_norm
+
+        if isinstance(activate_fn, str):
+            activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
+
+        self._activation_fn_init = activate_fn
+        self.activate_fn = activate_fn()
+
+        self.dwi_bvec_rearrange = einops.layers.torch.Rearrange(
+            "b (m n_dwis) x y z -> b (n_dwis m) x y z", m=4
+        )
+        self.pre_carn_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.pre_carn_in_channels,
+                self.in_dwi_channels * 3,
+                kernel_size=1,
+                groups=self.in_dwi_channels,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            # torch.nn.Conv3d(
+            #     self.in_dwi_channels * 3,
+            #     self.in_dwi_channels * 2,
+            #     kernel_size=1,
+            #     groups=self.in_dwi_channels,
+            #     padding="same",
+            #     padding_mode="reflect",
+            # ),
+            # self.activate_fn,
+            torch.nn.Conv3d(
+                self.in_dwi_channels * 3,
+                self.pre_carn_out_channels,
+                kernel_size=1,
+                groups=self.in_dwi_channels,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+        )
+
+        # Pad to maintain the same input shape.
+        self.pre_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.carn_in_channels,
+                self.carn_in_channels,
+                kernel_size=1,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.carn_in_channels,
+                self.interior_channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
+        )
+
+        # Construct the densely-connected cascading layers.
+        # Create n_dense_units number of dense units.
+        top_level_units = list()
+        for _ in range(n_dense_units):
+            # Create n_res_units number of residual units for every dense unit.
+            res_layers = list()
+            for _ in range(n_res_units):
+                res_layers.append(
+                    pitn.nn.layers.ResBlock3dNoBN(
+                        self.interior_channels,
+                        kernel_size=3,
+                        activate_fn=activate_fn,
+                        padding="same",
+                        padding_mode="reflect",
+                    )
+                )
+            top_level_units.append(
+                pitn.nn.layers.DenseCascadeBlock3d(self.interior_channels, *res_layers)
+            )
+
+        # Wrap everything into a densely-connected cascade.
+        self.cascade = pitn.nn.layers.DenseCascadeBlock3d(
+            self.interior_channels, *top_level_units
+        )
+
+        self.post_conv = torch.nn.Sequential(
+            torch.nn.Conv3d(
+                self.interior_channels,
+                self.interior_channels,
+                kernel_size=5,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.Conv3d(
+                self.interior_channels,
+                self.out_channels,
+                kernel_size=3,
+                padding="same",
+                padding_mode="reflect",
+            ),
+            self.activate_fn,
+            torch.nn.ReplicationPad3d((1, 0, 1, 0, 1, 0)),
+            torch.nn.AvgPool3d(kernel_size=2, stride=1),
+            torch.nn.Conv3d(
+                self.out_channels,
+                self.out_channels,
+                kernel_size=1,
+                padding="same",
+                padding_mode="reflect",
+            ),
+        )
+        if self.post_batch_norm:
+            self.output_batch_norm = torch.nn.BatchNorm3d(self.out_channels)
+        else:
+            self.output_batch_norm = torch.nn.Identity()
+
+    def forward(
+        self,
+        x_dwi: torch.Tensor,
+        x_bvec: torch.Tensor,
+        x_spatial_coord: torch.Tensor,
+        x_mask=None,
+    ):
+        # Expand bvec to match the spatial shape of the dwi input.
+        x_bvec = einops.repeat(
+            x_bvec,
+            "b coord n_dwi -> b (coord n_dwi) x y z",
+            coord=3,
+            x=x_dwi.shape[2],
+            y=x_dwi.shape[3],
+            z=x_dwi.shape[4],
+        )
+        # Concat dwi and b-vectors, reduce down to the same number of channels as the
+        # original dwis.
+        x_dwi_reduce = self.dwi_bvec_rearrange(torch.cat([x_dwi, x_bvec], dim=1))
+        if x_mask is not None:
+            x_dwi_reduce *= x_mask
+        y = self.pre_carn_conv(x_dwi_reduce)
+
+        x_spatial_coord = einops.rearrange(
+            x_spatial_coord, "b x y z coord -> b coord x y z"
+        )
+        y = torch.cat([y, x_spatial_coord], dim=1)
+        if x_mask is not None:
+            y *= x_mask
+
+        y = self.pre_conv(y)
+        y = self.activate_fn(y)
+        y = self.cascade(y)
+        y = self.activate_fn(y)
+        y = self.post_conv(y)
+        if self.post_batch_norm:
+            y = self.output_batch_norm(y)
+
+        return y
+
+
 class Decoder(torch.nn.Module):
     def __init__(
         self,
@@ -455,8 +649,8 @@ class SimplifiedDecoder(torch.nn.Module):
         lins.append(activate_cls(inplace=True))
 
         for _ in range(self.n_internal_layers):
-            lins.append(activate_cls(inplace=True))
             lins.append(torch.nn.Linear(self.internal_features, self.internal_features))
+            lins.append(activate_cls(inplace=True))
         lins.append(torch.nn.Linear(self.internal_features, self.out_features))
 
         self.linear_layers = torch.nn.Sequential(*lins)
@@ -678,6 +872,7 @@ class StaticSizeUpsampleEncoder(torch.nn.Module):
         n_res_units: int,
         n_dense_units: int,
         activate_fn,
+        post_batch_norm: bool = False,
     ):
         super().__init__()
 
@@ -690,6 +885,7 @@ class StaticSizeUpsampleEncoder(torch.nn.Module):
             n_dense_units=n_dense_units,
             activate_fn=activate_fn,
             spatial_upscale_factor=spatial_upscale_factor,
+            post_batch_norm=post_batch_norm,
         )
 
         self.upscale_factor = spatial_upscale_factor
@@ -700,6 +896,7 @@ class StaticSizeUpsampleEncoder(torch.nn.Module):
         self.input_coord_channels = input_coord_channels
         self.interior_channels = interior_channels
         self.out_channels = out_channels
+        self.post_batch_norm = post_batch_norm
 
         if isinstance(activate_fn, str):
             activate_fn = pitn.utils.torch_lookups.activation[activate_fn]
@@ -774,12 +971,18 @@ class StaticSizeUpsampleEncoder(torch.nn.Module):
             padding="same",
             padding_mode="reflect",
         )
+        if self.post_batch_norm:
+            self.output_batch_norm = torch.nn.BatchNorm3d(self.interior_channels)
+        else:
+            self.output_batch_norm = torch.nn.Identity()
 
     def forward(self, x: torch.Tensor, upsample=True):
         y = self.pre_conv(x)
         y = self.activate_fn(y)
         y = self.cascade(y)
         y = self.activate_fn(y)
+        if self.post_batch_norm:
+            y = self.output_batch_norm(y)
         if upsample:
             y = self.upsampler(y)
             y = torch.nn.functional.interpolate(

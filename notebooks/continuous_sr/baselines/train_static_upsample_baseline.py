@@ -179,12 +179,12 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "baseline-sr-cnn_split-03"
+p.experiment_name = "baseline-sr-cnn_split-01.1"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = (
-    Path("../data_splits") / "HCP_train-val-test_split_03_seed_871113743.csv"
+    Path("../data_splits") / "HCP_train-val-test_split_01.1.csv"
 )
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
@@ -215,10 +215,10 @@ p.scale_prefilter_kwargs = dict(
 )
 p.train = dict(
     patch_spatial_size=(36, 36, 36),
-    batch_size=6,
-    samples_per_subj_per_epoch=170,
+    batch_size=5,
+    samples_per_subj_per_epoch=110,
     max_epochs=50,
-    dwi_recon_epoch_proportion=0.03,
+    dwi_recon_epoch_proportion=0.001,
     sample_mask_key="wm_mask",
 )
 p.train.augment = dict(
@@ -240,7 +240,7 @@ p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=19, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=15, persistent_workers=True, prefetch_factor=3)
 
 # Network/model parameters.
 p.encoder = dict(
@@ -251,9 +251,11 @@ p.encoder = dict(
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
+    post_batch_norm=True,
 )
 p.decoder = dict(
     in_channels=p.encoder.out_channels,
+    input_coord_channels=False,
     interior_channels=48,
     out_channels=45,
     n_res_units=2,
@@ -723,26 +725,22 @@ try:
     loss_fn = torch.nn.MSELoss(reduction="mean")
     recon_loss_fn = torch.nn.MSELoss(reduction="mean")
 
-    # The datasets will usually produce volumes of different shapes due to the possible
-    # random re-sampling, so the batch must be padded, and the padded masks must be
-    # used to calculate the loss.
-    def _pad_list_data_collate_to_tensor(d, **kwargs):
-        ret = monai.data.utils.pad_list_data_collate(d, **kwargs)
-        return {
-            k: monai.utils.convert_to_tensor(v, track_meta=False)
-            if isinstance(v, monai.data.MetaObj)
-            else v
-            for k, v in ret.items()
-        }
+    collate_fn = partial(
+        pitn.data.datasets2.pad_list_data_collate_update_affines_to_tensor,
+        meta_tensor_key_write_aff_key_pairs=[
+            ("lr_dwi", "affine_lr_vox2world"),
+            ("fodf", "affine_vox2world"),
+        ],
+        method="symmetric",
+        mode="constant",
+    )
 
     train_dataloader = monai.data.DataLoader(
         train_dataset,
         batch_size=p.train.batch_size,
         shuffle=True,
         pin_memory=True,
-        collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
-        ),
+        collate_fn=collate_fn,
         **p.train.dataloader.to_dict(),
     )
     val_dataloader = monai.data.DataLoader(
@@ -750,10 +748,8 @@ try:
         batch_size=1,
         shuffle=True,
         pin_memory=True,
-        num_workers=0,
-        collate_fn=partial(
-            _pad_list_data_collate_to_tensor, method="symmetric", mode="constant"
-        ),
+        num_workers=1,
+        collate_fn=collate_fn,
     )
     train_dataloader, val_dataloader = fabric.setup_dataloaders(
         train_dataloader, val_dataloader
