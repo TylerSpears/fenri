@@ -178,8 +178,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "static-shape_pred_native-res"
-p.model_name = "static-shape_CNN"
+p.model_name = "static-cnn"
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # p.train_val_test_split_file = random.choice(
@@ -187,9 +186,11 @@ p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # )
 p.model_weight_f = str(
     Path(p.results_dir)
-    / "2023-06-22T16_01_59__static-shape-comparison_split-01"
-    / "final_state_dict_epoch_49_step_28351.pt"
+    / "static-cnn"
+    / "2023-07-02T01_44_56"
+    / "best_val_score_state_dict_epoch_46_step_30175.pt"
 )
+p.experiment_name = f"{Path(p.model_weight_f).parent.name}__static-cnn_split-02.1"
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
 # See `sub_select_dwi_from_bval` function in `pitn`.
@@ -207,81 +208,52 @@ p.scale_prefilter_kwargs = dict(
     sigma_scale_coeff=2.5,
     sigma_truncate=4.0,
 )
-p.test.subj_ids = list(
-    map(
-        str,
-        [
-            # holdout subjects that have been processed
-            # 581450,
-            # 126426,
-            # 191336,
-            # 251833,
-            # 581450,
-            # 825048,
-            # # test set subjects
-            # 110613,
-            # 112112,
-            # 123420,
-            # 124422,
-            # 126628,
-            # 129028,
-            # 130013,
-            # 133019,
-            # 134425,
-            # 135225,
-            # 138837,
-            # 139637,
-            # 139839,
-            # 143830,
-            # 144428,
-            # 144933,
-            # 148840,
-            149539,
-            150019,
-            151526,
-            153227,
-            153732,
-            155231,
-            162329,
-            187850,
-            189349,
-            192843,
-            193239,
-            198451,
-            220721,
-            268850,
-            270332,
-            299154,
-            314225,
-            316633,
-            350330,
-            368551,
-            453542,
-            480141,
-            492754,
-            497865,
-            500222,
-            519647,
-            567961,
-            571144,
-            656253,
-            656657,
-            677968,
-            683256,
-            704238,
-            727654,
-            731140,
-            765056,
-            767464,
-            917558,
-            930449,
-            972566,
-            978578,
-            993675,
-            994273,
-        ],
+p.test.subj_ids = sorted(
+    list(
+        map(
+            str,
+            # Holdouts
+            [
+                # Holdouts
+                191336,
+                251833,
+                581450,
+                825048,
+                # Original test set in the split
+                677968,
+                134425,
+                151526,
+                453542,
+                571144,
+                656253,
+                139839,
+                192843,
+                497865,
+                126628,
+                220721,
+                130013,
+                155231,
+                193239,
+                727654,
+                972566,
+                567961,
+                519647,
+                153227,
+                144933,
+                492754,
+                198451,
+                993675,
+                135225,
+                314225,
+                500222,
+                683256,
+                765056,
+                162329,
+            ],
+        )
     )
 )
+
 # Network/model parameters.
 p.encoder = dict(
     spatial_upscale_factor=p.baseline_lr_spacing_scale,
@@ -291,6 +263,7 @@ p.encoder = dict(
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
+    post_batch_norm=True,
 )
 p.decoder = dict(
     in_channels=p.encoder.out_channels,
@@ -404,11 +377,12 @@ print("=" * 10)
 # ## Testing
 
 # %%
-ts = datetime.datetime.now().replace(microsecond=0).isoformat()
+# ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
-ts = ts.replace(":", "_")
-experiment_name = f"{ts}_{p.experiment_name}"
-tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
+# ts = ts.replace(":", "_")
+# experiment_name = f"{ts}_{p.experiment_name}"
+tmp_res_dir = Path(p.model_weight_f).parent.parent / p.experiment_name
+# tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
 # tmp_res_dir = Path(p.tmp_results_dir) / "2023-06-23T11_22_36_static-shape_pred_native-res/static-shape_CNN"
 tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
@@ -457,7 +431,7 @@ try:
         batch_size=1,
         shuffle=False,
         pin_memory=True,
-        num_workers=3,
+        num_workers=5,
         persistent_workers=True,
         prefetch_factor=1,
     )
@@ -544,6 +518,8 @@ try:
                 subprocess.run(
                     [
                         "mrgrid",
+                        "-nthreads",
+                        "2",
                         tmp_pred_f,
                         "regrid",
                         "-template",

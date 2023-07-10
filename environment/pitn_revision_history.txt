@@ -651,3 +651,10 @@
     +starsessions-1.3.0 (conda-forge/noarch)
     +uvicorn-0.22.0 (conda-forge/linux-64)
     +websockets-11.0.3 (conda-forge/linux-64)
+
+2023-07-10 12:08:26  (rev 5)
+     pip  {22.2.2 (conda-forge/noarch) -> 23.1.2 (conda-forge/noarch)}
+
+2023-07-10 12:11:58  (rev 6)
+     seaborn  {0.12.1 (conda-forge/noarch) -> 0.12.2 (conda-forge/noarch)}
+     seaborn-base  {0.12.1 (conda-forge/noarch) -> 0.12.2 (conda-forge/noarch)}

@@ -79,7 +79,7 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import Decoder, INREncoder, SimplifiedDecoder
+from inr_networks import BvecEncoder, Decoder, INREncoder, SimplifiedDecoder
 from natsort import natsorted
 
 import pitn
@@ -122,7 +122,7 @@ if torch.cuda.is_available():
     if "CUDA_PYTORCH_DEVICE_IDX" in os.environ.keys():
         dev_idx = int(os.environ["CUDA_PYTORCH_DEVICE_IDX"])
     else:
-        dev_idx = 1
+        dev_idx = 0
     device = torch.device(f"cuda:{dev_idx}")
     print("CUDA Device IDX ", dev_idx)
     torch.cuda.set_device(device)
@@ -180,7 +180,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.target_vox_spacing = 2.0
+p.target_vox_spacing = 0.427
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # p.train_val_test_split_file = random.choice(
@@ -188,8 +188,8 @@ p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 # )
 p.model_weight_f = str(
     Path(p.tmp_results_dir)
-    / "2023-06-20T03_20_54"
-    / "final_state_dict_epoch_49_step_21701.pt"
+    / "2023-07-01T17_18_04"
+    / "best_val_score_state_dict_epoch_33_step_22471.pt"
 )
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
@@ -203,7 +203,7 @@ p.bval_sub_sample_fn_kwargs = dict(
     },
 )
 # 1.25mm -> 2.0mm
-p.baseline_lr_spacing_scale = 1.89
+p.baseline_lr_spacing_scale = 1.6
 p.scale_prefilter_kwargs = dict(
     sigma_scale_coeff=2.5,
     sigma_truncate=4.0,
@@ -212,7 +212,7 @@ p.test.subj_ids = list(
     map(
         str,
         [
-            581450,
+            825048,
         ],
     )
 )
@@ -225,6 +225,7 @@ p.encoder = dict(
     n_dense_units=3,
     activate_fn="relu",
     input_coord_channels=True,
+    post_batch_norm=True,
 )
 p.decoder = dict(
     context_v_features=96,
@@ -353,9 +354,12 @@ def batchwise_masked_mse(y_pred, y, mask):
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-experiment_name = f"{ts}_inr-pred-test_super-res_blank-ctx_to-2mm_non-init-nets"
+# experiment_name = f"{ts}_inr-"
+experiment_name = (
+    f"{Path(p.model_weight_f).parent.name}_inr_super-res_{p.target_vox_spacing}mm"
+)
 tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
-tmp_res_dir.mkdir(parents=True)
+tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
 model = "INR"
@@ -379,11 +383,11 @@ try:
         in_channels = p.encoder.in_channels
 
     encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
-    # encoder.load_state_dict(encoder_state_dict) #!DEBUG
+    encoder.load_state_dict(encoder_state_dict)
     encoder.to(device)
 
     decoder = SimplifiedDecoder(**p.decoder.to_dict())
-    # decoder.load_state_dict(decoder_state_dict) #!DEBUG
+    decoder.load_state_dict(decoder_state_dict)
     decoder.to(device)
     del (
         system_state_dict,
@@ -397,7 +401,7 @@ try:
     test_dataloader = monai.data.DataLoader(
         test_dataset,
         batch_size=1,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True,
         num_workers=2,
         persistent_workers=True,
@@ -475,14 +479,6 @@ try:
             )
             x = torch.cat([x, x_coords_encoder], dim=1)
             ctx_v = encoder(x)
-            # !DEBUG>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-            meds = torch.median(
-                ctx_v.reshape(ctx_v.shape[1], -1), dim=1
-            ).values.reshape(1, ctx_v.shape[1], 1, 1, 1)
-            ctx_v = (ctx_v * 0) + meds
-
-            # sr_coords = sr_coords * 0
-            # !DEBUG<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
             # Whole-volume inference is memory-prohibitive, so use a sliding
             # window inference method on the encoded volume.
@@ -502,7 +498,7 @@ try:
             # to the GPU.
             pred_fodf = monai.inferers.sliding_window_inference(
                 sr_slide_window.cpu(),
-                roi_size=(96, 96, 96),
+                roi_size=(120, 120, 120),
                 sw_batch_size=batch_size,
                 predictor=lambda q: decoder(
                     # Rearrange back into coord-last format.

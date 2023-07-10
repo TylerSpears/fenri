@@ -173,10 +173,12 @@ p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
 # )
 p.model_weight_f = str(
-    Path(p.tmp_results_dir)
-    / "2023-06-30T15_30_06"
-    / "final_state_dict_epoch_49_step_38501.pt"
+    Path(p.results_dir)
+    / "fenri"
+    / "2023-07-01T22_48_35"
+    / "best_val_score_state_dict_epoch_47_step_30817.pt"
 )
+p.experiment_name = f"{Path(p.model_weight_f).parent.name}_inr-pred-test_split-02.1"
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
 # See `sub_select_dwi_from_bval` function in `pitn`.
@@ -198,69 +200,41 @@ p.test.subj_ids = list(
     map(
         str,
         [
-            # holdout subjects that have been processed
+            # Holdouts
             191336,
             251833,
             581450,
             825048,
-            # test set subjects
-            110613,
-            112112,
-            123420,
-            124422,
-            126628,
-            129028,
-            130013,
-            133019,
+            # Original test set in the split
+            677968,
             134425,
-            135225,
-            138837,
-            139637,
-            139839,
-            143830,
-            144933,
-            148840,
-            149539,
-            150019,
             151526,
-            153227,
-            153732,
-            155231,
-            187850,
-            189349,
-            192843,
-            193239,
-            198451,
-            220721,
-            268850,
-            270332,
-            299154,
-            314225,
-            316633,
-            350330,
-            368551,
             453542,
-            480141,
-            492754,
-            497865,
-            519647,
-            567961,
             571144,
             656253,
-            656657,
-            677968,
-            683256,
-            704238,
+            139839,
+            192843,
+            497865,
+            126628,
+            220721,
+            130013,
+            155231,
+            193239,
             727654,
-            731140,
-            765056,
-            767464,
-            917558,
-            930449,
             972566,
-            978578,
+            567961,
+            519647,
+            153227,
+            144933,
+            492754,
+            198451,
             993675,
-            994273,
+            135225,
+            314225,
+            500222,
+            683256,
+            765056,
+            162329,
         ],
     )
 )
@@ -279,8 +253,8 @@ p.decoder = dict(
     out_features=45,
     m_encode_num_freqs=36,
     sigma_encode_scale=3.0,
-    n_internal_features=280,
-    n_internal_layers=4,
+    n_internal_features=256,
+    n_internal_layers=3,
 )
 
 # If a config file exists, override the defaults with those values.
@@ -356,7 +330,7 @@ with warnings.catch_warnings(record=True) as warn_list:
         transform=pitn.data.datasets2.HCPfODFINRWholeBrainDataset.default_vol_tf(
             baseline_iso_scale_factor_lr_spacing_mm_low_high=p.baseline_lr_spacing_scale,
             scale_prefilter_kwargs=p.scale_prefilter_kwargs,
-            keep_metatensor_output=False,  #!?
+            keep_metatensor_output=False,
         ),
     )
     # test_dataset = monai.data.CacheDataset(
@@ -402,15 +376,16 @@ def batchwise_masked_mse(y_pred, y, mask):
 ts = datetime.datetime.now().replace(microsecond=0).isoformat()
 # Break ISO format because many programs don't like having colons ':' in a filename.
 ts = ts.replace(":", "_")
-experiment_name = f"{ts}_inr-pred-test_resample-bvec_native-res_split-01.1"
-tmp_res_dir = Path(p.tmp_results_dir) / experiment_name
-tmp_res_dir.mkdir(parents=True)
+# experiment_name = f"{ts}_inr-pred-test_resample-bvec_native-res_split-01.1"
+# tmp_res_dir = Path(p.tmp_results_dir) / p.experiment_name
+tmp_res_dir = Path(p.model_weight_f).parent.parent / p.experiment_name
+tmp_res_dir.mkdir(parents=True, exist_ok=True)
 
 # %%
 model = "INR"
 model_pred_res_dir = tmp_res_dir / model
 model_pred_res_dir.mkdir(exist_ok=True)
-with open(model_pred_res_dir / "model_description.txt", "x") as f:
+with open(model_pred_res_dir / "model_description.txt", "a") as f:
     f.write(f"model weights file: {str(p.model_weight_f)}\n")
     f.write(f"encoder parameters: \n{str(p.encoder.to_dict())}\n")
     f.write(f"decoder parameters: \n{str(p.decoder.to_dict())}\n")
@@ -447,7 +422,7 @@ try:
         batch_size=1,
         shuffle=False,
         pin_memory=True,
-        num_workers=3,
+        num_workers=5,
         persistent_workers=True,
         prefetch_factor=1,
     )
@@ -514,7 +489,7 @@ try:
             # to the GPU.
             pred_fodf = monai.inferers.sliding_window_inference(
                 y_slide_window.cpu(),
-                roi_size=(96, 96, 96),
+                roi_size=(112, 112, 112),
                 sw_batch_size=batch_size,
                 predictor=lambda q: decoder(
                     # Rearrange back into coord-last format.

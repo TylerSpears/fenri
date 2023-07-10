@@ -190,12 +190,12 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "test_inr_bvec-resample_fixed-mlp_subj_split-01.1"
+p.experiment_name = "test_inr_bvec-resample_fixed-mlp_subj_split-03.1"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
 p.train_val_test_split_file = (
-    Path("./data_splits") / "HCP_train-val-test_split_01.1.csv"
+    Path("./data_splits") / "HCP_train-val-test_split_03.1.csv"
 )
 # p.train_val_test_split_file = random.choice(
 #     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
@@ -204,9 +204,9 @@ p.aim_logger = dict(
     repo="aim://dali.cpe.virginia.edu:53800",
     experiment="PITN_INR",
     meta_params=dict(run_name=p.experiment_name),
-    tags=("PITN", "INR", "HCP", "super-res", "dMRI"),
+    tags=("PITN", "INR", "HCP", "super-res", "dMRI", "cdmri-2023"),
 )
-p.checkpoint_epoch_ratios = (0.2, 0.33, 0.66)
+p.checkpoint_epoch_ratios = (0.33, 0.5, 0.66)
 ###############################################
 # kwargs for the sub-selection function to go from full DWI -> low-res DWI.
 # See `sub_select_dwi_from_bval` function in `pitn`.
@@ -228,10 +228,8 @@ p.train = dict(
     patch_spatial_size=(36, 36, 36),
     batch_size=6,
     samples_per_subj_per_epoch=110,
-    # samples_per_subj_per_epoch=20, #!DEBUG
     max_epochs=50,
     dwi_recon_epoch_proportion=0.001,
-    # dwi_recon_epoch_proportion=0.01,  #!DEBUG
     sample_mask_key="wm_mask",
 )
 p.train.augment = dict(
@@ -716,7 +714,8 @@ try:
 
     encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
     # Initialize weight shape for the encoder.
-    encoder(torch.randn(1, in_channels, 20, 20, 20))
+    with torch.no_grad():
+        encoder(torch.randn(1, in_channels, 20, 20, 20))
     decoder = SimplifiedDecoder(**p.decoder.to_dict())
 
     decoder = SimplifiedDecoder(**p.decoder.to_dict())
@@ -730,7 +729,8 @@ try:
         input_coord_channels=False,
     )
     # Initialize weight shape for the recon decoder.
-    recon_decoder(torch.randn(1, recon_decoder.in_channels, 20, 20, 20))
+    with torch.no_grad():
+        recon_decoder(torch.randn(1, recon_decoder.in_channels, 20, 20, 20))
     fabric.print(p.to_dict())
     fabric.print(encoder)
     fabric.print(decoder)
@@ -1011,6 +1011,7 @@ try:
                 val_viz_subj_id=val_viz_subj_id,
             )
             curr_val_score = val_scores.detach().cpu().mean().item()
+            fabric.print(str(curr_val_score))
         fabric.barrier()
 
         # Start saving best performing models if the previous best val score was
