@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import torch
 
+# From <https://wiki.humanconnectome.org/display/PublicData/Gradient+Vector+Direction+table+for+HCP+3T+dMRI>
+# <https://wiki.humanconnectome.org/download/attachments/88901015/HCP_Diffusion_Vectors.txt?version=1&modificationDate=1484832206965&api=v2>
 # Gradient direction table for Human Connectome Project (HCP) dMRI (WU-Minn
 # consortium). Each table acquired once with right-to-left and left-to-right
 # phase encoding polarities, using the CMRR multiband diffusion sequence,

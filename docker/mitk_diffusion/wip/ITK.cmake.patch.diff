@@ -1,0 +1,6 @@
+59,60c59,60
+<      GIT_REPOSITORY https://github.com/MITK/ITK.git
+<      GIT_TAG v5.3.0-patched
+---
+>      GIT_REPOSITORY https://github.com/InsightSoftwareConsortium/ITK.git
+>      GIT_TAG v5.4rc01

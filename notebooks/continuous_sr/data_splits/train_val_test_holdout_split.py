@@ -36,7 +36,7 @@ HOLDOUTS = {
         "581450",
         "251833",
         "191336",
-        "601127",
+        # "601127",
         "126426",
         "859671",
         "525541",
@@ -141,12 +141,12 @@ def gen_train_val_test_holdout_split(subjs_table_path, seed=None):
         },
     }
 
-    n_train_3t_nqca = 15
-    n_train_3t_qca = 5
-    n_val_3t_nqca = 4
-    n_val_3t_qca = 1
-    n_test_3t_nqca = 50
-    n_test_3t_qca = 10
+    n_train_3t_nqca = 35
+    n_train_3t_qca = 0
+    n_val_3t_nqca = 5
+    n_val_3t_qca = 0
+    n_test_3t_nqca = 20
+    n_test_3t_qca = 5
 
     reduced_3t_nqca = subjs_3t_nqca.copy()
     reduced_3t_qca = subjs_3t_qca.copy()
