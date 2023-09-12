@@ -15,6 +15,7 @@ boto3==1.24.59
 botocore==1.27.59
 chart-studio==1.1.0
 colorama==0.4.4
+dmipy==1.0.5
 docutils==0.16
 equinox==0.10.4
 fastapi==0.67.0

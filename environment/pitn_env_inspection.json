@@ -4513,6 +4513,50 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "dmipy",
+        "version": "1.0.5",
+        "platform": [
+          "OS Independent"
+        ],
+        "summary": "dmipy: diffusion microstructure imaging in python",
+        "description_content_type": "text/markdown",
+        "home_page": "https://github.com/AthenaEPI/dmipy",
+        "author": "Rutger Fick",
+        "author_email": "fick.rutger@gmail.com",
+        "maintainer": "Rutger Fick",
+        "maintainer_email": "fick.rutger@gmail.com",
+        "classifier": [
+          "Development Status :: 3 - Alpha",
+          "Environment :: Console",
+          "Intended Audience :: Science/Research",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python",
+          "Topic :: Scientific/Engineering"
+        ],
+        "requires_dist": [
+          "pathlib",
+          "boto",
+          "cvxpy",
+          "dipy",
+          "scipy (==1.4.1)",
+          "numpy (>=1.13)"
+        ]
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/dmipy-1.0.5.dist-info",
+      "direct_url": {
+        "url": "https://github.com/AthenaEPI/dmipy.git",
+        "vcs_info": {
+          "vcs": "git",
+          "commit_id": "459f77f19864cfac3ffc4d68277344baa51e34d2"
+        }
+      },
+      "installer": "pip",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "docker",
         "version": "5.0.3",
         "summary": "A Python library for the Docker Engine API.",
