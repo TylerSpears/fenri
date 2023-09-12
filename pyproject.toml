@@ -39,4 +39,11 @@ exclude = '''
 filterwarnings = [
   'ignore::DeprecationWarning:monai',
   'ignore::DeprecationWarning:docker',
-] 
+]
+
+[tool.pyright]
+exclude =  [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.ipynb_checkpoints"
+]
