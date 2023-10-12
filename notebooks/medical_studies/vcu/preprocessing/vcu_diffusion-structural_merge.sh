@@ -13,6 +13,8 @@ export OMP_NUM_THREADS=$N_PROCS
 
 FS_LESION_LABEL="99"
 DWI_MASK_INTERP_PV_THRESH="0.1"
+OUTLIER_CORRECT_UPPER_Q="0.9"
+OUTLIER_CORRECT_SHELL_RADIUS="5"
 LUT="${FREESURFER_HOME}/luts/FreeSurferColorLUT.txt"
 
 dwi_src_dir="${SUBJ_ROOT_DIR}/diffusion/preproc/09_final"
@@ -87,6 +89,16 @@ mrtransform -info \
         "$dwi_mask"
 
 # 4. Transform the anatomical volumes to the diffusion data.
+# Used to mask the anatomical images in dwi-space.
+diff_space_mask_strict="${tmp_dir}/anat_mask_dwi-space.nii.gz"
+mrtransform -force -info \
+    "$anat_mask" \
+    -linear "$anat2dwi_tf_mrtrix" \
+    -template "$mean_b0" \
+    -strides "$strides_vol" \
+    -interp nearest \
+    "$diff_space_mask_strict"
+
 # t1 volumes can just be directly transformed to diffusion space.
 vol_f="${anat_dir}/t1w_brain.nii.gz"
 out_f="${dwi_out_dir}/t1w_reg-dwi.nii.gz"
@@ -98,23 +110,14 @@ out_f="${dwi_out_dir}/t1w_reg-dwi.nii.gz"
     --interpolation BSpline \
     --output "$out_f"
 # Correct overshoot/undershoot from registration interpolation.
-vol_min=$(mrstats "$vol_f" -output min)
+# vol_min=$(mrstats "$vol_f" -output min)
+vol_min=0
 vol_max=$(mrstats "$vol_f" -output max)
 mrcalc -force -info \
-    "$out_f" $vol_min -max $vol_max -min "$out_f"
+    "$out_f" $vol_min -max $vol_max -min "$diff_space_mask_strict" -mult "$out_f"
 
 # T2 and FLAIR must include the native->T1 transform, as well.
-# Used to mask the T2 and FLAIR in dwi-space.
 anat_preproc_src_dir="${SUBJ_ROOT_DIR}/freesurfer/pre_freesurfer"
-diff_space_mask_strict="${tmp_dir}/anat_mask_dwi-space.nii.gz"
-mrtransform -force -info \
-    "$anat_mask" \
-    -linear "$anat2dwi_tf_mrtrix" \
-    -template "$mean_b0" \
-    -strides "$strides_vol" \
-    -interp nearest \
-    "$diff_space_mask_strict"
-
 # t2w
 vol_f="${anat_preproc_src_dir}/03_denoise/t2w_n4_denoise.nii.gz"
 out_f="${dwi_out_dir}/t2w_reg-dwi.nii.gz"
@@ -128,7 +131,8 @@ native_anat2t1w_tf_ants="${anat_preproc_src_dir}/02_reg_t1/t2_reg_t1_0GenericAff
     --output "$out_f"
 # Correct overshoot/undershoot from registration interpolation, and also mask
 # the diffusion-registered anatomical image.
-vol_min=$(mrstats "$vol_f" -output min)
+# vol_min=$(mrstats "$vol_f" -output min)
+vol_min=0
 vol_max=$(mrstats "$vol_f" -output max)
 mrcalc -info \
     "$out_f" $vol_min -max $vol_max -min "$diff_space_mask_strict" -mult - |
@@ -150,11 +154,12 @@ native_anat2t1w_tf_ants="${anat_preproc_src_dir}/02_reg_t1/flair_reg_t1_0Generic
     --output "$out_f"
 # Correct overshoot/undershoot from registration interpolation, and also mask
 # the diffusion-registered anatomical image.
-vol_min=$(mrstats "$vol_f" -output min)
+# vol_min=$(mrstats "$vol_f" -output min)
+vol_min=0
 vol_max=$(mrstats "$vol_f" -output max)
-mrcalc -info \
+mrcalc \
     "$out_f" $vol_min -max $vol_max -min "$diff_space_mask_strict" -mult - |
-    mrconvert -force -info \
+    mrconvert -force \
         - \
         -strides "$strides_vol" \
         "$out_f"
@@ -173,7 +178,7 @@ for seg_src in "$anat_roi_dir"/*; do
     mkdir --parents "$seg_roi_dir_dwi_space"
 
     segment_map_dwi_space="${dwi_roi_dir}/${segname}/${segname}.nii.gz"
-    mrtransform -force -info \
+    mrtransform -force -quiet \
         "$segment_map_anat_space" \
         -linear "$anat2dwi_tf_mrtrix" \
         -template "$mean_b0" \
@@ -243,12 +248,12 @@ mrtransform -force -info \
     "$out_lesion_mask"
 
 # 6. Apply the improved dwi mask onto the dwi itself, and all derived parameter maps.
-mrcalc -info \
+mrcalc \
     "${dwi_src_dir}/${SUBJ_ID}_dwi.nii.gz" \
     "$dwi_mask" \
     -mult \
     - |
-    mrconvert -info \
+    mrconvert \
         - \
         -strides "$strides_vol" \
         "${dwi_out_dir}/${SUBJ_ID}_dwi.nii.gz" \
@@ -292,19 +297,44 @@ for param_group in "$src_param_maps"/*; do
                 vol_name="wm-Watson-bundle_odi.nii.gz"
                 ;;
             esac
-            echo
         fi
 
-        mrcalc -info \
+        mrcalc -quiet \
             "$vol" \
             "$dwi_mask" \
             -mult \
             - |
-            mrconvert -info \
+            mrconvert -quiet \
                 - \
                 -strides "$strides_vol" \
                 "${group_out}/${vol_name}" \
                 -force
+
+        echo "${group_out}/${vol_name}"
+        # Run outlier correction for some of the DTI and DKI parameter maps.
+        if [ "$group_name" == "dti" ] || [ "$group_name" == "dki" ]; then
+            if [[ "$vol_name" == *"ad."* ]] ||
+                [[ "$vol_name" == *"fa."* ]] ||
+                [[ "$vol_name" == *"md."* ]] ||
+                [[ "$vol_name" == *"rd."* ]] ||
+                [[ "$vol_name" == *"k_max."* ]] ||
+                [[ "$vol_name" == *"axonal_water_fract"* ]] ||
+                [[ "$vol_name" == *"mean_kurtosis."* ]]; then
+                    echo "========Correcting outer skull & dura outlier voxels ${group_name}:${vol_name}"
+                    "${SCRIPT_DIR}/correct_outliers_skull.py" \
+                        -p "${group_out}/${vol_name}" \
+                        -m "$dwi_mask" \
+                        -t \
+                        "${fivett_seg_dir}/roi_masks/cortical_gray_matter.nii.gz" \
+                        "${fivett_seg_dir}/roi_masks/sub-cortical_gray_matter.nii.gz" \
+                        "${fivett_seg_dir}/roi_masks/white_matter.nii.gz" \
+                        "$out_lesion_mask" \
+                        -o "${group_out}/${vol_name}" \
+                        -u $OUTLIER_CORRECT_UPPER_Q \
+                        -r $OUTLIER_CORRECT_SHELL_RADIUS
+            fi
+        fi
+
     done
 done
 
@@ -312,7 +342,10 @@ done
 code_dir="${SUBJ_ROOT_DIR}/code"
 mkdir --parents "$code_dir"
 cp --archive --update "$(realpath "$0")" "$code_dir/"
-cp --archive --update "${SCRIPT_DIR}/"*parameter_maps.* "${SCRIPT_DIR}/vcu_preproc.py" "$code_dir/"
+cp --archive --update "${SCRIPT_DIR}/"*parameter_maps.* \
+    "${SCRIPT_DIR}/vcu_preproc.py" \
+    "${SCRIPT_DIR}/correct_outliers_skull.py" \
+    "$code_dir/"
 
 # Delete the tmp directory.
 rm -rvf "$tmp_dir"
