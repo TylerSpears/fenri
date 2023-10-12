@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from typing import Optional, Tuple, Union
+import collections
+from typing import NamedTuple, Optional, Tuple, Union
 
 import einops
 import numpy as np
@@ -8,6 +9,48 @@ import torch
 import torch.nn.functional as F
 
 import pitn
+
+
+class AffineSpace(NamedTuple):
+    affine: torch.Tensor
+    fov_bb_coords: torch.Tensor
+
+
+class AffineVoxReal(NamedTuple):
+    vol_vox: torch.Tensor
+    affine_vox2real: torch.Tensor
+    fov_real: torch.Tensor
+
+
+def fov_bb_coords_from_vox_shape(
+    affine_homog: torch.Tensor,
+    vox_vol: Optional[torch.Tensor] = None,
+    shape: Optional[Tuple[int, ...]] = None,
+) -> torch.Tensor:
+    fov_shape: Tuple[int, ...]
+    if shape is not None and vox_vol is None:
+        if len(shape) == 4:
+            shape = shape[1:]
+        fov_shape = tuple([int(s) for s in shape])
+    elif shape is None and vox_vol is not None:
+        if vox_vol.ndim == 4:
+            vox_shape = tuple(vox_vol.shape[1:])
+        else:
+            vox_shape = tuple(vox_vol.shape)
+        fov_shape = tuple([int(s) for s in vox_shape])
+    else:
+        raise RuntimeError()
+
+    if len(fov_shape) != (affine_homog.shape[-1] - 1):
+        raise RuntimeError()
+
+    # Convert to 0-based voxel indexing.
+    fov_end_points = torch.Tensor(fov_shape).to(affine_homog) - 1
+    edge_points = torch.stack([torch.zeros_like(fov_end_points), fov_end_points], dim=0)
+
+    bb_coords = transform_coords(edge_points, affine_homog)
+
+    return bb_coords
 
 
 def affine_coordinate_grid(

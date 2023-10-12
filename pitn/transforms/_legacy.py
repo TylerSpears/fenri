@@ -25,42 +25,6 @@ from pitn._lazy_loader import LazyLoader
 
 scipy = LazyLoader("scipy", globals(), "scipy")
 nib = LazyLoader("nib", globals(), "nibabel")
-joblib = LazyLoader("joblib", globals(), "joblib")
-
-
-def fit_dti(
-    dwi: np.ndarray,
-    bvals: np.ndarray,
-    bvecs: np.ndarray,
-    fit_method: str,
-    mask: np.ndarray = None,
-    **tensor_model_kwargs,
-) -> np.ndarray:
-
-    gradient_table = dipy.core.gradients.gradient_table_from_bvals_bvecs(
-        bvals=bvals,
-        bvecs=bvecs,
-    )
-
-    tensor_model = dipy.reconst.dti.TensorModel(
-        gradient_table, fit_method=fit_method, **tensor_model_kwargs
-    )
-    # dipy does not like the channels being first, apparently.
-    if mask is not None:
-        dti = tensor_model.fit(
-            np.moveaxis(dwi, 0, -1),
-            mask=mask.squeeze().astype(bool),
-        )
-    else:
-        dti = tensor_model.fit(np.moveaxis(dwi, 0, -1))
-
-    # Pull only the lower-triangular part of the DTI (the non-symmetric
-    # coefficients.)
-    # Do it all in one line to minimize the time that the DTI's have to be
-    # duplicated in memory.
-    dti = np.moveaxis(dti.lower_triangular().astype(np.float32), -1, 0)
-
-    return dti
 
 
 class BinaryDilate(Transform):
