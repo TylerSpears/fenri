@@ -15,7 +15,7 @@ set -eou pipefail
 # The HCP and ismrm T1 images have their x-axes flipped, so the registration target
 # image needs to be flipped before registration. This flips the simulated T1w image
 # created for ISMRM.
-mrtransform ../lps_ismrm-2015_t1w.nii.gz -flip 0 rps_ismrm-2015_t1w.nii.g
+mrtransform ../lps_ismrm-2015_t1w.nii.gz -flip 0 rps_ismrm-2015_t1w.nii.gz
 
 # Register the HCP T1w to the ismrm T1w. They are from the same person, but the sim t1
 # is centered differently.
