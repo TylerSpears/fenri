@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional, Tuple, TypedDict, Union
 
 import einops
+import monai
 import nibabel as nib
 import numpy as np
 import pandas as pd
@@ -32,6 +33,7 @@ class SuperResLRFRSample(TypedDict):
     lr_fov_coords: torch.Tensor
     lr_dwi: torch.Tensor
     grad_table: np.ndarray
+    affine_vox2real: torch.Tensor
     full_res_real_coords: torch.Tensor
     full_res_spacing: Tuple[float, ...]
     full_res_fov_coords: torch.Tensor
@@ -257,6 +259,19 @@ class _BatchVoxRealAffineSpace(NamedTuple):
     fov_bb_real: torch.Tensor
 
 
+def pad_list_data_collate_tensor(batch, *args, **kwargs):
+    """Wrapper around monai's `pad_list_data_collate` that maintains Tensor objects."""
+    ret = monai.data.utils.pad_list_data_collate(batch, *args, **kwargs)
+
+    keys = tuple(ret.keys())
+    for k in keys:
+        v = ret[k]
+        if isinstance(v, monai.data.MetaObj):
+            ret[k] = monai.utils.convert_to_tensor(v, track_meta=False)
+
+    return ret
+
+
 def _crop_lr_inside_smallest_lr(
     lr_vox_vol: torch.Tensor,
     affine_lr_vox2real: torch.Tensor,
@@ -319,10 +334,29 @@ def _crop_frs_inside_lr(
         lr_fov_bb_coords, affine_real2fr_vox
     )
 
-    crop_low = lr_fov_in_fr_vox_space[0] - fr_fov_in_fr_vox_space[0]
-    crop_low = torch.clip(torch.ceil(crop_low), min=0, max=torch.inf).int().tolist()
-    crop_high = fr_fov_in_fr_vox_space[1] - lr_fov_in_fr_vox_space[1]
-    crop_high = torch.clip(torch.ceil(crop_high), min=0, max=torch.inf).int().tolist()
+    EPSILON_FOV_DIFF = 1e-4
+    diff_fov_low = lr_fov_in_fr_vox_space[0] - fr_fov_in_fr_vox_space[0]
+    # If the fr and lr fovs are aligned within some epsilon, then the fr should be
+    # cropped by at least one to prevent numerical errors with indexing later.
+    diff_fov_low = torch.where(
+        torch.isclose(
+            diff_fov_low, diff_fov_low.round(), atol=EPSILON_FOV_DIFF, rtol=0
+        ),
+        diff_fov_low + 0.51,
+        diff_fov_low,
+    )
+    crop_low = torch.clip(torch.ceil(diff_fov_low), min=0, max=torch.inf).int().tolist()
+    diff_fov_high = fr_fov_in_fr_vox_space[1] - lr_fov_in_fr_vox_space[1]
+    diff_fov_high = torch.where(
+        torch.isclose(
+            diff_fov_high, diff_fov_high.round(), atol=EPSILON_FOV_DIFF, rtol=0
+        ),
+        diff_fov_high + 0.51,
+        diff_fov_high,
+    )
+    crop_high = (
+        torch.clip(torch.ceil(diff_fov_high), min=0, max=torch.inf).int().tolist()
+    )
 
     crops_low_high = [(crop_low[i], crop_high[i]) for i in range(len(crop_low))]
 
@@ -343,13 +377,14 @@ def _crop_frs_inside_lr(
     )
 
 
-def preproc_super_res_patch_sample(
+def preproc_super_res_sample(
     super_res_sample_dict: PreprocedSuperResSubjDict,
     downsample_factor_range: Tuple[float, float],
     noise_snr_range: Optional[Tuple[float, float]],
     rng: Union[str, torch.Generator] = "default",
     prefilter_sigma_scale_coeff: float = 2.5,
     prefilter_sigma_truncate: float = 4.0,
+    manual_crop_lr_sides: Optional[Tuple[Tuple[int, int], ...]] = None,
 ) -> SuperResLRFRSample:
 
     if rng == "default":
@@ -358,12 +393,12 @@ def preproc_super_res_patch_sample(
         state_rng = rng.get_state()
     rng_fork = torch.Generator()
     rng_fork.set_state(state_rng)
-    print(
-        f"{torch.utils.data.get_worker_info().id}: {rng_fork.get_state().float().mean()}",
-        flush=True,
-    )
+    # print(
+    #     f"{torch.utils.data.get_worker_info().id}: {rng_fork.get_state().float().mean()}",
+    #     flush=True,
+    # )
 
-    affine_fr_vox2real = super_res_sample_dict["affine_vox2real"]
+    affine_fr_vox2real = super_res_sample_dict["affine_vox2real"].to(torch.float64)
     fr_spacing = np.array(
         nib.affines.voxel_sizes(affine_fr_vox2real.detach().cpu().numpy())
     )
@@ -420,6 +455,17 @@ def preproc_super_res_patch_sample(
         affine_lr_vox2real = lr_space.affine_vox2real
         lr_fov_coords = lr_space.fov_bb_real
 
+    # Allow for forced cropping of LR, useful for whole-volume processing with a fixed
+    # downsampling factor, which would usually result in NaNs on the edge(s).
+    if manual_crop_lr_sides is not None:
+        crops_low_high = manual_crop_lr_sides
+        lr_dwi, affine_lr_vox2real = ptf.crop_vox(
+            lr_dwi, affine_lr_vox2real, *crops_low_high
+        )
+        lr_fov_coords = pitn.affine.fov_bb_coords_from_vox_shape(
+            affine_lr_vox2real, vox_vol=lr_dwi
+        )
+
     # Add Rician noise to downsampled patch.
     if noise_snr_range is not None:
         snr_min = float(noise_snr_range[0])
@@ -453,21 +499,24 @@ def preproc_super_res_patch_sample(
     # Generate coordinates for both full-res and low-res spaces.
     lr_real_coords = ptf.fov_coord_grid(lr_fov_coords, affine_lr_vox2real)
     fr_real_coords = ptf.fov_coord_grid(fr_bb_coords, affine_fr_vox2real)
-    # Collate function needs channel-first tensors.
+    # Collate function needs coordinate/channel-first tensors. Reshaping to
+    # coordinate-first tensors will need to be done in the training loop, after sampling
+    # from the DataLoader.
     lr_real_coords = einops.rearrange(lr_real_coords, "i j k coord -> coord i j k")
     fr_real_coords = einops.rearrange(fr_real_coords, "i j k coord -> coord i j k")
 
     out_dict = SuperResLRFRSample(
         subj_id=super_res_sample_dict["subj_id"],
-        affine_lr_vox2real=affine_lr_vox2real,
-        lr_real_coords=lr_real_coords,
+        affine_lr_vox2real=affine_lr_vox2real.to(torch.float32),
+        lr_real_coords=lr_real_coords.to(torch.float32),
         lr_spacing=lr_spacing,
-        lr_fov_coords=lr_fov_coords,
+        lr_fov_coords=lr_fov_coords.to(torch.float32),
         lr_dwi=lr_dwi,
         grad_table=super_res_sample_dict["grad_table"].to_numpy(),  # must be ndarray
-        full_res_real_coords=fr_real_coords,
+        affine_vox2real=affine_fr_vox2real.to(torch.float32),
+        full_res_real_coords=fr_real_coords.to(torch.float32),
         full_res_spacing=fr_spacing,
-        full_res_fov_coords=fr_bb_coords,
+        full_res_fov_coords=fr_bb_coords.to(torch.float32),
         **{fr_vol_keys[i]: fr_vols[i] for i in range(len(fr_vols))},
     )
 

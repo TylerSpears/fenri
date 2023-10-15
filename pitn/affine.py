@@ -22,6 +22,18 @@ class AffineVoxReal(NamedTuple):
     fov_real: torch.Tensor
 
 
+def inv_affine(homog_aff: torch.Tensor, rounding_decimals: Optional[int] = 8):
+    a = homog_aff
+    a_inv = torch.linalg.inv(a)
+    # Clean up any numerical instability artifacts.
+    if rounding_decimals is not None:
+        a_inv.round_(decimals=rounding_decimals)
+    a_inv[..., -1, -1] = 1.0
+    a_inv[..., -1, :-1] = 0.0
+
+    return a_inv
+
+
 def fov_bb_coords_from_vox_shape(
     affine_homog: torch.Tensor,
     vox_vol: Optional[torch.Tensor] = None,
@@ -292,7 +304,7 @@ def sample_vol(
     grid_coords = torch.flip(grid_coords, dims=(-1,))
     samples = F.grid_sample(
         v,
-        grid=grid_coords,
+        grid=grid_coords.to(v),
         mode=mode,
         padding_mode=padding_mode,
         align_corners=align_corners,

@@ -727,6 +727,178 @@ class SimplifiedDecoder(torch.nn.Module):
     def forward(
         self,
         context_v: torch.Tensor,
+        context_real_coords: torch.Tensor,
+        query_real_coords: torch.Tensor,
+        query_coords_mask: torch.Tensor,
+        affine_context_vox2real: torch.Tensor,
+        context_spacing: torch.Tensor,
+        query_spacing: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size = context_v.shape[0]
+        q_orig_shape = tuple(query_real_coords.shape)
+        # All coords and coord grids must be *coordinate-last* format (similar to
+        # channel-last).
+        q_world = einops.rearrange(
+            query_real_coords, "b ... c -> b (...) c", b=batch_size, c=3
+        )
+        n_q_per_batch = q_world.shape[1]
+        # Input query coord mask should be b x y z 1
+        q_mask = einops.rearrange(query_coords_mask, "b ... 1 -> b (...) 1").bool()
+        # Replace each unmasked (i.e., invalid) query point by a dummy point, in this
+        # case a point from roughly the middle of each batch of query points, which
+        # should be as safe as possible from being out of bounds wrt the context vox
+        # indices.
+        dummy_q_world = q_world[:, (n_q_per_batch // 2)]
+        dummy_q_world.unsqueeze_(1)
+        # Replace all unmasked q world coords with the dummy coord.
+        q_world = torch.where(q_mask, q_world, dummy_q_world)
+        # torch.linalg.solve(x_affine_vox2real, torch.cat([x_coords, x_coords.new_ones((2, 18, 18, 18, 1))], dim=-1).reshape(2, -1, 4).movedim(1, -1), left=True)
+        q_world_homog = torch.cat(
+            [q_world, q_world.new_ones(q_world.shape[0], q_world.shape[1], 1)], dim=-1
+        )
+        q_world_homog = einops.rearrange(q_world_homog, "b v c -> b c v")
+        # Cast both coordinates and affines to 64-bit precision, then truncate back to
+        # single precision.
+        q_ctx_vox = (
+            torch.linalg.solve(
+                affine_context_vox2real.to(torch.float64),
+                q_world_homog.to(torch.float64),
+                left=True,
+            )
+            .round(decimals=6)
+            .to(torch.float32)
+        )
+        q_ctx_vox = einops.rearrange(q_ctx_vox[..., :-1, :], "b c v -> b v c")
+        # If a coordinate is on the edge of the input grid, then the affine transform
+        # may introduce numerical errors that bring it out of bounds. So, for those
+        # points at the edge that are sufficiently close to the edge, just clamp
+        # those values. Also, if there are true out-of-bounds coordinates, allow those
+        # through.
+        min_q_vox = q_ctx_vox.new_zeros(1)
+        max_q_vox = torch.as_tensor(context_v.shape[2:]).reshape(1, 1, -1).to(q_ctx_vox)
+        q_ctx_vox_clamped = torch.clamp(q_ctx_vox, min=min_q_vox, max=max_q_vox)
+        tol_vox_coord = 1e-5
+        q_ctx_vox = torch.where(
+            (q_ctx_vox != q_ctx_vox_clamped)
+            & (torch.abs(q_ctx_vox - q_ctx_vox_clamped) < tol_vox_coord),
+            q_ctx_vox_clamped,
+            q_ctx_vox,
+        )
+        del q_world_homog, dummy_q_world, q_ctx_vox_clamped
+        # affine_ctx_real2vox = pitn.affine.inv_affine(
+        #     affine_context_vox2real, rounding_decimals=6
+        # )
+        # affine_world2ctx_vox = torch.linalg.inv(affine_context_vox2world)
+        # Transform query real-space coordinates into context voxel coordinates.
+        # q_ctx_vox = pitn.affine.transform_coords(q_world, affine_ctx_real2vox)
+        q_ctx_vox_bottom = q_ctx_vox.floor().long()
+        # The vox coordinates are not broadcast over every batch (like they are over
+        # every channel), so we need a batch idx to associate each sub-grid voxel with
+        # the appropriate batch index.
+        batch_vox_idx = einops.repeat(
+            torch.arange(
+                batch_size,
+                dtype=q_ctx_vox_bottom.dtype,
+                device=q_ctx_vox_bottom.device,
+            ),
+            "batch -> batch n",
+            n=n_q_per_batch,
+        )
+        q_sub_grid_coord = q_ctx_vox - q_ctx_vox_bottom.to(q_ctx_vox)
+        # q_bottom_in_world_coord = pitn.affine.transform_coords(
+        #     q_ctx_vox_bottom.to(affine_context_vox2world), affine_context_vox2world
+        # )
+
+        y_weighted_accumulate = None
+        # Build the low-res representation one sub-grid voxel index at a time.
+        # Each sub-grid is a [0, 1] voxel coordinate system local to the query point,
+        # where the origin is the context voxel that is "lower" in all dimensions
+        # than the query coordinate.
+        # The indicators specify if the current voxel index that surrounds the
+        # query coordinate should be "off  or not. If not, then
+        # the center voxel (read: no voxel offset from the center) is selected
+        # (for that dimension).
+        sub_grid_offset_ijk = q_ctx_vox_bottom.new_zeros(1, 1, 3)
+        for (
+            corner_offset_i,
+            corner_offset_j,
+            corner_offset_k,
+        ) in itertools.product((0, 1), (0, 1), (0, 1)):
+            # Rebuild indexing tuple for each element of the sub-window
+            sub_grid_offset_ijk[..., 0] = corner_offset_i
+            sub_grid_offset_ijk[..., 1] = corner_offset_j
+            sub_grid_offset_ijk[..., 2] = corner_offset_k
+            sub_grid_index_ijk = q_ctx_vox_bottom + sub_grid_offset_ijk
+
+            sub_grid_context_v = context_v[
+                batch_vox_idx.flatten(),
+                :,
+                sub_grid_index_ijk[..., 0].flatten(),
+                sub_grid_index_ijk[..., 1].flatten(),
+                sub_grid_index_ijk[..., 2].flatten(),
+            ]
+            sub_grid_context_v = einops.rearrange(
+                sub_grid_context_v,
+                "(b n) channels -> b channels n",
+                b=batch_size,
+                n=n_q_per_batch,
+            )
+            assert (sub_grid_index_ijk >= 0).all()
+            sub_grid_context_real_coords = context_real_coords[
+                batch_vox_idx.flatten(),
+                sub_grid_index_ijk[..., 0].flatten(),
+                sub_grid_index_ijk[..., 1].flatten(),
+                sub_grid_index_ijk[..., 2].flatten(),
+                :,
+            ]
+            sub_grid_context_real_coords = einops.rearrange(
+                sub_grid_context_real_coords,
+                "(b n) coords -> b n coords",
+                b=batch_size,
+                n=n_q_per_batch,
+            )
+
+            sub_grid_pred_ijk = self.sub_grid_forward(
+                context_v=sub_grid_context_v,
+                context_world_coord=sub_grid_context_real_coords,
+                query_world_coord=q_world,
+                query_sub_grid_coord=q_sub_grid_coord,
+                query_world_coord_mask=q_mask,
+                context_sub_grid_coord=sub_grid_offset_ijk,
+            )
+            # Initialize the accumulated prediction after finding the
+            # output size; easier than trying to pre-compute the shape.
+            if y_weighted_accumulate is None:
+                y_weighted_accumulate = torch.zeros_like(sub_grid_pred_ijk)
+
+            sub_grid_offset_ijk_compliment = torch.abs(1 - sub_grid_offset_ijk)
+            sub_grid_context_vox_coord_compliment = (
+                q_ctx_vox_bottom + sub_grid_offset_ijk_compliment
+            )
+            w_sub_grid_cube_ijk = torch.abs(
+                sub_grid_context_vox_coord_compliment - q_ctx_vox
+            )
+            # Each coordinate difference is a side of the cube, so find the volume.
+            w_ijk = einops.reduce(
+                w_sub_grid_cube_ijk, "b n coord -> b 1 n", reduction="prod"
+            )
+
+            # Accumulate weighted cell predictions to eventually create
+            # the final prediction.
+            y_weighted_accumulate += w_ijk * sub_grid_pred_ijk
+
+        y = y_weighted_accumulate
+
+        out_channels = y.shape[1]
+        # Reshape prediction to match the input query coordinates spatial shape.
+        q_in_within_batch_samples_shape = q_orig_shape[1:-1]
+        y = y.reshape(*((batch_size, out_channels) + q_in_within_batch_samples_shape))
+
+        return y
+
+    def _legacy_forward(
+        self,
+        context_v: torch.Tensor,
         context_world_coord_grid: torch.Tensor,
         query_world_coord: torch.Tensor,
         query_world_coord_mask: torch.Tensor,

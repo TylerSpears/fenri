@@ -326,6 +326,35 @@ def distance_transform_mask(
     return torch.from_numpy(dt).to(device=m.device).expand_as(m).to(torch.float64)
 
 
+def prefilter_gaussian_blur(
+    vol: torch.Tensor,
+    src_spacing: Tuple[float, ...],
+    target_spacing: Tuple[float, ...],
+    sigma_scale_coeff: float = 2.0,
+    sigma_truncate: float = 4.0,
+):
+    v = vol.detach().cpu().numpy()
+    # Assume isotropic resampling.
+    scale_ratio_high_to_low = (
+        torch.mean(torch.Tensor(src_spacing)) / torch.mean(torch.Tensor(target_spacing))
+    ).item()
+    # Assume the src spacing is lower (i.e., higher spatial resolution) than the target
+    # spacing.
+    assert scale_ratio_high_to_low <= 1.0
+    sigma = 1 / (sigma_scale_coeff * scale_ratio_high_to_low)
+    if len(v.shape) == 4:
+        sigma = (0, sigma, sigma, sigma)
+    else:
+        sigma = (sigma,) * 3
+    v_filter = scipy.ndimage.gaussian_filter(
+        v, sigma=sigma, order=0, mode="nearest", truncate=sigma_truncate
+    )
+
+    vol_blur = torch.from_numpy(v_filter).to(vol)
+
+    return vol_blur
+
+
 def add_rician_noise(
     dwi: torch.Tensor,
     grad_table: pd.DataFrame,

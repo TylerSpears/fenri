@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from ._functional import (  # transform_affine_space,; reorient_affine_space,; crop_affine_space_by_vox,; pad_affine_space_by_vox,
+from ._functional import (
     _reorientation_transform,
     add_rician_noise,
     crop_vox,
