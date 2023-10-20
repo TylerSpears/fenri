@@ -25,6 +25,26 @@ class DWIVolDict(TypedDict):
     header: dict
 
 
+def reorient_nib_im(
+    im: nib.spatialimages.DataobjImage, target_orientation: str = "same"
+):
+    target_ornt_str = target_orientation.strip()
+    if target_ornt_str.lower() != "same":
+        src_code = nib.orientations.aff2axcodes(im.affine)
+        target_code = tuple(target_ornt_str.upper())
+        if src_code != target_code:
+            src_ornt = nib.orientations.axcodes2ornt(src_code)
+            target_ornt = nib.orientations.axcodes2ornt(target_code)
+            src2target_ornt = nib.orientations.ornt_transform(src_ornt, target_ornt)
+            ret = im.as_reoriented(src2target_ornt)
+        else:
+            ret = im
+    else:
+        ret = im
+
+    return ret
+
+
 def load_vol(
     vol_f: Path, reorient_im_to: str = "same", ensure_channel_dim=False
 ) -> VolDataDict:

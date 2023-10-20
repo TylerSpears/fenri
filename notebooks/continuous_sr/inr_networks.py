@@ -752,7 +752,6 @@ class SimplifiedDecoder(torch.nn.Module):
         dummy_q_world.unsqueeze_(1)
         # Replace all unmasked q world coords with the dummy coord.
         q_world = torch.where(q_mask, q_world, dummy_q_world)
-        # torch.linalg.solve(x_affine_vox2real, torch.cat([x_coords, x_coords.new_ones((2, 18, 18, 18, 1))], dim=-1).reshape(2, -1, 4).movedim(1, -1), left=True)
         q_world_homog = torch.cat(
             [q_world, q_world.new_ones(q_world.shape[0], q_world.shape[1], 1)], dim=-1
         )

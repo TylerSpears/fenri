@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 import itertools
+import json
+import shlex
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Optional
 
 import einops
 import monai
+import nibabel as nib
 import numpy as np
 import skimage
 import torch
@@ -13,6 +21,303 @@ from pitn._lazy_loader import LazyLoader
 
 # Make pytorch_msssim an optional import.
 pytorch_msssim = LazyLoader("pytorch_msssim", globals(), "pytorch_msssim")
+
+
+@torch.no_grad()
+def odf_peaks_mrtrix(
+    odf: torch.Tensor,
+    affine_vox2real: torch.Tensor,
+    mask: torch.Tensor,
+    n_peaks: int,
+    min_amp: float,
+    match_peaks_vol: Optional[torch.Tensor] = None,
+    mrtrix_nthreads: Optional[int] = None,
+) -> tuple[torch.Tensor, nib.spatialimages.DataobjImage]:
+
+    batch_size = odf.shape[0]
+    if batch_size != 1:
+        raise NotImplementedError("ERROR: Batch size != 1 not implemented")
+
+    n_peak_channels = n_peaks * 3
+
+    affine = affine_vox2real.squeeze(0).detach().cpu().numpy()
+    odf_im = nib.Nifti1Image(
+        einops.rearrange(
+            odf.detach().cpu().squeeze(0).numpy(), "coeff x y z -> x y z coeff"
+        ),
+        affine=affine,
+    )
+    mask_im = nib.Nifti1Image(
+        mask.detach().cpu().squeeze(0).squeeze(0).numpy().astype(np.uint8),
+        affine=affine,
+    )
+    if match_peaks_vol is not None:
+        match_vol = (
+            match_peaks_vol.detach().cpu().squeeze(0).numpy()[..., :n_peak_channels]
+        )
+        match_im = nib.Nifti1Image(
+            match_vol,
+            affine=affine,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="pitn_odf_peaks_mrtrix_") as tmp_dir_name:
+        tmp_dir = Path(tmp_dir_name)
+        mask_f = tmp_dir / "mask.nii"
+        nib.save(mask_im, mask_f)
+        src_odf_f = tmp_dir / "src_odf.nii"
+        nib.save(odf_im, src_odf_f)
+        if match_peaks_vol is not None:
+            match_peaks_f = tmp_dir / "match_peaks.nii"
+            nib.save(match_im, match_peaks_f)
+        out_peaks_f = tmp_dir / "odf_peaks.nii"
+        cmd = f"sh2peaks -quiet -num {n_peaks} -threshold {min_amp} -mask {mask_f}"
+        if mrtrix_nthreads is not None:
+            cmd = " ".join([cmd, "-nthreads", str(mrtrix_nthreads)])
+        if match_peaks_vol is not None:
+            cmd = " ".join([cmd, "-peaks", str(match_peaks_f)])
+        cmd = " ".join([cmd, str(src_odf_f), str(out_peaks_f)])
+
+        call_result = pitn.utils.proc_runner.call_shell_exec(
+            cmd=cmd, args="", cwd=tmp_dir, popen_args_override=shlex.split(cmd)
+        )
+        assert out_peaks_f.exists()
+        out_peaks_im = nib.load(out_peaks_f)
+        # Make a copy of the image data, as the temporary directory will be deleted
+        # before exiting the function.
+        out_peaks_im = nib.Nifti1Image(
+            out_peaks_im.get_fdata().astype(odf_im.get_data_dtype()),
+            affine=out_peaks_im.affine,
+        )
+
+    out_peaks = out_peaks_im.get_fdata()
+    out_peaks = torch.from_numpy(out_peaks).unsqueeze(0).to(odf)
+    # Nans are either outside of the mask or in CSF locations with no peak, so just
+    # assign a 0 vector as the peak direction.
+    out_peaks.nan_to_num_(nan=0.0)
+
+    return out_peaks, out_peaks_im
+
+
+def _linux_file_md5(f: Path):
+    md5_hash = (
+        subprocess.check_output(args=f"md5sum {Path(f).resolve()}", shell=True)
+        .decode()
+        .split(" ")[0]
+    )
+    return md5_hash
+
+
+def to_update_peak_cache(
+    peaks_f: Path, match_peaks_f: Optional[Path] = None, n_peaks: Optional[int] = None
+) -> bool:
+    update = False
+
+    peaks_f = Path(peaks_f)
+    if not peaks_f.exists():
+        update = True
+    elif n_peaks is not None:
+        if nib.load(peaks_f).shape[-1] < n_peaks * 3:
+            update = True
+
+    # peaks_im depends on match_peaks_f, so look up/create a table of file hashes to
+    # determine if the cache_f is still valid, or needs to be updated.
+    if match_peaks_f is not None:
+        if not match_peaks_f.exists():
+            raise RuntimeError(
+                f"ERROR: Match peaks file {match_peaks_f} must already exist."
+            )
+        if n_peaks is not None and (nib.load(match_peaks_f).shape[-1] < n_peaks * 3):
+            raise RuntimeError(
+                f"ERROR: Match peaks file {match_peaks_f} has incorrect number of peaks."
+            )
+
+        match_md5 = _linux_file_md5(match_peaks_f)
+        # Check aux json file for cache md5s
+        aux_hash_f = peaks_f.parent / ".peak_match_md5_hashes.json"
+        # if not aux_hash_f.exists():
+        aux_hash_f.touch(exist_ok=True)
+        # with open(aux_hash_f, "w+") as f:
+        #     json.dump(dict(), f)
+        hash_dict_k = peaks_f.name
+        with open(aux_hash_f, "rt") as f:
+            s = f.read()
+        current_hashes = json.loads(s) if s != "" else dict()
+        if (
+            hash_dict_k not in current_hashes.keys()
+            or current_hashes[hash_dict_k] != match_md5
+        ):
+            update = True
+
+    return update
+
+
+def update_peak_cache(
+    peaks_im: nib.spatialimages.DataobjImage,
+    cache_f: Path,
+    match_peaks_f: Optional[Path] = None,
+):
+    nib.save(peaks_im, cache_f)
+
+    # peaks_im depends on match_peaks_f, so look up/create a table of file hashes to
+    # determine if the cache_f is still valid, or needs to be updated.
+    if match_peaks_f is not None and Path(match_peaks_f).exists():
+        match_md5 = _linux_file_md5(match_peaks_f)
+        # Check aux json file for cache md5s
+        aux_hash_f = cache_f.parent / ".peak_match_md5_hashes.json"
+        aux_hash_f.touch(exist_ok=True)
+        with open(aux_hash_f, "rt") as f:
+            s = f.read()
+        current_hashes = json.loads(s) if s != "" else dict()
+        # with open(aux_hash_f, "rt") as f:
+        #     current_hashes = json.load(f)
+        hash_dict_k = Path(cache_f).name
+        current_hashes[hash_dict_k] = match_md5
+        with open(aux_hash_f, "w+t") as f:
+            json.dump(current_hashes, f)
+
+
+MAX_COS_SIM = 1.0 - torch.finfo(torch.float32).eps
+MIN_COS_SIM = -1.0 + torch.finfo(torch.float32).eps
+MAX_ARC_LEN = (torch.pi / 2) - torch.finfo(torch.float32).eps
+
+
+@torch.no_grad()
+def waae(
+    odf_pred: torch.Tensor,
+    odf_gt: torch.Tensor,
+    mask: torch.Tensor,
+    peaks_pred: torch.Tensor,
+    peaks_gt: torch.Tensor,
+    n_peaks: int,
+    odf_integral_theta: torch.Tensor,
+    odf_integral_phi: torch.Tensor,
+) -> torch.Tensor:
+    batch_size = odf_pred.shape[0]
+    if batch_size != 1:
+        raise NotImplementedError("ERROR: Batch size != 1 not implemented")
+
+    # # Find largest N peaks in the ground truth.
+    # peaks_gt, peaks_gt_im = odf_peaks_mrtrix(
+    #     odf_gt,
+    #     affine_vox2real=affine_vox2real,
+    #     mask=mask,
+    #     n_peaks=n_peaks,
+    #     min_amp=min_amp,
+    #     cached_peaks_f=cached_gt_peaks_f,
+    #     mrtrix_nthreads=mrtrix_nthreads,
+    # )
+
+    # peaks_pred, peaks_pred_im = odf_peaks_mrtrix(
+    #     odf_pred,
+    #     affine_vox2real=affine_vox2real,
+    #     mask=mask,
+    #     match_peaks_vol=peaks_gt,
+    #     n_peaks=n_peaks,
+    #     min_amp=min_amp,
+    #     cached_peaks_f=pred_cache_to_use,
+    #     mrtrix_nthreads=mrtrix_nthreads,
+    # )
+    # if save_out_pred_peaks:
+    #     nib.save(peaks_pred_im, cached_pred_peaks_f)
+
+    # Only select the first N x 3 peaks
+    max_coord_idx = 3 * n_peaks
+    peaks_gt = peaks_gt[..., :max_coord_idx]
+    peaks_pred = peaks_pred[..., :max_coord_idx]
+    # Only select voxels where the ground truth has a peak. All others are 0s.
+    gt_has_peaks_mask = ~torch.isclose(peaks_gt, peaks_gt.new_zeros(1)).all(-1)
+    peaks_gt = peaks_gt[gt_has_peaks_mask]
+    peaks_pred = peaks_pred[gt_has_peaks_mask]
+
+    # Integral across the sphere for the GT odfs, for finding the "W" in "WAAE".
+    gt_sphere_samples = pitn.odf.sample_sphere_coords(
+        odf_gt,
+        theta=odf_integral_theta,
+        phi=odf_integral_phi,
+        mask=gt_has_peaks_mask.unsqueeze(1),
+        sh_order=8,
+        force_nonnegative=True,
+    )
+    gt_sphere_samples = einops.rearrange(
+        gt_sphere_samples, "b dirs x y z -> b x y z dirs"
+    )
+    gt_sphere_integral = gt_sphere_samples[gt_has_peaks_mask].sum(dim=-1, keepdims=True)
+    del gt_sphere_samples
+
+    # Reshape peaks to split along each peak.
+    peaks_gt = einops.rearrange(
+        peaks_gt, "vox (n_peaks coord) -> n_peaks vox coord", coord=3
+    )
+    peaks_pred = einops.rearrange(
+        peaks_pred, "vox (n_peaks coord) -> n_peaks vox coord", coord=3
+    )
+    # Project all peaks into the z+ hemisphere/quadrant, as there is anitipodal
+    # symmetry.
+    peaks_gt = torch.where(
+        (peaks_gt[..., -1, None] < 0).expand_as(peaks_gt), -peaks_gt, peaks_gt
+    )
+    peaks_pred = torch.where(
+        (peaks_pred[..., -1, None] < 0).expand_as(peaks_pred), -peaks_pred, peaks_pred
+    )
+
+    # Keep a running sum of each GT peak's waae.
+    # (1, 1, x, y, z)
+    running_waae = torch.zeros_like(odf_gt[:, 0:1])
+    # Iterate over all peaks/"fixels" in the GT.
+    for i_peak in range(n_peaks):
+        peaks_gt_i = peaks_gt[i_peak]
+        peaks_pred_i = peaks_pred[i_peak]
+
+        gt_has_peak_i_mask = ~torch.isclose(peaks_gt_i, peaks_gt_i.new_zeros(1)).all(
+            -1, keepdim=True
+        )
+        pred_has_peak_i_mask = ~torch.isclose(
+            peaks_pred_i, peaks_pred_i.new_zeros(1)
+        ).all(-1, keepdim=True)
+        pred_missing_peak_i_mask = gt_has_peak_i_mask & (~pred_has_peak_i_mask)
+
+        norm_gt_i = torch.linalg.norm(peaks_gt_i, ord=2, dim=-1, keepdims=True)
+        norm_gt_i.masked_fill_(norm_gt_i == 0, 1.0)
+        norm_pred_i = torch.linalg.norm(peaks_pred_i, ord=2, dim=-1, keepdims=True)
+        norm_pred_i.masked_fill_(norm_pred_i == 0, 1.0)
+
+        # Calculate cosine similarity, ranges between -1 (least similar) and +1 (most
+        # similar).
+        cos_sim = (
+            (peaks_gt_i / norm_gt_i).to(torch.float64)
+            * (peaks_pred_i / norm_pred_i).to(torch.float64)
+        ).sum(-1, keepdims=True)
+
+        # When the prediction fixel does not exist, but should, assign the minimum cos
+        # similarity score.
+        cos_sim.masked_fill_(pred_missing_peak_i_mask, MIN_COS_SIM)
+        cos_sim.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
+        gt_pred_arc_len = torch.arccos(cos_sim).to(peaks_gt.dtype)
+        del cos_sim
+
+        # Amplitude of GT fixel normalized by the entire GT's volume.
+        w_i = norm_gt_i / gt_sphere_integral
+        # If the gt peak does not exist at this fixel, do not include this fixel in the
+        # WAAE.
+        w_i[~gt_has_peak_i_mask] = 0.0
+        w_i[~pred_has_peak_i_mask] = 0.0  #!TESTING
+        running_waae[gt_has_peaks_mask.unsqueeze(1)] += (gt_pred_arc_len * w_i).squeeze(
+            -1
+        )
+        del w_i, gt_pred_arc_len
+
+    return running_waae
+
+
+def mse_batchwise_masked(y_pred, y, mask):
+    masked_y_pred = y_pred.clone()
+    masked_y = y.clone()
+    m = mask.expand_as(masked_y)
+    masked_y_pred[~m] = torch.nan
+    masked_y[~m] = torch.nan
+    se = F.mse_loss(masked_y_pred, masked_y, reduction="none")
+    mse = torch.nanmean(se, dim=1, keepdim=True)
+    return mse
 
 
 @torch.no_grad()

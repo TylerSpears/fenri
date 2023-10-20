@@ -12,6 +12,12 @@ import torch
 from more_itertools import collapse
 
 
+def fork_rng(rng: torch.Generator) -> torch.Generator:
+    rng_fork = torch.Generator(device=rng.device)
+    rng_fork.set_state(rng.get_state().clone())
+    return rng_fork
+
+
 def dipy_save_trk2tck(
     trk_f,
     target_tck_f,

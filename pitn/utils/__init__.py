@@ -9,6 +9,7 @@ from ._utils import (
     batched_tensor_indexing,
     dipy_save_trk2tck,
     flatten,
+    fork_rng,
     rerun_indicator_from_mtime,
     rerun_indicator_from_nibabel,
     union_parent_dirs,

@@ -170,6 +170,7 @@ def scale_fov_spacing(
     fov_bb_coords: torch.Tensor,
     affine_vox2real: torch.Tensor,
     spacing_scale_factors: Tuple[float, ...],
+    set_affine_orig_to_fov_orig: bool,
     new_fov_align_direction: Literal["interior", "exterior"] = "interior",
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
@@ -231,8 +232,13 @@ def scale_fov_spacing(
     new_fov_bb = pitn.affine.transform_coords(
         new_unit_fov_bb, affine_unit2rescaled_space
     )
+    if set_affine_orig_to_fov_orig:
+        affine_out = affine_unit2rescaled_space.clone()
+        affine_out[:-1, -1] = new_fov_bb[0]
+    else:
+        affine_out = affine_unit2rescaled_space
 
-    return new_fov_bb, affine_unit2rescaled_space
+    return new_fov_bb, affine_out
 
 
 def resample_dwi_directions(
@@ -249,9 +255,20 @@ def resample_dwi_directions(
 
     src_shells = np.round(src_bvals, decimals=bval_round_decimals).astype(int)
     target_shells = np.round(target_bvals, decimals=bval_round_decimals).astype(int)
+    # Force all vectors to have unit norm.
+    src_g_norm = np.linalg.norm(src_g, ord=2, axis=-1, keepdims=True)
+    src_g_norm = np.where(np.isclose(src_g_norm, 0, atol=1e-4), 1.0, src_g_norm)
+    src_g = src_g / src_g_norm
+    target_g_norm = np.linalg.norm(target_g, ord=2, axis=-1, keepdims=True)
+    target_g_norm = np.where(
+        np.isclose(target_g_norm, 0, atol=1e-4), 1.0, target_g_norm
+    )
+    target_g = target_g / target_g_norm
     # Project all vectors into the top hemisphere, as we have antipodal symmetry in dwi.
-    src_g[:, -1] = np.abs(src_g[:, -1])
-    target_g[:, -1] = np.abs(target_g[:, -1])
+    src_g = np.where(src_g[:, -1, None] < 0, -src_g, src_g)
+    target_g = np.where(target_g[:, -1, None] < 0, -target_g, target_g)
+    # src_g[:, -1] = np.abs(src_g[:, -1])
+    # target_g[:, -1] = np.abs(target_g[:, -1])
 
     # Double precision floats are more numerically stable, so explicitly cast to that
     # inside the arccos.

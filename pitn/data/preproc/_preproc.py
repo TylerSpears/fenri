@@ -285,6 +285,7 @@ def _crop_lr_inside_smallest_lr(
         affine_fr_vox2real,
         spacing_scale_factors=(max_spacing_scale_factor,) * 3,
         new_fov_align_direction="interior",
+        set_affine_orig_to_fov_orig=True,
     )
     min_lr_shape = ptf.vox_shape_from_fov(min_lr_fov_bb, affine_min_lr_vox2real)
 
@@ -420,6 +421,7 @@ def preproc_super_res_sample(
         orig_fr_bb_coords,
         affine_fr_vox2real,
         spacing_scale_factors=(downsample_factor,) * 3,
+        set_affine_orig_to_fov_orig=True,
         new_fov_align_direction="interior",
     )
     # Prefilter/blur DWI patch before downsampling.

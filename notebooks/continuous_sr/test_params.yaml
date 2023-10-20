@@ -1,0 +1,12 @@
+preproc_loaded:
+    S0_noise_b0_quantile: 0.99
+    patch_sampling_w_erosion: 17
+baseline_lr_spacing_scale: 1.6
+baseline_snr: 30
+test:
+    rng_seed: 3967417599011123030
+    vol_tf:
+        downsample_factor_range: [1.6, 1.6]
+        noise_snr_range: [30, 30]
+        prefilter_sigma_scale_coeff: 2.0
+        manual_crop_lr_sides: [[1, 1], [1, 1], [1, 1]]

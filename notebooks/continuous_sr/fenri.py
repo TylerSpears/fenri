@@ -197,7 +197,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "test_FENRI_preproc_rewrite"
+p.experiment_name = "FENRI_test_fov-resize_rerun"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -226,8 +226,8 @@ p.train = dict(
     batch_size=6,
     samples_per_subj_per_epoch=100,
     max_epochs=50,
-    dwi_recon_epoch_proportion=1 / 99,
-    # dwi_recon_epoch_proportion=0.0,
+    # dwi_recon_epoch_proportion=1 / 99,
+    dwi_recon_epoch_proportion=0.0,
 )
 p.train.patch_sampling = dict(rng="default")
 p.train.patch_tf = dict(
@@ -270,7 +270,6 @@ p.val.vol_tf = dict(
     prefilter_sigma_scale_coeff=2.0,
     # Manually crop each side by 1 voxel to avoid NaNs in the LR resampling.
     manual_crop_lr_sides=((1, 1), (1, 1), (1, 1)),
-    # rng='default'
 )
 
 # If a config file exists, override the defaults with those values.
@@ -299,7 +298,6 @@ except:
 _p = Box(default_box=False)
 _p.merge_update(p)
 p = _p
-
 
 # %%
 tvt_split = pd.read_csv(p.train_val_test_split_file)
@@ -471,7 +469,6 @@ train_dataset = monai.data.PatchDataset(
     samples_per_image=p.train.samples_per_subj_per_epoch,
     transform=train_patch_tf,
 )
-
 
 # %% [markdown]
 # ### Validation Dataset of Whole Volumes
