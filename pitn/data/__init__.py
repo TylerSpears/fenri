@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+# isort: skip_file
 # from . import datasets, datasets2, io, norm, outliers, preproc, summary
+from ._datasets import LoadedSuperResSubjSampleDict, load_super_res_subj_sample
 from . import datasets, datasets2, io, norm, outliers, preproc, summary
 from ._dataset_base import VolDataset, patch_select_any_in_mask
-from ._datasets import LoadedSuperResSubjSampleDict, load_super_res_subj_sample
 from ._hcp_standard import (
     HCP_STANDARD_3T_AFFINE_VOX2WORLD,
     HCP_STANDARD_3T_BVAL,

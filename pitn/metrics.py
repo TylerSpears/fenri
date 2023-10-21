@@ -136,8 +136,6 @@ def to_update_peak_cache(
         aux_hash_f = peaks_f.parent / ".peak_match_md5_hashes.json"
         # if not aux_hash_f.exists():
         aux_hash_f.touch(exist_ok=True)
-        # with open(aux_hash_f, "w+") as f:
-        #     json.dump(dict(), f)
         hash_dict_k = peaks_f.name
         with open(aux_hash_f, "rt") as f:
             s = f.read()
@@ -195,30 +193,6 @@ def waae(
     batch_size = odf_pred.shape[0]
     if batch_size != 1:
         raise NotImplementedError("ERROR: Batch size != 1 not implemented")
-
-    # # Find largest N peaks in the ground truth.
-    # peaks_gt, peaks_gt_im = odf_peaks_mrtrix(
-    #     odf_gt,
-    #     affine_vox2real=affine_vox2real,
-    #     mask=mask,
-    #     n_peaks=n_peaks,
-    #     min_amp=min_amp,
-    #     cached_peaks_f=cached_gt_peaks_f,
-    #     mrtrix_nthreads=mrtrix_nthreads,
-    # )
-
-    # peaks_pred, peaks_pred_im = odf_peaks_mrtrix(
-    #     odf_pred,
-    #     affine_vox2real=affine_vox2real,
-    #     mask=mask,
-    #     match_peaks_vol=peaks_gt,
-    #     n_peaks=n_peaks,
-    #     min_amp=min_amp,
-    #     cached_peaks_f=pred_cache_to_use,
-    #     mrtrix_nthreads=mrtrix_nthreads,
-    # )
-    # if save_out_pred_peaks:
-    #     nib.save(peaks_pred_im, cached_pred_peaks_f)
 
     # Only select the first N x 3 peaks
     max_coord_idx = 3 * n_peaks
@@ -290,7 +264,8 @@ def waae(
 
         # When the prediction fixel does not exist, but should, assign the minimum cos
         # similarity score.
-        cos_sim.masked_fill_(pred_missing_peak_i_mask, MIN_COS_SIM)
+        # cos_sim.masked_fill_(pred_missing_peak_i_mask, MIN_COS_SIM)
+        cos_sim.masked_fill_(pred_missing_peak_i_mask, 0.0)  #!TESTING
         cos_sim.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
         gt_pred_arc_len = torch.arccos(cos_sim).to(peaks_gt.dtype)
         del cos_sim
@@ -300,7 +275,7 @@ def waae(
         # If the gt peak does not exist at this fixel, do not include this fixel in the
         # WAAE.
         w_i[~gt_has_peak_i_mask] = 0.0
-        w_i[~pred_has_peak_i_mask] = 0.0  #!TESTING
+        # w_i[~pred_has_peak_i_mask] = 0.0  #!TESTING
         running_waae[gt_has_peaks_mask.unsqueeze(1)] += (gt_pred_arc_len * w_i).squeeze(
             -1
         )
