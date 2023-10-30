@@ -56,98 +56,45 @@ def streamline_len_mm(
 
 def gfa_threshold(
     streamline_status: torch.Tensor,
-    sample_coords_mm_zyx: torch.Tensor,
     gfa_min_threshold: float,
-    gfa_vol: torch.Tensor,
-    affine_vox2mm: torch.Tensor,
+    sh_coeff: torch.Tensor,
 ) -> torch.Tensor:
-    # Filter coordinates by only the valid streamlines, to save computation.
-    coords = sample_coords_mm_zyx[streamline_status == CONTINUE]
-    if coords.numel() == 0:
-        samples = -gfa_vol.new_ones(1)
-    else:
-        samples = pitn.affine.sample_3d(
-            vol=gfa_vol,
-            coords_mm_zyx=coords,
-            affine_vox2mm=affine_vox2mm,
-            mode="bilinear",
-            align_corners=True,
-            override_out_of_bounds_val=-1.0,
-        )
-        samples.squeeze_(-1)
-    # Re-expand samples and set stopped/invalid streamlines to a gfa value of -1
-    # (always an invalid GFA).
-    # samples = torch.masked_scatter()
-    null_samples = -torch.ones_like(streamline_status, dtype=samples.dtype)
-    null_samples = torch.where(streamline_status == CONTINUE, samples, null_samples)
-    # null_samples.masked_scatter_(streamline_status == CONTINUE, samples)
-    samples = null_samples
-    # samples.masked_fill_(streamline_status != CONTINUE, -1)
+    gen_fa = pitn.odf.gfa(sh_coeff)
     st_new = streamline_status.masked_fill(
-        (streamline_status == CONTINUE) & (samples < gfa_min_threshold), STOP
+        (streamline_status == CONTINUE) & (gen_fa < gfa_min_threshold), STOP
     )
     return st_new
 
 
-def scalar_vec_threshold(
+def val_threshold(
     streamline_status: torch.Tensor,
-    v: torch.Tensor,
-    scalar_min_threshold: Optional[float] = None,
-    scalar_max_threshold: Optional[float] = None,
+    val: torch.Tensor,
+    val_min_thresh: float = -torch.inf,
+    val_max_thresh: float = torch.inf,
 ) -> torch.Tensor:
-
-    to_stop_mask = torch.zeros_like(streamline_status).bool()
-    if scalar_min_threshold is not None:
-        to_stop_mask[v < scalar_min_threshold] = True
-    if scalar_max_threshold is not None:
-        to_stop_mask[v > scalar_max_threshold] = True
-
-    new_status = torch.where(
-        (streamline_status == CONTINUE) & to_stop_mask, STOP, streamline_status
-    )
-    return new_status
-
-
-def scalar_vol_threshold(
-    streamline_status: torch.Tensor,
-    sample_coords_mm_zyx: torch.Tensor,
-    scalar_min_threshold: float,
-    vol: torch.Tensor,
-    affine_vox2mm: torch.Tensor,
-) -> torch.Tensor:
-    # Filter coordinates by only the valid streamlines, to save computation.
-    coords = sample_coords_mm_zyx[streamline_status == CONTINUE]
-    if coords.numel() == 0:
-        samples = -vol.new_ones(1)
-    else:
-        samples = pitn.affine.sample_3d(
-            vol=vol,
-            coords_mm_zyx=coords,
-            affine_vox2mm=affine_vox2mm,
-            mode="bilinear",
-            align_corners=True,
-            override_out_of_bounds_val=scalar_min_threshold - 1.0,
-        )
-        samples.squeeze_(-1)
-    null_samples = -torch.ones_like(streamline_status, dtype=samples.dtype)
-    null_samples = torch.where(streamline_status == CONTINUE, samples, null_samples)
-    samples = null_samples
+    val_out_of_bounds = (val < val_min_thresh) | (val > val_max_thresh) | val.isnan()
     st_new = streamline_status.masked_fill(
-        (streamline_status == CONTINUE) & (samples < scalar_min_threshold), STOP
+        (streamline_status == CONTINUE) & val_out_of_bounds, STOP
     )
     return st_new
 
 
 def angular_threshold(
     streamline_status: torch.Tensor,
-    coords_mm_tm1: torch.Tensor,
-    coords_mm_t: torch.Tensor,
+    coords_real_tm1: torch.Tensor,
+    coords_real_t: torch.Tensor,
     max_radians: float,
 ) -> torch.Tensor:
-    cos_theta = F.cosine_similarity(coords_mm_tm1, coords_mm_t, dim=-1)
+    cos_sim = F.cosine_similarity(coords_real_tm1, coords_real_t, dim=-1)
+    cos_sim.clamp_(min=pitn.tract.MIN_COS_SIM, max=pitn.tract.MAX_COS_SIM)
+    arc_len = torch.arccos(cos_sim)
+    arc_len.masked_fill_(
+        torch.isclose(cos_sim, cos_sim.new_tensor([pitn.tract.MAX_COS_SIM])), 0.0
+    )
 
-    theta = torch.arccos(cos_theta)
     new_status = torch.where(
-        (streamline_status == CONTINUE) & (theta > max_radians), STOP, streamline_status
+        (streamline_status == CONTINUE) & (arc_len > max_radians),
+        STOP,
+        streamline_status,
     )
     return new_status

@@ -79,6 +79,7 @@ def create_subj_rng_seed(base_rng_seed: int, subj_id: Union[int, str]) -> int:
     return base_rng_seed ^ subj_int
 
 
+# MAIN
 if __name__ == "__main__":
     # Take some parameters from the command line.
     parser = argparse.ArgumentParser(

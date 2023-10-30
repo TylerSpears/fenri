@@ -241,6 +241,96 @@ def scale_fov_spacing(
     return new_fov_bb, affine_out
 
 
+MIN_COS_SIM = -1.0 + torch.finfo(torch.float32).eps
+MAX_COS_SIM = 1.0 - torch.finfo(torch.float32).eps
+
+
+def _antipodal_sym_arc_len(
+    cart_dir_x: torch.Tensor, cart_dir_y: torch.Tensor
+) -> torch.Tensor:
+    x = cart_dir_x
+    y = cart_dir_y
+    x = einops.rearrange(x, "... coord -> (...) coord")
+    y = einops.rearrange(y, "... coord -> (...) coord")
+    x_norm = torch.linalg.norm(x, ord=2, dim=-1, keepdim=True)
+    x_norm = torch.where(
+        torch.isclose(x_norm, x_norm.new_zeros(1), atol=1e-4),
+        torch.ones_like(x_norm),
+        x_norm,
+    )
+    x = x / x_norm
+    y_norm = torch.linalg.norm(y, ord=2, dim=-1, keepdim=True)
+    y_norm = torch.where(
+        torch.isclose(y_norm, y_norm.new_zeros(1), atol=1e-4),
+        torch.ones_like(y_norm),
+        y_norm,
+    )
+    y = y / y_norm
+
+    # Project vectors into the top hemisphere, as we have antipodal symmetry in dwi.
+    y = torch.where(y[:, -1, None] < 0, -y, y)
+    # Find arc length between x and y when x is in both the northern and southern
+    # hemspheres.
+    # Orig x angles
+    x_dot_y = (x.to(torch.float64) * y.to(torch.float64)).sum(-1, keepdims=True)
+    x_dot_y.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
+    arc_l_orig = torch.arccos(x_dot_y).to(y)
+    # x vectors flipped across all axes
+    x_dot_y = ((-x).to(torch.float64) * y.to(torch.float64)).sum(-1, keepdims=True)
+    x_dot_y.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
+    arc_l_flip = torch.arccos(x_dot_y).to(y)
+    # Take the nearest arc length between the original and the flipped vectors.
+    arc_len = torch.minimum(arc_l_orig, arc_l_flip)
+
+    arc_len = arc_len.reshape(cart_dir_x.shape[:-1])
+
+    return arc_len
+
+
+def _antipodal_sym_pairwise_arc_len(
+    cart_dir_x: torch.Tensor, cart_dir_y: torch.Tensor
+) -> torch.Tensor:
+    x = cart_dir_x
+    y = cart_dir_y
+    x = einops.rearrange(x, "... coord -> (...) coord")
+    y = einops.rearrange(y, "... coord -> (...) coord")
+    x_norm = torch.linalg.norm(x, ord=2, dim=-1, keepdim=True)
+    x_norm = torch.where(
+        torch.isclose(x_norm, x_norm.new_zeros(1), atol=1e-4),
+        torch.ones_like(x_norm),
+        x_norm,
+    )
+    x = x / x_norm
+    y_norm = torch.linalg.norm(y, ord=2, dim=-1, keepdim=True)
+    y_norm = torch.where(
+        torch.isclose(y_norm, y_norm.new_zeros(1), atol=1e-4),
+        torch.ones_like(y_norm),
+        y_norm,
+    )
+    y = y / y_norm
+
+    # Project vectors into the top hemisphere, as we have antipodal symmetry in dwi.
+    y = torch.where(y[:, -1, None] < 0, -y, y)
+    # Find arc length between x and y when x is in both the northern and southern
+    # hemspheres.
+    # Orig x angles
+    x_dot_y = einops.einsum(
+        x.to(torch.float64), y.to(torch.float64), "b1 d, b2 d -> b1 b2"
+    )
+    x_dot_y.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
+    arc_l_orig = torch.arccos(x_dot_y).to(y)
+    # x vectors flipped across all axes
+    x_dot_y = einops.einsum(
+        (-x).to(torch.float64), y.to(torch.float64), "b1 d, b2 d -> b1 b2"
+    )
+    x_dot_y.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
+    arc_l_flip = torch.arccos(x_dot_y).to(y)
+    # Take the nearest arc length between the original and the flipped vectors.
+    arc_len = torch.minimum(arc_l_orig, arc_l_flip)
+
+    return arc_len
+
+
 def resample_dwi_directions(
     dwi: torch.Tensor,
     src_grad_mrtrix_table: torch.Tensor,
@@ -255,31 +345,34 @@ def resample_dwi_directions(
 
     src_shells = np.round(src_bvals, decimals=bval_round_decimals).astype(int)
     target_shells = np.round(target_bvals, decimals=bval_round_decimals).astype(int)
-    # Force all vectors to have unit norm.
-    src_g_norm = np.linalg.norm(src_g, ord=2, axis=-1, keepdims=True)
-    src_g_norm = np.where(np.isclose(src_g_norm, 0, atol=1e-4), 1.0, src_g_norm)
-    src_g = src_g / src_g_norm
-    target_g_norm = np.linalg.norm(target_g, ord=2, axis=-1, keepdims=True)
-    target_g_norm = np.where(
-        np.isclose(target_g_norm, 0, atol=1e-4), 1.0, target_g_norm
-    )
-    target_g = target_g / target_g_norm
-    # Project all vectors into the top hemisphere, as we have antipodal symmetry in dwi.
-    src_g = np.where(src_g[:, -1, None] < 0, -src_g, src_g)
-    target_g = np.where(target_g[:, -1, None] < 0, -target_g, target_g)
-    # src_g[:, -1] = np.abs(src_g[:, -1])
-    # target_g[:, -1] = np.abs(target_g[:, -1])
+    # # Force all vectors to have unit norm.
+    # src_g_norm = np.linalg.norm(src_g, ord=2, axis=-1, keepdims=True)
+    # src_g_norm = np.where(np.isclose(src_g_norm, 0, atol=1e-4), 1.0, src_g_norm)
+    # src_g = src_g / src_g_norm
+    # target_g_norm = np.linalg.norm(target_g, ord=2, axis=-1, keepdims=True)
+    # target_g_norm = np.where(
+    #     np.isclose(target_g_norm, 0, atol=1e-4), 1.0, target_g_norm
+    # )
+    # target_g = target_g / target_g_norm
+    # # Project all vectors into the top hemisphere, as we have antipodal symmetry in dwi.
+    # src_g = np.where(src_g[:, -1, None] < 0, -src_g, src_g)
+    # target_g = np.where(target_g[:, -1, None] < 0, -target_g, target_g)
+    # # src_g[:, -1] = np.abs(src_g[:, -1])
+    # # target_g[:, -1] = np.abs(target_g[:, -1])
 
-    # Double precision floats are more numerically stable, so explicitly cast to that
-    # inside the arccos.
-    p_arc_len = np.arccos(
-        einops.einsum(
-            target_g.astype(np.float64), src_g.astype(np.float64), "b1 d, b2 d -> b1 b2"
-        )
-    )
+    # # Double precision floats are more numerically stable, so explicitly cast to that
+    # # inside the arccos.
+    # p_arc_len = np.arccos(
+    #     einops.einsum(
+    #         target_g.astype(np.float64), src_g.astype(np.float64), "b1 d, b2 d -> b1 b2"
+    #     )
+    # )
+    p_arc_len = _antipodal_sym_pairwise_arc_len(
+        torch.from_numpy(target_g), torch.from_numpy(src_g)
+    ).numpy()
     p_arc_len = p_arc_len.astype(target_g.dtype)
     p_arc_len = np.nan_to_num(p_arc_len, nan=0)
-    p_arc_w = np.pi - p_arc_len
+    p_arc_w = (np.pi / 2) - p_arc_len
     # Zero-out weights between dissimilar shells.
     p_arc_w[target_shells[:, None] != src_shells[None, :]] = 0.0
 
@@ -299,20 +392,20 @@ def resample_dwi_directions(
         j_selected_src_b0 = src_b0_idx[
             np.argmin(np.abs(rel_target_b0_i_idx - src_b0_relative_idx))
         ]
-        # pi is the max weight that can be selected before normalization.
-        p_arc_w[i_target_b0, j_selected_src_b0] = np.pi
+        # pi/2 is the max weight that can be selected before normalization.
+        p_arc_w[i_target_b0, j_selected_src_b0] = np.pi / 2
 
     # Zero-out any weights lower than the top k weights.
     p_arc_w[
         p_arc_w < (np.flip(np.sort(p_arc_w, -1), -1))[:, (k_nearest_points - 1), None]
     ] = 0.0
-    # If any weights are close to pi, then zero-out all other weights and just produce
+    # If any weights are close to pi/2, then zero-out all other weights and just produce
     # a copy of the DWI that is (nearly) angularly identical to the target.
     for i_target in range(p_arc_w.shape[0]):
-        if np.isclose(p_arc_w[i_target], np.pi, atol=1e-5).any():
+        if np.isclose(p_arc_w[i_target], (np.pi / 2), atol=1e-5).any():
             pi_idx = np.argmax(p_arc_w[i_target])
             p_arc_w[i_target] = p_arc_w[i_target] * 0.0
-            p_arc_w[i_target, pi_idx] = np.pi
+            p_arc_w[i_target, pi_idx] = np.pi / 2
 
     # Normalize weights to sum to 1.0.
     norm_p_arc_w = p_arc_w / p_arc_w.sum(1, keepdims=True)

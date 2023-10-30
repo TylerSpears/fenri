@@ -40,6 +40,7 @@ import concurrent.futures
 import copy
 import datetime
 import functools
+import hashlib
 import inspect
 import io
 import itertools
@@ -59,6 +60,7 @@ import zipfile
 from functools import partial
 from pathlib import Path
 from pprint import pprint as ppr
+from typing import Union
 
 import aim
 import dotenv
@@ -102,8 +104,25 @@ torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
 # monai.data.set_track_meta(False)
 
 # %%
+def create_subj_rng_seed(base_rng_seed: int, subj_id: Union[int, str]) -> int:
+    try:
+        subj_int = int(subj_id)
+    except ValueError as e:
+        if not isinstance(subj_id, str):
+            raise e
+        # Max hexdigest length that can fit into a 64-bit integer is length 8.
+        hash_str = (
+            hashlib.shake_128(subj_id.encode(), usedforsecurity=False)
+            .hexdigest(8)
+            .encode()
+        )
+        subj_int = int(hash_str, base=16)
+
+    return base_rng_seed ^ subj_int
+
+
+# %%
 # MAIN
-# if __name__ == "__main__":
 
 
 # %%
@@ -197,7 +216,7 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "FENRI_test_fov-resize_rerun"
+p.experiment_name = "FENRI_test_dwi_reinterp"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
@@ -214,7 +233,7 @@ p.aim_logger = dict(
     meta_params=dict(run_name=p.experiment_name),
     tags=("PITN", "INR", "HCP", "super-res", "dMRI", "FENRI"),
 )
-p.checkpoint_epoch_ratios = (0.5,)
+p.checkpoint_epoch_ratios = (0.33, 0.5)
 ###############################################
 
 # 1.25mm -> 2.0mm
@@ -224,7 +243,7 @@ p.baseline_snr = 30
 p.train = dict(
     patch_size=(36, 36, 36),
     batch_size=6,
-    samples_per_subj_per_epoch=100,
+    samples_per_subj_per_epoch=130,
     max_epochs=50,
     # dwi_recon_epoch_proportion=1 / 99,
     dwi_recon_epoch_proportion=0.0,
@@ -240,9 +259,8 @@ p.train.patch_tf = dict(
 # Optimizer kwargs for training.
 p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
-p.train.optim.recon_decoder.lr = 1e-3
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=17, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=15, persistent_workers=True, prefetch_factor=3)
 # p.train.dataloader = dict(num_workers=0)
 
 # Network/model parameters.
@@ -348,7 +366,7 @@ rng = fork_rng(torch.default_generator)
 # ## Data Loading
 
 # %%
-num_load_and_tf_workers = 10
+num_load_and_tf_workers = 12
 
 
 # %%
@@ -513,7 +531,8 @@ val_dataset = monai.data.Dataset(
             v,
             **p.val.vol_tf.to_dict(),
             rng=torch.Generator(device=rng.device).manual_seed(
-                int(p.val.rng_seed) ^ int(v["subj_id"])
+                create_subj_rng_seed(base_rng_seed=p.val.rng_seed, subj_id=v["subj_id"])
+                # int(p.val.rng_seed) ^ int(v["subj_id"])
             ),
         )
         for v in preproc_val_dataset
@@ -818,29 +837,11 @@ try:
         encoder(torch.randn(1, in_channels, 20, 20, 20))
     decoder = SimplifiedDecoder(**p.decoder.to_dict())
 
-    decoder = SimplifiedDecoder(**p.decoder.to_dict())
-    recon_decoder = INREncoder(
-        in_channels=encoder.out_channels,
-        interior_channels=48,
-        out_channels=9,
-        n_res_units=2,
-        n_dense_units=2,
-        activate_fn=p.encoder.activate_fn,
-        input_coord_channels=False,
-    )
-    # Initialize weight shape for the recon decoder.
-    with torch.no_grad():
-        recon_decoder(torch.randn(1, recon_decoder.in_channels, 20, 20, 20))
     fabric.print(p.to_dict())
     fabric.print(encoder)
     fabric.print(decoder)
-    fabric.print(recon_decoder)
     fabric.print("Encoder num params:", sum([p.numel() for p in encoder.parameters()]))
     fabric.print("Decoder num params:", sum([p.numel() for p in decoder.parameters()]))
-    fabric.print(
-        "Recon decoder num params:",
-        sum([p.numel() for p in recon_decoder.parameters()]),
-    )
 
     optim_encoder = torch.optim.AdamW(
         encoder.parameters(), **p.train.optim.encoder.to_dict()
@@ -850,12 +851,7 @@ try:
         decoder.parameters(), **p.train.optim.decoder.to_dict()
     )
     decoder, optim_decoder = fabric.setup(decoder, optim_decoder)
-    optim_recon_decoder = torch.optim.AdamW(
-        recon_decoder.parameters(), **p.train.optim.recon_decoder.to_dict()
-    )
-    recon_decoder, optim_recon_decoder = fabric.setup(
-        recon_decoder, optim_recon_decoder
-    )
+
     loss_fn = torch.nn.MSELoss(reduction="mean")
     recon_loss_fn = torch.nn.MSELoss(reduction="mean")
 
@@ -887,7 +883,7 @@ try:
 
     encoder.train()
     decoder.train()
-    recon_decoder.train()
+
     losses = dict(
         loss=list(),
         epoch=list(),
@@ -904,38 +900,6 @@ try:
     curr_checkpoint = 0
     for epoch in range(epochs):
         fabric.print(f"\nEpoch {epoch}\n", "=" * 10)
-        if epoch < math.floor(epochs * train_dwi_recon_epoch_proportion):
-            if not train_recon:
-                train_recon = True
-        else:
-            if train_recon:
-                train_recon = False
-                fabric.barrier()
-                if fabric.is_global_zero:
-                    torch.save(
-                        {
-                            "epoch": epoch,
-                            "step": step,
-                            "aim_run_hash": aim_run.hash,
-                            "recon_decoder": recon_decoder.state_dict(),
-                            "optim_recon_decoder": optim_recon_decoder.state_dict(),
-                        },
-                        Path(tmp_res_dir)
-                        / f"recon_decoder_state_dict_epoch_{epoch}_step_{step}.pt",
-                    )
-                    # Replace the recon network and optimization model with dummies, to
-                    # release gpu memory.
-                    del recon_decoder
-                    del optim_recon_decoder
-                    recon_decoder = torch.nn.Linear(1, 1, bias=False)
-                    optim_recon_decoder = torch.optim.SGD(
-                        recon_decoder.parameters(), 1e-3
-                    )
-                    recon_decoder, optim_recon_decoder = fabric.setup(
-                        recon_decoder, optim_recon_decoder
-                    )
-                    fabric.barrier()
-
         for batch_dict in train_dataloader:
 
             x = batch_dict["lr_dwi"]
@@ -956,7 +920,6 @@ try:
 
             optim_encoder.zero_grad()
             optim_decoder.zero_grad()
-            optim_recon_decoder.zero_grad()
 
             # Append LR coordinates to the end of the input LR DWIs.
             x = torch.cat(
@@ -964,62 +927,43 @@ try:
             )
             ctx_v = encoder(x)
 
-            if not train_recon:
-                y_mask_broad = torch.broadcast_to(y_mask, y.shape)
-                y_coord_mask = einops.rearrange(y_mask, "b 1 x y z -> b x y z 1")
-                pred_fodf = decoder(
-                    context_v=ctx_v,
-                    context_real_coords=x_coords,
-                    query_real_coords=y_coords,
-                    query_coords_mask=y_coord_mask,
-                    affine_context_vox2real=x_affine_vox2real,
-                    context_spacing=x_spacing,
-                    query_spacing=y_spacing,
-                )
+            y_mask_broad = torch.broadcast_to(y_mask, y.shape)
+            y_coord_mask = einops.rearrange(y_mask, "b 1 x y z -> b x y z 1")
+            pred_fodf = decoder(
+                context_v=ctx_v,
+                context_real_coords=x_coords,
+                query_real_coords=y_coords,
+                query_coords_mask=y_coord_mask,
+                affine_context_vox2real=x_affine_vox2real,
+                context_spacing=x_spacing,
+                query_spacing=y_spacing,
+            )
 
-                # Scale prediction and target to weigh the loss.
-                # Transform coefficients to a standard normal distribution.
-                # 45 x n_voxels
-                pred_fodf_standardized = (
-                    pred_fodf - LOSS_ODF_COEFF_MEANS
-                ) / LOSS_ODF_COEFF_STDS
-                y_standardized = (y - LOSS_ODF_COEFF_MEANS) / LOSS_ODF_COEFF_STDS
-                # Tissue weights
-                tissue_weight_mask = y_mask.to(pred_fodf)
-                tissue_weight_mask[batch_dict["gm_mask"]] = 0.3
-                tissue_weight_mask[batch_dict["csf_mask"]] = 0.1
-                tissue_weight_mask[batch_dict["wm_mask"]] = 1.0
-                pred_fodf_standardized *= tissue_weight_mask
-                y_standardized *= tissue_weight_mask
-                # Calculate loss over weighted prediction and target.
-                loss_fodf = loss_fn(
-                    pred_fodf_standardized[y_mask_broad], y_standardized[y_mask_broad]
-                )
-
-                # loss_fodf = loss_fn(pred_fodf[y_mask_broad], y[y_mask_broad])
-                loss_recon = y.new_zeros(1)
-                recon_pred = None
-            else:
-                recon_pred = recon_decoder(ctx_v)
-                # Index bvals to be 2 b=0s, 2 b=1000s, and 2 b=3000s.
-                recon_y = torch.cat(
-                    [x[:, (0, 1, 2, 11, 12, 13)], x_coords.movedim(-1, 1)], dim=1
-                )
-                loss_recon = recon_loss_fn(recon_pred, recon_y)
-                loss_fodf = recon_y.new_zeros(1)
-                pred_fodf = None
-
-            loss = loss_fodf + loss_recon
+            # Scale prediction and target to weigh the loss.
+            # Transform coefficients to a standard normal distribution.
+            # 45 x n_voxels
+            pred_fodf_standardized = (
+                pred_fodf - LOSS_ODF_COEFF_MEANS
+            ) / LOSS_ODF_COEFF_STDS
+            y_standardized = (y - LOSS_ODF_COEFF_MEANS) / LOSS_ODF_COEFF_STDS
+            # Tissue weights
+            tissue_weight_mask = y_mask.to(pred_fodf)
+            tissue_weight_mask[batch_dict["gm_mask"]] = 0.3
+            tissue_weight_mask[batch_dict["csf_mask"]] = 0.1
+            tissue_weight_mask[batch_dict["wm_mask"]] = 1.0
+            pred_fodf_standardized *= tissue_weight_mask
+            y_standardized *= tissue_weight_mask
+            # Calculate loss over weighted prediction and target.
+            loss = loss_fn(
+                pred_fodf_standardized[y_mask_broad], y_standardized[y_mask_broad]
+            )
 
             fabric.backward(loss)
+
             for model, model_optim in zip(
-                (encoder, decoder, recon_decoder),
-                (optim_encoder, optim_decoder, optim_recon_decoder),
+                (encoder, decoder),
+                (optim_encoder, optim_decoder),
             ):
-                if train_recon and model is decoder:
-                    continue
-                elif not train_recon and model is recon_decoder:
-                    continue
                 fabric.clip_gradients(
                     model,
                     model_optim,
@@ -1030,27 +974,11 @@ try:
 
             optim_encoder.step()
             optim_decoder.step()
-            optim_recon_decoder.step()
 
             to_track = {
                 "loss": loss.detach().cpu().item(),
+                "loss_pred_fodf": loss.detach().cpu().item(),
             }
-            # Depending on whether or not the reconstruction decoder is training,
-            # select which metrics to track at this time.
-            if train_recon:
-                to_track = {
-                    **to_track,
-                    **{
-                        "loss_recon": loss_recon.detach().cpu().item(),
-                    },
-                }
-            else:
-                to_track = {
-                    **to_track,
-                    **{
-                        "loss_pred_fodf": loss_fodf.detach().cpu().item(),
-                    },
-                }
             if fabric.is_global_zero:
                 aim_run.track(
                     to_track,
@@ -1074,10 +1002,9 @@ try:
 
         optim_encoder.zero_grad(set_to_none=True)
         optim_decoder.zero_grad(set_to_none=True)
-        optim_recon_decoder.zero_grad(set_to_none=True)
         # Delete some training inputs to relax memory constraints in whole-
         # volume inference inside validation step.
-        del x, x_coords, y, y_coords, pred_fodf, recon_pred
+        del x, x_coords, y, y_coords, pred_fodf
 
         fabric.print("\n==Validation==", flush=True)
         fabric.barrier()
@@ -1114,8 +1041,6 @@ try:
                         "aim_run_hash": aim_run.hash,
                         "optim_encoder": optim_encoder.state_dict(),
                         "optim_decoder": optim_decoder.state_dict(),
-                        "recon_decoder": recon_decoder.state_dict(),
-                        "optim_recon_decoder": optim_recon_decoder.state_dict(),
                     },
                     Path(tmp_res_dir)
                     / f"best_val_score_state_dict_epoch_{epoch}_step_{step}.pt",
@@ -1136,8 +1061,6 @@ try:
                         "aim_run_hash": aim_run.hash,
                         "optim_encoder": optim_encoder.state_dict(),
                         "optim_decoder": optim_decoder.state_dict(),
-                        "recon_decoder": recon_decoder.state_dict(),
-                        "optim_recon_decoder": optim_recon_decoder.state_dict(),
                     },
                     Path(tmp_res_dir)
                     / f"checkpoint_{curr_checkpoint}_state_dict_epoch_{epoch}_step_{step}.pt",
@@ -1167,19 +1090,14 @@ if fabric.is_global_zero:
         {
             "encoder": encoder.state_dict(),
             "decoder": decoder.state_dict(),
-            "recon_decoder": recon_decoder.state_dict(),
             "epoch": epoch,
             "step": step,
             "aim_run_hash": aim_run.hash,
             "optim_encoder": optim_encoder.state_dict(),
             "optim_decoder": optim_decoder.state_dict(),
-            "optim_recon_decoder": optim_recon_decoder.state_dict(),
         },
         Path(tmp_res_dir) / f"final_state_dict_epoch_{epoch}_step_{step}.pt",
     )
     fabric.print("=" * 40)
     losses = pd.DataFrame.from_dict(losses)
     losses.to_csv(Path(tmp_res_dir) / "train_losses.csv")
-
-
-# %%

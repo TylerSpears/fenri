@@ -175,8 +175,9 @@ def update_peak_cache(
 
 
 MAX_COS_SIM = 1.0 - torch.finfo(torch.float32).eps
-MIN_COS_SIM = -1.0 + torch.finfo(torch.float32).eps
+MIN_COS_SIM = 0.0 + torch.finfo(torch.float32).eps
 MAX_ARC_LEN = (torch.pi / 2) - torch.finfo(torch.float32).eps
+MIN_ARC_LEN = 0.0 + torch.finfo(torch.float32).eps
 
 
 @torch.no_grad()
@@ -249,32 +250,47 @@ def waae(
             peaks_pred_i, peaks_pred_i.new_zeros(1)
         ).all(-1, keepdim=True)
         pred_missing_peak_i_mask = gt_has_peak_i_mask & (~pred_has_peak_i_mask)
+        pred_false_pos_peak_i_mask = (~gt_has_peak_i_mask) & pred_has_peak_i_mask
 
         norm_gt_i = torch.linalg.norm(peaks_gt_i, ord=2, dim=-1, keepdims=True)
         norm_gt_i.masked_fill_(norm_gt_i == 0, 1.0)
-        norm_pred_i = torch.linalg.norm(peaks_pred_i, ord=2, dim=-1, keepdims=True)
-        norm_pred_i.masked_fill_(norm_pred_i == 0, 1.0)
+        # norm_pred_i = torch.linalg.norm(peaks_pred_i, ord=2, dim=-1, keepdims=True)
+        # norm_pred_i.masked_fill_(norm_pred_i == 0, 1.0)
 
-        # Calculate cosine similarity, ranges between -1 (least similar) and +1 (most
-        # similar).
-        cos_sim = (
-            (peaks_gt_i / norm_gt_i).to(torch.float64)
-            * (peaks_pred_i / norm_pred_i).to(torch.float64)
-        ).sum(-1, keepdims=True)
+        # # Calculate cosine similarity, ranges between -1 (least similar) and +1 (most
+        # # similar).
+        # cos_sim = (
+        #     (peaks_gt_i / norm_gt_i).to(torch.float64)
+        #     * (peaks_pred_i / norm_pred_i).to(torch.float64)
+        # ).sum(-1, keepdims=True)
 
-        # When the prediction fixel does not exist, but should, assign the minimum cos
-        # similarity score.
-        # cos_sim.masked_fill_(pred_missing_peak_i_mask, MIN_COS_SIM)
-        cos_sim.masked_fill_(pred_missing_peak_i_mask, 0.0)  #!TESTING
-        cos_sim.clamp_(min=MIN_COS_SIM, max=MAX_COS_SIM)
-        gt_pred_arc_len = torch.arccos(cos_sim).to(peaks_gt.dtype)
-        del cos_sim
+        # # When the prediction fixel does not exist, but should, assign the minimum cos
+        # # similarity score.
+        # # cos_sim.masked_fill_(pred_missing_peak_i_mask, MIN_COS_SIM)
+        # # 0.0 is the midpoint between max and min cosine similarity.
+        gt_pred_arc_len = (
+            pitn.transforms.functional._functional._antipodal_sym_arc_len(
+                peaks_pred_i.to(torch.float64), peaks_gt_i.to(torch.float64)
+            )
+            .unsqueeze(-1)
+            .to(peaks_pred_i)
+        )
+        gt_pred_arc_len.masked_fill_(pred_missing_peak_i_mask, MAX_ARC_LEN)
+        gt_pred_arc_len.masked_fill_(pred_false_pos_peak_i_mask, MAX_ARC_LEN)
+        # cos_sim.masked_fill_(
+        #     pred_missing_peak_i_mask,
+        # )  #!TESTING
+        # cos_sim.masked_fill_(pred_false_pos_peak_i_mask, 0.0)  #!TESTING
+        gt_pred_arc_len.clamp_(min=MIN_ARC_LEN, max=MAX_ARC_LEN)
+        # gt_pred_arc_len = torch.arccos(cos_sim).to(peaks_gt.dtype)
+        # del cos_sim
 
         # Amplitude of GT fixel normalized by the entire GT's volume.
         w_i = norm_gt_i / gt_sphere_integral
         # If the gt peak does not exist at this fixel, do not include this fixel in the
         # WAAE.
-        w_i[~gt_has_peak_i_mask] = 0.0
+        # w_i[~gt_has_peak_i_mask] = 0.0
+        w_i[(~gt_has_peak_i_mask) & (~pred_has_peak_i_mask)] = 0.0
         # w_i[~pred_has_peak_i_mask] = 0.0  #!TESTING
         running_waae[gt_has_peaks_mask.unsqueeze(1)] += (gt_pred_arc_len * w_i).squeeze(
             -1

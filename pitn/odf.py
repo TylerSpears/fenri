@@ -13,7 +13,6 @@ import torch.nn.functional as F
 
 import pitn
 import pitn.affine
-import pitn.tract.direction
 
 
 def quick_sphere_sample(fodf_coeffs: torch.Tensor, dipy_sphere=None):
@@ -35,7 +34,19 @@ def quick_sphere_sample(fodf_coeffs: torch.Tensor, dipy_sphere=None):
     return s, theta, phi
 
 
-def gfa(fodf_samples: torch.Tensor, sphere_samples_idx=1) -> torch.Tensor:
+def gfa(sh_coeffs: torch.Tensor) -> torch.Tensor:
+    # Generalized fractional anisotropy.
+    num = sh_coeffs[..., 0] ** 2
+    denom = (sh_coeffs**2).sum(-1)
+    empty_odfs = torch.isclose(denom, denom.new_zeros(1))
+    denom[empty_odfs] = 1.0
+    gen_fa = torch.sqrt(1 - (num / denom))
+    gen_fa[empty_odfs] = 0.0
+
+    return gen_fa
+
+
+def _gfa(fodf_samples: torch.Tensor, sphere_samples_idx=1) -> torch.Tensor:
     s = fodf_samples.movedim(sphere_samples_idx, -1)
     s = einops.rearrange(s, "... samples -> (...) samples", samples=s.shape[-1])
     s_var = torch.var(s, dim=-1, keepdim=True, unbiased=True)

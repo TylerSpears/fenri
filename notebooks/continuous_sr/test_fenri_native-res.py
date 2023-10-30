@@ -123,8 +123,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-c",
         "--create_output_subdir",
-        type=bool,
-        default=True,
+        type=int,
+        default=1,
         help="Output directory for all estimated ODF volumes",
     )
     args = parser.parse_args()
@@ -324,7 +324,7 @@ if __name__ == "__main__":
         test_subj_files[str(subj_id)] = d
 
     out_dir = Path(args.output_dir)
-    if args.create_output_subdir:
+    if bool(args.create_output_subdir):
         ts = datetime.datetime.now().replace(microsecond=0).isoformat()
         # Break ISO format because many programs don't like having colons ':' in a
         # filename.

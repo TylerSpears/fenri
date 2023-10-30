@@ -8,14 +8,13 @@ from pathlib import Path
 import libcst as cst
 import libcst.matchers as m
 
-description = """
-Adds scope `if __name__ == "__main__":` to a python script immediately below the line
-containing the comment `# INSERT MAIN`.
-
-Used for converting .ipynb notebooks to main-guarded python scripts.
-"""
-
 INSERTION_POINT_TOKEN = "# MAIN"
+
+description = f"""
+Adds scope `if __name__ == "__main__":` to a python script immediately below the line
+containing the comment `{INSERTION_POINT_TOKEN}`.
+
+Used for converting .ipynb notebooks to main-guarded python scripts."""
 
 
 class AddIfMainTransformer(cst.CSTTransformer):
@@ -95,24 +94,18 @@ class AddIfMainTransformer(cst.CSTTransformer):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=textwrap.dedent(description))
-    parser.add_argument("-i", "--input", type=argparse.FileType("rt"), default="-")
-    parser.add_argument(
-        "-o", "--output", type=argparse.FileType("wt+"), required=False, default="-"
-    )
+    parser.add_argument("input", type=Path)
+    parser.add_argument("output", type=Path)
     args = parser.parse_args()
 
     in_stream = args.input
 
-    in_script = in_stream.read()
-    in_stream.close()
+    with open(args.input, "rt") as f:
+        in_script = f.read()
     cst_in = cst.parse_module(in_script)
     main_tf = AddIfMainTransformer()
     cst_out = cst_in.visit(main_tf)
     if not cst_in.deep_equals(cst_out):
         out_script = cst_out.code
-    else:
-        out_script = in_script
-
-    out_stream = args.output
-    out_stream.write(out_script)
-    out_stream.close()
+        with open(args.output, "wt") as f:
+            f.write(out_script)
