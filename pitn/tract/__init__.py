@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from . import peak_finding, seed, stopping
+from ._tract import gen_tract_step_rk4
 from ._utils import (
     MAX_COS_SIM,
     MIN_COS_SIM,

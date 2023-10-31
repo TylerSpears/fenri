@@ -66,6 +66,37 @@ def gfa_threshold(
     return st_new
 
 
+def vol_sample_threshold(
+    streamline_status: torch.Tensor,
+    vol: torch.Tensor,
+    affine_vox2real: torch.Tensor,
+    sample_coords: torch.Tensor,
+    sample_min: float = -torch.inf,
+    sample_max: float = torch.inf,
+    **sample_vol_kwargs,
+) -> torch.Tensor:
+
+    c = einops.rearrange(sample_coords, "b coord -> 1 b 1 1 coord")
+    affine = affine_vox2real.unsqueeze(0)
+    v = vol
+    if v.ndim == 3:
+        v = v.unsqueeze(0)
+    if v.ndim == 4:
+        v = v.unsqueeze(0)
+
+    samples = pitn.affine.sample_vol(
+        v, coords_mm_xyz=c, affine_vox2mm=affine, **sample_vol_kwargs
+    )
+    samples = samples.flatten()
+    st_new = torch.where(
+        (streamline_status == CONTINUE)
+        & ((samples < sample_min) | (samples > sample_max)),
+        streamline_status.new_ones(1) * STOP,
+        streamline_status,
+    )
+    return st_new
+
+
 def val_threshold(
     streamline_status: torch.Tensor,
     val: torch.Tensor,
@@ -81,11 +112,11 @@ def val_threshold(
 
 def angular_threshold(
     streamline_status: torch.Tensor,
-    coords_real_tm1: torch.Tensor,
-    coords_real_t: torch.Tensor,
+    angle_x: torch.Tensor,
+    angle_y: torch.Tensor,
     max_radians: float,
 ) -> torch.Tensor:
-    cos_sim = F.cosine_similarity(coords_real_tm1, coords_real_t, dim=-1)
+    cos_sim = F.cosine_similarity(angle_x, angle_y, dim=-1)
     cos_sim.clamp_(min=pitn.tract.MIN_COS_SIM, max=pitn.tract.MAX_COS_SIM)
     arc_len = torch.arccos(cos_sim)
     arc_len.masked_fill_(

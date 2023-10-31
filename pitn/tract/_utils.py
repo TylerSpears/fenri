@@ -13,6 +13,11 @@ from jax import lax
 
 MIN_COS_SIM = -1.0 + torch.finfo(torch.float32).eps
 MAX_COS_SIM = 1.0 - torch.finfo(torch.float32).eps
+MIN_THETA = 0.0
+MAX_THETA = torch.pi
+MIN_PHI = 0.0
+MAX_PHI = (2 * torch.pi) - torch.finfo(torch.float32).eps
+AT_POLE_EPS = torch.finfo(torch.float32).eps
 
 
 def wrap_bound_modulo(
@@ -27,6 +32,17 @@ def __unit_sphere2xyz(theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
     #! Inputs to this function should generally be 64-bit floats! Precision is poor for
     #! 32-bit floats.
     # r = 1 on the unit sphere.
+    # Theta does not "cycle back" between 0 and pi, it "bounces back" such as in
+    # a sequence 0.01 -> 0.001 -> 0.0 -> 0.001 -> 0.01. This is unlike phi which
+    # does cycle back: 2pi - 2eps -> 2pi - eps -> 0 -> 0 + eps ...
+    # The where() handles theta > pi, and the abs() handles theta < pi.
+    theta = torch.where(
+        theta > torch.pi,
+        torch.pi - (theta % torch.pi),
+        torch.abs(theta),
+    )
+    # Phi just cycles back.
+    phi = phi % (2 * torch.pi)
     x = torch.sin(theta) * torch.cos(phi)
     y = torch.sin(theta) * torch.sin(phi)
     z = torch.cos(theta)
@@ -58,11 +74,11 @@ def _xyz2unit_sphere_theta_phi(
     theta = torch.arccos(z / r)
     # The discontinuities of atan2 mean we have to shift and cycle some values.
     phi = torch.arctan2(y, x) % (2 * torch.pi)
-    # At N and S poles, phi is arbitrary. So, set to a small non-zero value for
-    # avoiding potential numerical issues.
-    phi = torch.where(
-        (theta == 0.0) | (theta == torch.pi), torch.finfo(theta.dtype).eps, phi
-    )
+    at_pole = torch.sin(theta) < AT_POLE_EPS
+    # At N and S poles, y = x = 0, which would make phi undefined. However, phi is
+    # arbitrary at poles in spherical coordinates, so just set to a small non-zero value
+    # for avoiding potential numerical issues.
+    phi = torch.where(at_pole, AT_POLE_EPS, phi)
     return theta, phi
 
 

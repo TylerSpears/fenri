@@ -168,9 +168,10 @@ def sh_first_derivative(
     cart_coords = pitn.tract.unit_sphere2xyz(theta=theta, phi=phi)
     x = cart_coords[..., 0]
     y = cart_coords[..., 1]
-    z = cart_coords[..., 2]
+    # z = cart_coords[..., 2]
 
-    elev_mrtrix = torch.arccos(z)
+    # elev_mrtrix = torch.arccos(z)
+    elev_mrtrix = theta
     azim_mrtrix = torch.arctan2(y, x)
     at_pole = torch.sin(elev_mrtrix) < pole_angle_tol
 
@@ -285,8 +286,17 @@ def find_peak_grad_ascent(
         # Batches that have converged should no longer be updated.
         # Add the gradient to perform gradient ascent, rather than gradient descent.
         params_tp1 = params + (nu_t * (~converged.unsqueeze(-1)))
-        # Never thought I'd use the %= operator...
-        params_tp1[..., 0] %= torch.pi
+        # Theta does not "cycle back" between 0 and pi, it "bounces back" such as in
+        # a sequence 0.01 -> 0.001 -> 0.0 -> 0.001 -> 0.01. This is unlike phi which
+        # does cycle back: 2pi - 2eps -> 2pi - eps -> 0 -> 0 + eps ...
+        theta_tp1 = params_tp1[..., 0]
+        # The where() handles theta > pi, and the abs() handles theta < pi.
+        params_tp1[..., 0] = torch.where(
+            theta_tp1 > torch.pi,
+            torch.pi - (theta_tp1 % torch.pi),
+            torch.abs(theta_tp1),
+        )
+        # Phi just cycles back.
         params_tp1[..., 1] %= 2 * torch.pi
         arc_len_t_to_tp1 = pitn.tract.arc_len_spherical(
             theta_1=params[..., 0],
