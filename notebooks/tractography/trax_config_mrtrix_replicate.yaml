@@ -10,7 +10,7 @@ seed:
     min_peak_separation_arc_len: 0.34906585
     # Possible values: symmetric362, symmetric642, symmetric724, repulsion724,
     # repulsion100, repulsion200
-    dipy_sphere: 'repulsion724'
+    dipy_sphere: 'repulsion100'
 
 # Streamline tracking parameters
 tracking:
@@ -21,7 +21,7 @@ tracking:
 peak_finding:
     lr: 0.1
     momentum: 0.5
-    max_epochs: 500
+    max_epochs: 200
     tol_arc_len: 0.00017453292519943296
 
 # Stopping criteria

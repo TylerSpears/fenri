@@ -168,9 +168,7 @@ def sh_first_derivative(
     cart_coords = pitn.tract.unit_sphere2xyz(theta=theta, phi=phi)
     x = cart_coords[..., 0]
     y = cart_coords[..., 1]
-    # z = cart_coords[..., 2]
 
-    # elev_mrtrix = torch.arccos(z)
     elev_mrtrix = theta
     azim_mrtrix = torch.arctan2(y, x)
     at_pole = torch.sin(elev_mrtrix) < pole_angle_tol
