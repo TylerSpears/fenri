@@ -30,7 +30,7 @@ if __name__ == "__main__":
         help="Number of seed points within each voxel per dimension",
     )
     parser.add_argument(
-        "ouput_seeds",
+        "output_seeds",
         type=Path,
         help="Output seeds .csv file that contains seed x, y, z real coordinates",
     )
