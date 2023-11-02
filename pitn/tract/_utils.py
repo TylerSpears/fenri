@@ -4,12 +4,17 @@ import functools
 from functools import partial
 from typing import Optional, Tuple
 
+import einops
 import jax
 import jax.dlpack
 import jax.numpy as jnp
 import numpy as np
 import torch
 from jax import lax
+
+from pitn._lazy_loader import LazyLoader
+
+pitn = LazyLoader("pitn", globals(), "pitn")
 
 MIN_COS_SIM = -1.0 + torch.finfo(torch.float32).eps
 MAX_COS_SIM = 1.0 - torch.finfo(torch.float32).eps
@@ -36,13 +41,13 @@ def __unit_sphere2xyz(theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
     # a sequence 0.01 -> 0.001 -> 0.0 -> 0.001 -> 0.01. This is unlike phi which
     # does cycle back: 2pi - 2eps -> 2pi - eps -> 0 -> 0 + eps ...
     # The where() handles theta > pi, and the abs() handles theta < pi.
-    theta = torch.where(
-        theta > torch.pi,
-        torch.pi - (theta % torch.pi),
-        torch.abs(theta),
-    )
-    # Phi just cycles back.
-    phi = phi % (2 * torch.pi)
+    # theta = torch.where(
+    #     theta > torch.pi,
+    #     torch.pi - (theta % torch.pi),
+    #     torch.abs(theta),
+    # )
+    # # Phi just cycles back.
+    # phi = phi % (2 * torch.pi)
     x = torch.sin(theta) * torch.cos(phi)
     y = torch.sin(theta) * torch.sin(phi)
     z = torch.cos(theta)
@@ -53,8 +58,8 @@ def __unit_sphere2xyz(theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
 unit_sphere2xyz = torch.jit.trace(
     __unit_sphere2xyz,
     example_inputs=(
-        torch.linspace(0, torch.pi, 10, dtype=torch.float64),
-        torch.linspace(1e-6, (2 * torch.pi) - 1e-6, 10, dtype=torch.float64),
+        torch.linspace(MIN_THETA, MAX_THETA, 10, dtype=torch.float32),
+        torch.linspace(MIN_PHI, MAX_PHI, 10, dtype=torch.float32),
     ),
 )
 _unit_sphere2xyz = unit_sphere2xyz
@@ -85,8 +90,8 @@ def _xyz2unit_sphere_theta_phi(
 xyz2unit_sphere_theta_phi = torch.jit.trace(
     _xyz2unit_sphere_theta_phi,
     example_inputs=_unit_sphere2xyz(
-        torch.linspace(0, torch.pi, 10, dtype=torch.float64),
-        torch.linspace(1e-6, (2 * torch.pi) - 1e-6, 10, dtype=torch.float64),
+        torch.linspace(MIN_THETA, MAX_THETA, 10, dtype=torch.float32),
+        torch.linspace(MIN_PHI, MAX_PHI, 10, dtype=torch.float32),
     ),
 )
 
@@ -175,7 +180,7 @@ def t2j(t_tensor: torch.Tensor) -> jax.Array:
     return j
 
 
-def j2t(j_tensor: jax.Array, delete_from_jax: bool = False) -> torch.Tensor:
+def j2t(j_tensor: jax.Array) -> torch.Tensor:
     j = j_tensor.block_until_ready()
     if j.dtype == bool:
         j = j.astype(jnp.uint8)
@@ -191,9 +196,7 @@ def j2t(j_tensor: jax.Array, delete_from_jax: bool = False) -> torch.Tensor:
     else:
         torch_dev = None
 
-    t = torch.utils.dlpack.from_dlpack(
-        jax.dlpack.to_dlpack(j, take_ownership=delete_from_jax)
-    )
+    t = torch.utils.dlpack.from_dlpack(jax.dlpack.to_dlpack(j))
     if torch_dev is not None:
         t = t.to(torch_dev)
     t = t.bool() if to_bool else t
@@ -201,5 +204,16 @@ def j2t(j_tensor: jax.Array, delete_from_jax: bool = False) -> torch.Tensor:
     return t
 
 
-# def sh_basis_mrtrix3(theta: torch.Tensor, phi: torch.Tensor, l_max: int):
-#     pass
+def sh_basis_mrtrix3(
+    theta: torch.Tensor,
+    phi: torch.Tensor,
+    degree: torch.Tensor,
+    order: torch.Tensor,
+):
+    Y_m_abs_l = pitn.tract.peak_finding._sph_harm(
+        order=torch.abs(order), degree=degree, theta=theta, phi=phi
+    )
+    Y_m_abs_l = torch.where(order < 0, np.sqrt(2) * Y_m_abs_l.imag, Y_m_abs_l)
+    Y_m_abs_l = torch.where(order > 0, np.sqrt(2) * Y_m_abs_l.real, Y_m_abs_l)
+
+    return Y_m_abs_l.real

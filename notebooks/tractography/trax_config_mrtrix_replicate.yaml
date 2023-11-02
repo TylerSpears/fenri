@@ -1,7 +1,7 @@
 # Config file for tractography parameters.
 l_max: 8
-batch_size: 3
-out_f_chunk_size: 5000
+batch_size: 2000
+# out_f_chunk_size: 5000
 
 # Seed point creation
 seed:
@@ -21,7 +21,7 @@ tracking:
 peak_finding:
     lr: 0.1
     momentum: 0.5
-    max_epochs: 200
+    max_epochs: 100
     tol_arc_len: 0.00017453292519943296
 
 # Stopping criteria

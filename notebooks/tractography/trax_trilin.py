@@ -9,6 +9,20 @@ import itertools
 import math
 import os
 
+# Disable cuda blocking **for debugging only!**
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# Change default behavior of jax GPU memory allocation
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".20"
+# Set any jax optimization flags before import.
+os.environ["XLA_FLAGS"] = (
+    "--xla_gpu_enable_triton_softmax_fusion=true " "--xla_gpu_triton_gemm_any=True "
+)
+# NCCL optimization flags.
+os.environ["NCCL_LL128_BUFFSIZE"] = "-2"
+os.environ["NCCL_LL_BUFFSIZE"] = "-2"
+os.environ["NCCL_PROTO"] = "SIMPLE,LL,LL128"
+
 # utility libraries
 import pprint
 import textwrap
@@ -33,6 +47,18 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+try:
+    torch
+except NameError:
+    import jax
+
+    jax.devices()
+else:
+    raise RuntimeError(
+        "ERROR: Must import jax and instantiate devices before importing pytorch"
+    )
+import jax.numpy as jnp
 import torch
 import torch.nn.functional as F
 from box import Box
@@ -40,8 +66,9 @@ from icecream import ic
 
 import pitn
 
-# Disable cuda blocking **for debugging only!**
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# Update any jax necessary jax configurations
+# jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_default_matmul_precision", 32)
 
 
 def log_prefix():
@@ -56,6 +83,253 @@ def nib_fdata_loader(nib_im, dtype=np.float32, **get_fdata_kwargs):
         if get_fdata_kwargs["caching"] == "unchanged":
             nib_im.uncache()
     return im
+
+
+def tractography_batch(
+    p: Box,
+    seed_coords_table: pd.DataFrame,
+    fn_interp_odf_at_coords,
+    fn_peak_finding,
+    fn_sh_basis,
+    device,
+    log_stream,
+) -> list[np.ndarray]:
+    ############# Seed generation #############
+    log_stream.write(f"{log_prefix()}| Starting seed generation of batch\n")
+    # Calculate seed angles from one of the built-in dipy spheres.
+    seed_sphere = dipy.data.get_sphere(p.seed.dipy_sphere)
+    seed_angle_x, seed_angle_y, seed_angle_z = dipy.core.geometry.sphere2cart(
+        r=1, theta=seed_sphere.theta, phi=seed_sphere.phi
+    )
+    seed_angle_xyz = torch.from_numpy(
+        np.stack([seed_angle_x, seed_angle_y, seed_angle_z], -1)
+    )
+    seed_theta, seed_phi = pitn.tract.xyz2unit_sphere_theta_phi(seed_angle_xyz)
+    seed_theta = seed_theta.to(torch.float32).to(device)
+    seed_phi = seed_phi.to(torch.float32).to(device)
+    del seed_sphere, seed_angle_x, seed_angle_y, seed_angle_z, seed_angle_xyz
+    seed_coords = np.stack(
+        [
+            seed_coords_table.x.to_numpy(),
+            seed_coords_table.y.to_numpy(),
+            seed_coords_table.z.to_numpy(),
+        ],
+        -1,
+    )
+    seed_coords = torch.from_numpy(seed_coords).to(affine_vox2real)
+    #! Should RK4 be used to find the tangent t1? Or is just regular peak-finding
+    #! sufficient?
+    seed_sh_coeffs = fn_interp_odf_at_coords(seed_coords)
+    seed_direction_antipodal = pitn.tract.seed.get_topk_starting_peaks(
+        seed_sh_coeffs,
+        seed_theta=seed_theta,
+        seed_phi=seed_phi,
+        fn_peak_finding__sh_theta_phi2theta_phi=fn_peak_finding,
+        fn_sh_basis=fn_sh_basis,
+        max_n_peaks=p.seed.peaks,
+        min_odf_height=p.seed.min_odf_amplitude,
+        min_peak_arc_len=p.seed.min_peak_separation_arc_len,
+    )
+    # Flatten the antipodal sides and merge into the overall batch.
+    valid_seed_direction_mask = (
+        einops.rearrange(
+            seed_direction_antipodal.amplitude,
+            "b antipodal n_peak -> (b antipodal) n_peak",
+        )
+        != 0.0
+    )
+
+    seed_theta = einops.rearrange(
+        seed_direction_antipodal.theta,
+        "b antipodal n_peak -> (b antipodal) n_peak",
+    )[valid_seed_direction_mask]
+    seed_phi = einops.rearrange(
+        seed_direction_antipodal.phi,
+        "b antipodal n_peak -> (b antipodal) n_peak",
+    )[valid_seed_direction_mask]
+    # Duplicate the seed spatial coordinates and match to the valid antipodal peaks.
+    points_t1 = einops.repeat(
+        seed_coords,
+        "b coord -> (b antipodal) n_peak coord",
+        antipodal=2,
+        n_peak=seed_direction_antipodal.amplitude.shape[-1],
+    )[valid_seed_direction_mask, :]
+    tangent_t1 = pitn.tract.unit_sphere2xyz(seed_theta, seed_phi)
+    log_stream.write(
+        f"{log_prefix()}| {valid_seed_direction_mask.sum().cpu().item()} valid seeds\n"
+    )
+    log_stream.write(f"{log_prefix()}| Completed seed generation\n")
+
+    ############# Main tractography loop #############
+    all_points = list()
+    all_streamline_status = list()
+    t_max = math.ceil(p.stopping.max_streamline_len / p.tracking.step_size_mm) + 1
+
+    # Initialize all t variables.
+    streamline_status_tm1 = (
+        torch.ones(points_t1.shape[0], dtype=torch.int8, device=device)
+        * pitn.tract.stopping.CONTINUE
+    )
+    streamline_len_tm1 = streamline_status_tm1.new_zeros(
+        streamline_status_tm1.shape[0], dtype=torch.float32
+    )
+    # streamline_status_t = streamline_status_t.clone()
+    points_t = points_t1
+    tangent_t = tangent_t1
+    sh_coeff_t = fn_interp_odf_at_coords(points_t)
+    sh_basis_t = fn_sh_basis(*pitn.tract.xyz2unit_sphere_theta_phi(tangent_t))
+    peak_amps_t = (sh_coeff_t * sh_basis_t).sum(-1)
+
+    log_stream.write(f"{log_prefix()}| Starting tractography batch\n")
+    log_stream.write(f"{log_prefix()}| Tractography epoch out of {t_max}:\n|")
+    # Loop window centers on the streamline point t, but also needs information from
+    # points t-1 and t+1.
+    for t in range(1, t_max + 1):
+        if t % 50 == 0:
+            print(f"{t}...", end="", flush=True)
+        continue_t_mask = pitn.tract.stopping.to_continue_mask(
+            streamline_status_tm1
+        ).unsqueeze(-1)
+
+        # To determine some stop conditions, we need the position and tangent at t+1
+        points_tp1 = (
+            points_t + (p.tracking.step_size_mm * tangent_t)
+        ) * continue_t_mask
+        # Tangents should be normalized; scaling by the step size should be done when
+        # translating the points at position t.
+        tangent_tp1 = (
+            pitn.tract.gen_tract_step_rk4(
+                points_tp1,
+                init_direction=tangent_t,
+                step_size=p.tracking.step_size_mm,
+                fn_xyz_seed_direction2out_direction=fn_xyz_in_direction2out_direction,
+            )
+            / p.tracking.step_size_mm
+        )
+        # "Override" tangent at point t+1 with an exponential moving average tangent
+        # vector.
+        ema_tangent_tp1 = (
+            p.tracking.alpha_exponential_moving_avg * tangent_tp1
+            + (1 - p.tracking.alpha_exponential_moving_avg) * tangent_t
+        )
+        norm_ema_tangent_tp1 = torch.linalg.vector_norm(
+            ema_tangent_tp1, ord=2, dim=-1, keepdim=True
+        )
+        # Replace near-0 norms with norms of 1, to avoid division by 0.
+        norm_ema_tangent_tp1 = torch.where(
+            torch.isclose(norm_ema_tangent_tp1, norm_ema_tangent_tp1.new_zeros(1)),
+            norm_ema_tangent_tp1.new_ones(1),
+            norm_ema_tangent_tp1,
+        )
+        # Normalize tangents weighted combination of tangent vectors.
+        ema_tangent_tp1 /= norm_ema_tangent_tp1
+        tangent_tp1 = ema_tangent_tp1
+
+        tangent_tp1 *= continue_t_mask
+        sh_coeff_tp1 = fn_interp_odf_at_coords(points_tp1)
+        sh_basis_tp1 = fn_sh_basis(*pitn.tract.xyz2unit_sphere_theta_phi(tangent_tp1))
+        peak_amps_tp1 = (sh_coeff_tp1 * sh_basis_tp1).sum(-1)
+
+        # Check stopping criteria
+        statuses_t = list()
+        # Stop the streamline at point t if the next point goes outside the brain mask.
+        statuses_t.append(
+            pitn.tract.stopping.vol_sample_threshold(
+                streamline_status_tm1,
+                brain_mask,
+                affine_vox2real=affine_vox2real,
+                sample_coords=points_tp1,
+                sample_min=0.99,
+                mode="nearest",
+                align_corners=True,
+            )
+        )
+        # Stop the streamline at point t if t+1 has too low of a GFA.
+        statuses_t.append(
+            pitn.tract.stopping.gfa_threshold(
+                streamline_status_tm1,
+                gfa_min_threshold=p.stopping.min_gfa,
+                sh_coeff=sh_coeff_tp1,
+            )
+        )
+        # Stop streamline at t if the angular change between t and t+1 is too large.
+        statuses_t.append(
+            pitn.tract.stopping.angular_threshold(
+                streamline_status_tm1,
+                angle_x=tangent_t,
+                angle_y=tangent_tp1,
+                max_radians=p.stopping.max_tangent_angle_diff,
+            )
+        )
+        # Stop the streamline at point t if the t peak amplitude is too low.
+        statuses_t.append(
+            pitn.tract.stopping.val_threshold(
+                streamline_status_tm1,
+                peak_amps_t,
+                val_min_thresh=p.stopping.min_odf_amplitude,
+            )
+        )
+        # Check if streamline should be stopped at point t due to length.
+        statuses_t.append(
+            pitn.tract.stopping.streamline_len_mm(
+                streamline_status_tm1,
+                streamline_len_tm1 + p.tracking.step_size_mm,
+                max_len=p.stopping.max_streamline_len,
+            )
+        )
+        streamline_status_t = pitn.tract.stopping.merge_status(
+            streamline_status_tm1, *statuses_t
+        )
+        # Add to the streamline length if it is currently continuing, OR if it was just
+        # stopped at this iteration.
+        streamline_len_t = streamline_len_tm1 + p.tracking.step_size_mm * (
+            (streamline_status_t == pitn.tract.stopping.CONTINUE)
+            | (
+                (streamline_status_tm1 == pitn.tract.stopping.CONTINUE)
+                & (streamline_status_t == pitn.tract.stopping.STOP)
+            )
+        )
+        # Check if streamline is too short to be valid.
+        streamline_status_t = pitn.tract.stopping.merge_status(
+            streamline_status_t,
+            pitn.tract.stopping.streamline_len_mm(
+                streamline_status_t,
+                streamline_len_t,
+                min_len=p.stopping.min_streamline_len,
+            ),
+        )
+
+        all_streamline_status.append(streamline_status_t.cpu())
+        all_points.append(points_t.cpu())
+        streamline_status_tm1 = streamline_status_t
+        streamline_len_tm1 = streamline_len_t
+        points_t = points_tp1
+        tangent_t = tangent_tp1
+        sh_coeff_t = sh_coeff_tp1
+        sh_basis_t = sh_basis_tp1
+        peak_amps_t = peak_amps_tp1
+
+        # If no streamlines should continue, break.
+        if (~pitn.tract.stopping.to_continue_mask(streamline_status_t)).all():
+            break
+
+    log_stream.write(f"\n{log_prefix()}| Finished tractography batch at epoch {t}\n")
+
+    all_points = torch.stack(all_points, dim=1).cpu().numpy()
+    all_streamline_status = torch.stack(all_streamline_status, dim=1).cpu().numpy()
+    all_valid_streamlines = list()
+    for i_streamline in range(all_points.shape[0]):
+        s_i = all_points[i_streamline]
+        status_i = all_streamline_status[i_streamline]
+        if (status_i == pitn.tract.stopping.INVALID).any():
+            continue
+        if (status_i == pitn.tract.stopping.STOP).any():
+            end_idx = np.argwhere((status_i == pitn.tract.stopping.STOP)).min()
+        else:
+            end_idx = -1
+        all_valid_streamlines.append(s_i[:end_idx])
+
+    return all_valid_streamlines
 
 
 if __name__ == "__main__":
@@ -109,6 +383,12 @@ if __name__ == "__main__":
         help="Device to run tractography calculations (default 'cpu')",
     )
     parser.add_argument(
+        "--device_id",
+        type=int,
+        default=None,
+        help="Device ID, only used when device=cuda (default None)",
+    )
+    parser.add_argument(
         "-l",
         "--log",
         type=argparse.FileType("at"),
@@ -121,8 +401,8 @@ if __name__ == "__main__":
     # allow for CUDA usage, if selected
     if torch.cuda.is_available() and "cuda" in args.device.casefold():
         # Pick only one device for the default, may use multiple GPUs for training later.
-        if ":" in args.device:
-            dev_idx = args.device.casefold().strip().replace("cuda:", "")
+        if args.device_id is not None:
+            dev_idx = int(args.device_id)
         else:
             dev_idx = 0
         device = torch.device(f"cuda:{dev_idx}")
@@ -130,6 +410,8 @@ if __name__ == "__main__":
         torch.cuda.set_device(device)
         print("CUDA Current Device ", torch.cuda.current_device())
         print("CUDA Device properties: ", torch.cuda.get_device_properties(device))
+        # set jax default device
+        jax.config.update("jax_default_device", jax.devices()[dev_idx])
         # The flag below controls whether to allow TF32 on matmul. This flag defaults to False
         # in PyTorch 1.12 and later.
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -219,15 +501,14 @@ if __name__ == "__main__":
         l_max=p.l_max,
         tol_angular=p.peak_finding.tol_arc_len,
     )
-    # Gives SH basis as a vector, will be directly multiplied by SH coefficients of
-    # shape [B x n_coeffs], so broadcasting is valid for repeated l and m.
+    # Gives SH basis as a vector
     _broad_l, _broad_m = pitn.tract.peak_finding._get_degree_order_vecs(
         p.l_max, batch_size=1, device=device
     )
+    _l = _broad_l.flatten()
+    _m = _broad_m.flatten()
     # Accepts theta, phi; returns [B x n_coeffs] matrix.
-    fn_sh_basis = partial(
-        pitn.tract.peak_finding._sh_basis_mrtrix3, degree=_broad_l, order=_broad_m
-    )
+    fn_sh_basis = partial(pitn.tract.sh_basis_mrtrix3, degree=_l, order=_m)
     # Main ODF prediction/interpolation function
     def interp_odf_at_coords(
         real_coords_xyz_flat: torch.Tensor,
@@ -279,244 +560,56 @@ if __name__ == "__main__":
         fn_interp_at_coord=fn_interp_odf_at_coords,
         fn_peak_finder__coeff_theta_phi2theta_phi=fn_peak_finding,
     )
-    ############# Seed generation #############
-    log_stream.write(f"{log_prefix()}| Starting seed generation\n")
-    # Calculate seed angles from one of the built-in dipy spheres.
-    seed_sphere = dipy.data.get_sphere(p.seed.dipy_sphere)
-    seed_angle_x, seed_angle_y, seed_angle_z = dipy.core.geometry.sphere2cart(
-        r=1, theta=seed_sphere.theta, phi=seed_sphere.phi
-    )
-    seed_angle_xyz = torch.from_numpy(
-        np.stack([seed_angle_x, seed_angle_y, seed_angle_z], -1)
-    )
-    seed_theta, seed_phi = pitn.tract.xyz2unit_sphere_theta_phi(seed_angle_xyz)
-    seed_theta = seed_theta.to(torch.float32).to(device)
-    seed_phi = seed_phi.to(torch.float32).to(device)
-    del seed_sphere, seed_angle_x, seed_angle_y, seed_angle_z, seed_angle_xyz
-    seed_coords = np.stack(
-        [
-            seed_coords_table.x.to_numpy(),
-            seed_coords_table.y.to_numpy(),
-            seed_coords_table.z.to_numpy(),
-        ],
-        -1,
-    )
-    seed_coords = torch.from_numpy(seed_coords).to(affine_vox2real)
-    #! Should RK4 be used to find the tangent t1? Or is just regular peak-finding
-    #! sufficient?
-    seed_sh_coeffs = fn_interp_odf_at_coords(seed_coords)
-    seed_direction_antipodal = pitn.tract.seed.get_topk_starting_peaks(
-        seed_sh_coeffs,
-        seed_theta=seed_theta,
-        seed_phi=seed_phi,
-        fn_peak_finding__sh_theta_phi2theta_phi=fn_peak_finding,
-        fn_sh_basis=fn_sh_basis,
-        max_n_peaks=p.seed.peaks,
-        min_odf_height=p.seed.min_odf_amplitude,
-        min_peak_arc_len=p.seed.min_peak_separation_arc_len,
-    )
-    # Flatten the antipodal sides and merge into the overall batch.
-    valid_seed_direction_mask = (
-        einops.rearrange(
-            seed_direction_antipodal.amplitude,
-            "b antipodal n_peak -> (b antipodal) n_peak",
-        )
-        != 0.0
-    )
 
-    seed_theta = einops.rearrange(
-        seed_direction_antipodal.theta,
-        "b antipodal n_peak -> (b antipodal) n_peak",
-    )[valid_seed_direction_mask]
-    seed_phi = einops.rearrange(
-        seed_direction_antipodal.phi,
-        "b antipodal n_peak -> (b antipodal) n_peak",
-    )[valid_seed_direction_mask]
-    # Duplicate the seed spatial coordinates and match to the valid antipodal peaks.
-    points_t1 = einops.repeat(
-        seed_coords,
-        "b coord -> (b antipodal) n_peak coord",
-        antipodal=2,
-        n_peak=seed_direction_antipodal.amplitude.shape[-1],
-    )[valid_seed_direction_mask, :]
-    tangent_t1 = pitn.tract.unit_sphere2xyz(seed_theta, seed_phi)
-    log_stream.write(f"{log_prefix()}| Completed seed generation\n")
+    # Run tractography in batches
+    n_seed_positions = seed_coords_table.shape[0]
+    n_starts_per_seed = 2 * p.seed.peaks
+    n_total_seeds = n_seed_positions * n_starts_per_seed
+    n_batches = math.ceil(n_total_seeds / p.batch_size)
+    batch_idx = list(range(0, n_seed_positions, p.batch_size // n_starts_per_seed))
 
-    ############# Main tractography loop #############
-    all_points = list()
-    all_streamline_status = list()
-    t_max = math.ceil(p.stopping.max_streamline_len / p.tracking.step_size_mm) + 1
+    if n_seed_positions % (p.batch_size // n_starts_per_seed) != 0:
+        batch_idx.append(n_seed_positions - 1)
+    print(n_seed_positions)
+    print(n_starts_per_seed)
+    print(n_total_seeds)
+    print(n_batches)
+    print(batch_idx)
 
-    # Initialize all t variables.
-    streamline_status_tm1 = (
-        torch.ones(points_t1.shape[0], dtype=torch.int8, device=device)
-        * pitn.tract.stopping.CONTINUE
-    )
-    streamline_len_tm1 = streamline_status_tm1.new_zeros(
-        streamline_status_tm1.shape[0], dtype=torch.float32
-    )
-    # streamline_status_t = streamline_status_t.clone()
-    points_t = points_t1
-    tangent_t = tangent_t1
-    sh_coeff_t = fn_interp_odf_at_coords(points_t)
-    sh_basis_t = fn_sh_basis(*pitn.tract.xyz2unit_sphere_theta_phi(tangent_t))
-    peak_amps_t = (sh_coeff_t * sh_basis_t).sum(-1)
-    # all_points.append(points_t)
-    # all_streamline_status.append(streamline_status_t)
+    all_streamlines = list()
+    total_completed_seeds = 0
+    for i_batch, (batch_start_idx, batch_end_idx) in enumerate(
+        itertools.pairwise(batch_idx)
+    ):
+        log_stream.write(f"{log_prefix()}| Starting batch {i_batch+1}/{n_batches}\n")
+        seeds_this_batch = batch_end_idx - batch_start_idx
+        batch_seed_coords_table = seed_coords_table.iloc[batch_start_idx:batch_end_idx]
 
-    log_stream.write(f"{log_prefix()}| Starting tractography\n")
-    # Loop window centers on the streamline point t, but also needs information from
-    # points t-1 and t+1.
-    for t in range(1, t_max + 1):
-
-        continue_t_mask = pitn.tract.stopping.to_continue_mask(
-            streamline_status_tm1
-        ).unsqueeze(-1)
-
-        # To determine some stop conditions, we need the position and tangent at t+1
-        points_tp1 = (
-            points_t + (p.tracking.step_size_mm * tangent_t)
-        ) * continue_t_mask
-        # Tangents should be normalized; scaling by the step size should be done when
-        # translating the points at position t.
-        tangent_tp1 = (
-            pitn.tract.gen_tract_step_rk4(
-                points_tp1,
-                init_direction=tangent_t,
-                step_size=p.tracking.step_size_mm,
-                fn_xyz_seed_direction2out_direction=fn_xyz_in_direction2out_direction,
-            )
-            / p.tracking.step_size_mm
+        streamlines_batch_i = tractography_batch(
+            p=p,
+            seed_coords_table=batch_seed_coords_table,
+            fn_interp_odf_at_coords=fn_interp_odf_at_coords,
+            fn_peak_finding=fn_peak_finding,
+            fn_sh_basis=fn_sh_basis,
+            device=device,
+            log_stream=log_stream,
         )
-        # "Override" tangent at point t+1 with an exponential moving average tangent
-        # vector.
-        ema_tangent_tp1 = (
-            p.tracking.alpha_exponential_moving_avg * tangent_tp1
-            + (1 - p.tracking.alpha_exponential_moving_avg) * tangent_t
-        )
-        norm_ema_tangent_tp1 = torch.linalg.vector_norm(
-            ema_tangent_tp1, ord=2, dim=-1, keepdim=True
-        )
-        # Replace near-0 norms with norms of 1, to avoid division by 0.
-        norm_ema_tangent_tp1 = torch.where(
-            torch.isclose(norm_ema_tangent_tp1, norm_ema_tangent_tp1.new_zeros(1)),
-            norm_ema_tangent_tp1.new_ones(1),
-            norm_ema_tangent_tp1,
-        )
-        # Normalize tangents weighted combination of tangent vectors.
-        ema_tangent_tp1 /= norm_ema_tangent_tp1
-        tangent_tp1 = ema_tangent_tp1
-
-        tangent_tp1 *= continue_t_mask
-        sh_coeff_tp1 = fn_interp_odf_at_coords(points_tp1)
-        sh_basis_tp1 = fn_sh_basis(*pitn.tract.xyz2unit_sphere_theta_phi(tangent_tp1))
-        peak_amps_tp1 = (sh_coeff_tp1 * sh_basis_tp1).sum(-1)
-
-        currently_continuing = pitn.tract.stopping.to_continue_mask(
-            streamline_status_tm1
-        )
-        # Check stopping criteria
-        statuses_t = list()
-        # Stop the streamline at point t if the next point goes outside the brain mask.
-        statuses_t.append(
-            pitn.tract.stopping.vol_sample_threshold(
-                streamline_status_tm1,
-                brain_mask,
-                affine_vox2real=affine_vox2real,
-                sample_coords=points_tp1,
-                sample_min=0.99,
-                mode="nearest",
-                align_corners=True,
-            )
-        )
-        # Stop the streamline at point t if t+1 has too low of a GFA.
-        statuses_t.append(
-            pitn.tract.stopping.gfa_threshold(
-                streamline_status_tm1,
-                gfa_min_threshold=p.stopping.min_gfa,
-                sh_coeff=sh_coeff_tp1,
-            )
-        )
-        # Stop streamline at t if the angular change between t and t+1 is too large.
-        statuses_t.append(
-            pitn.tract.stopping.angular_threshold(
-                streamline_status_tm1,
-                angle_x=tangent_t,
-                angle_y=tangent_tp1,
-                max_radians=p.stopping.max_tangent_angle_diff,
-            )
-        )
-        # Stop the streamline at point t if the t peak amplitude is too low.
-        statuses_t.append(
-            pitn.tract.stopping.val_threshold(
-                streamline_status_tm1,
-                peak_amps_t,
-                val_min_thresh=p.stopping.min_odf_amplitude,
-            )
-        )
-        # Check if streamline should be stopped at point t due to length.
-        statuses_t.append(
-            pitn.tract.stopping.streamline_len_mm(
-                streamline_status_tm1,
-                streamline_len_tm1 + p.tracking.step_size_mm,
-                max_len=p.stopping.max_streamline_len,
-            )
-        )
-        streamline_status_t = pitn.tract.stopping.merge_status(
-            streamline_status_tm1, *statuses_t
-        )
-        # Add to the streamline length if it is currently continuing, OR if it was just
-        # stopped at this iteration.
-        streamline_len_t = streamline_len_tm1 + p.tracking.step_size_mm * (
-            (streamline_status_t == pitn.tract.stopping.CONTINUE)
-            | (
-                (streamline_status_tm1 == pitn.tract.stopping.CONTINUE)
-                & (streamline_status_t == pitn.tract.stopping.STOP)
-            )
-        )
-        # Check if streamline is too short to be valid.
-        streamline_status_t = pitn.tract.stopping.merge_status(
-            streamline_status_t,
-            pitn.tract.stopping.streamline_len_mm(
-                streamline_status_t,
-                streamline_len_t,
-                min_len=p.stopping.min_streamline_len,
-            ),
+        all_streamlines.extend(streamlines_batch_i)
+        total_completed_seeds += seeds_this_batch
+        log_stream.write(f"{log_prefix()}| Completed batch {i_batch+1}/{n_batches}\n")
+        log_stream.write(
+            f"{log_prefix()}| Batch contained {len(streamlines_batch_i)} streamlines\n"
         )
 
-        all_streamline_status.append(streamline_status_t)
-        all_points.append(points_t)
-        streamline_status_tm1 = streamline_status_t
-        streamline_len_tm1 = streamline_len_t
-        points_t = points_tp1
-        tangent_t = tangent_tp1
-        sh_coeff_t = sh_coeff_tp1
-        sh_basis_t = sh_basis_tp1
-        peak_amps_t = peak_amps_tp1
-
-        # If no streamlines should continue, break.
-        if (~pitn.tract.stopping.to_continue_mask(streamline_status_t)).all():
-            break
+        log_stream.write(
+            f"{log_prefix()}| Seeds completed {total_completed_seeds}/{n_seed_positions}\n"
+        )
 
     log_stream.write(f"{log_prefix()}| Finished tractography\n")
 
     log_stream.write(f"{log_prefix()}| Saving streamlines\n")
-    all_points = torch.stack(all_points, dim=1).cpu().numpy()
-    all_streamline_status = torch.stack(all_streamline_status, dim=1).cpu().numpy()
-    all_valid_streamlines = list()
-    for i_streamline in range(all_points.shape[0]):
-        s_i = all_points[i_streamline]
-        status_i = all_streamline_status[i_streamline]
-        if (status_i == pitn.tract.stopping.INVALID).any():
-            continue
-        if (status_i == pitn.tract.stopping.STOP).any():
-            end_idx = np.argwhere((status_i == pitn.tract.stopping.STOP)).min()
-        else:
-            end_idx = -1
-        all_valid_streamlines.append(s_i[:end_idx])
-
     tracto = dipy.io.streamline.StatefulTractogram(
-        all_valid_streamlines,
+        all_streamlines,
         space=dipy.io.stateful_tractogram.Space.RASMM,
         reference=src_vol_im.header,
     )

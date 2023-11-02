@@ -4,6 +4,8 @@ from functools import partial
 from typing import Union
 
 import einops
+import jax
+import jax.numpy as jnp
 import numpy as np
 import scipy
 import torch
@@ -74,87 +76,174 @@ def _sh_idx(l: torch.Tensor, m: torch.Tensor, invalid_idx_replace=None):
     return idx
 
 
-@torch.no_grad()
-def _lagrange_poly(
-    degree: torch.Tensor, order: torch.Tensor, x: torch.Tensor
-) -> torch.Tensor:
-    order_ = order.detach().cpu().numpy()
-    degree_ = degree.detach().cpu().numpy()
-    x_ = x.detach().cpu().numpy()
-    associate_lagr_poly = scipy.special.lpmv(order_, degree_, x_[..., np.newaxis])
-    return torch.from_numpy(associate_lagr_poly).to(x)
-
-
-@torch.no_grad()
-def _spherical_harmonic(
-    degree: torch.Tensor,
-    order: torch.Tensor,
-    theta: torch.Tensor,
-    phi: torch.Tensor,
-):
-    theta_scipy = phi
-    theta_scipy = theta_scipy.detach().cpu().numpy()
-    phi_scipy = theta
-    phi_scipy = phi_scipy.detach().cpu().numpy()
-    order_ = order.detach().cpu().numpy()
-    degree_ = degree.detach().cpu().numpy()
-
-    Y_m_l = scipy.special.sph_harm(
-        order_, degree_, theta_scipy[..., np.newaxis], phi_scipy[..., np.newaxis]
-    )
-
-    return torch.from_numpy(Y_m_l).to(theta.device)
-
-
-def _sh_basis_mrtrix3(
-    theta: torch.Tensor,
-    phi: torch.Tensor,
-    degree: torch.Tensor,
-    order: torch.Tensor,
-):
-    Y_m_abs_l = _spherical_harmonic(
-        order=torch.abs(order), degree=degree, theta=theta, phi=phi
-    )
-    Y_m_abs_l = torch.where(order < 0, np.sqrt(2) * Y_m_abs_l.imag, Y_m_abs_l)
-    Y_m_abs_l = torch.where(order > 0, np.sqrt(2) * Y_m_abs_l.real, Y_m_abs_l)
-
-    return Y_m_abs_l.real
-
-
-def _batch_basis_mrtrix3(
-    theta: torch.Tensor,
-    phi: torch.Tensor,
+def __jax_spherical_harmonic(
+    degree: jax.Array,
+    order: jax.Array,
+    theta: jax.Array,
+    phi: jax.Array,
     l_max: int,
+) -> jax.Array:
+    scipy_theta = phi
+    scipy_phi = theta
+    return jax.scipy.special.sph_harm(
+        m=order, n=degree, theta=scipy_theta, phi=scipy_phi, n_max=l_max
+    )
+
+
+def __jax_norm_lagrange_poly(
+    degree: jax.Array,
+    order: jax.Array,
+    theta: jax.Array,
+    l_max: int,
+) -> jax.Array:
+    # We don't care about phi, so long as it doesn't 0-out the sh value.
+    dummy_phi = jnp.zeros_like(theta)
+    sh = __jax_spherical_harmonic(
+        degree=degree, order=order, theta=theta, phi=dummy_phi, l_max=l_max
+    )
+    exp_theta = jnp.exp(1j * order * dummy_phi)
+    # Remove the e^(i m phi) to just get N_lm * Y_lm(cos theta)
+    # Only return real component, imaginary component should be 0 anyway.
+    return (sh / exp_theta).real
+
+
+def _norm_lagrange_poly(
     degree: torch.Tensor,
     order: torch.Tensor,
-):
-    Y_m_abs_l = _spherical_harmonic(
-        order=torch.abs(order), degree=degree, theta=theta, phi=phi
+    theta: torch.Tensor,
+) -> torch.Tensor:
+
+    theta = theta.squeeze(-1)
+    degree = degree.squeeze(0)
+    order = order.squeeze(0)
+    l_max = int(degree.max().cpu().item())
+
+    assert tuple(degree.shape) == tuple(order.shape)
+    if (theta.ndim > 2) or (degree.ndim > 2):
+        raise RuntimeError(
+            "ERROR: Will only accept 1D or 2D shapes, "
+            + f"got {tuple(theta.shape)}, {tuple(degree.shape)}"
+        )
+    elif (theta.ndim == 2) and (degree.ndim == 2):
+        assert tuple(theta.shape) == tuple(degree.shape)
+    elif theta.ndim == 2:
+        target_shape = tuple(theta.shape)
+    elif degree.ndim == 2:
+        target_shape = tuple(degree.shape)
+    else:
+        target_shape = (theta.shape[0], degree.shape[0])
+    batch_size_angle = target_shape[0]
+    batch_size_lm = target_shape[1]
+    l_max = int(degree.max().cpu().item())
+
+    if tuple(degree.shape) != target_shape:
+        broad_degree = einops.repeat(
+            degree, "b_lm -> b_angle b_lm", b_angle=batch_size_angle
+        )
+        broad_order = einops.repeat(
+            order, "b_lm -> b_angle b_lm", b_angle=batch_size_angle
+        )
+    else:
+        broad_degree = degree
+        broad_order = order
+    if tuple(theta.shape) != target_shape:
+        broad_theta = einops.repeat(
+            theta, "b_angle -> b_angle b_lm", b_lm=batch_size_lm
+        )
+    else:
+        broad_theta = theta
+
+    broad_degree = einops.rearrange(broad_degree, "b_angle b_lm -> (b_angle b_lm)")
+    broad_order = einops.rearrange(broad_order, "b_angle b_lm -> (b_angle b_lm)")
+    broad_theta = einops.rearrange(broad_theta, "b_angle b_lm -> (b_angle b_lm)")
+
+    jax_norm_P_lm = __jax_norm_lagrange_poly(
+        degree=pitn.tract.t2j(broad_degree),
+        order=pitn.tract.t2j(broad_order),
+        theta=pitn.tract.t2j(broad_theta),
+        l_max=l_max,
     )
-    Y_m_abs_l = torch.where(order < 0, np.sqrt(2) * Y_m_abs_l.imag, Y_m_abs_l)
-    Y_m_abs_l = torch.where(order > 0, np.sqrt(2) * Y_m_abs_l.real, Y_m_abs_l)
-
-    return Y_m_abs_l.real
-
-
-@torch.no_grad()
-@functools.lru_cache(maxsize=10)
-def _gen_sh_norm_coeff(l_max: int, batch_size: int, device, dtype):
-
-    l, m = _get_degree_order_vecs(l_max=l_max, batch_size=batch_size)
-    l_ = l[0].numpy()
-    m_ = m[0].numpy()
-    f1 = (2 * l_ + 1) / (4 * np.pi)
-    f2 = scipy.special.factorial(l_ - m_) / scipy.special.factorial(l_ + m_)
-
-    N_l_m_ = np.sqrt(f1 * f2)
-    N_l_m = (
-        torch.from_numpy(N_l_m_).to(dtype=dtype, device=device).repeat(batch_size, 1)
+    norm_P_lm = einops.rearrange(
+        pitn.tract.j2t(jax_norm_P_lm),
+        "(b_angle b_lm) -> b_angle b_lm",
+        b_angle=batch_size_angle,
     )
-    return N_l_m
+
+    return norm_P_lm
 
 
-def sh_first_derivative(
+def _sph_harm(
+    degree: torch.Tensor,
+    order: torch.Tensor,
+    theta: torch.Tensor,
+    phi: torch.Tensor,
+) -> torch.Tensor:
+
+    theta = theta.squeeze(-1)
+    phi = phi.squeeze(-1)
+    degree = degree.squeeze(0)
+    order = order.squeeze(0)
+
+    assert tuple(degree.shape) == tuple(order.shape)
+    assert tuple(theta.shape) == tuple(phi.shape)
+    if (theta.ndim > 2) or (degree.ndim > 2):
+        raise RuntimeError(
+            "ERROR: Will only accept 1D or 2D shapes, "
+            + f"got {tuple(theta.shape)}, {tuple(degree.shape)}"
+        )
+    elif (theta.ndim == 2) and (degree.ndim == 2):
+        assert tuple(theta.shape) == tuple(degree.shape)
+    elif theta.ndim == 2:
+        target_shape = tuple(theta.shape)
+    elif degree.ndim == 2:
+        target_shape = tuple(degree.shape)
+    else:
+        target_shape = (theta.shape[0], degree.shape[0])
+    batch_size_angle = target_shape[0]
+    batch_size_lm = target_shape[1]
+    l_max = int(degree.max().cpu().item())
+
+    if tuple(degree.shape) != target_shape:
+        broad_degree = einops.repeat(
+            degree, "b_lm -> b_angle b_lm", b_angle=batch_size_angle
+        )
+        broad_order = einops.repeat(
+            order, "b_lm -> b_angle b_lm", b_angle=batch_size_angle
+        )
+    else:
+        broad_degree = degree
+        broad_order = order
+    if tuple(theta.shape) != target_shape:
+        broad_theta = einops.repeat(
+            theta, "b_angle -> b_angle b_lm", b_lm=batch_size_lm
+        )
+        broad_phi = einops.repeat(phi, "b_angle -> b_angle b_lm", b_lm=batch_size_lm)
+    else:
+        broad_theta = theta
+        broad_phi = phi
+
+    broad_degree = einops.rearrange(broad_degree, "b_angle b_lm -> (b_angle b_lm)")
+    broad_order = einops.rearrange(broad_order, "b_angle b_lm -> (b_angle b_lm)")
+    broad_theta = einops.rearrange(broad_theta, "b_angle b_lm -> (b_angle b_lm)")
+    broad_phi = einops.rearrange(broad_phi, "b_angle b_lm -> (b_angle b_lm)")
+
+    jax_sph_harm = __jax_spherical_harmonic(
+        degree=pitn.tract.t2j(broad_degree),
+        order=pitn.tract.t2j(broad_order),
+        theta=pitn.tract.t2j(broad_theta),
+        phi=pitn.tract.t2j(broad_phi),
+        l_max=l_max,
+    )
+    sph_harm_vals = einops.rearrange(
+        pitn.tract.j2t(jax_sph_harm),
+        "(b_angle b_lm) -> b_angle b_lm",
+        b_angle=batch_size_angle,
+    )
+
+    return sph_harm_vals
+
+
+def sh_grad(
     sh_coeffs: torch.Tensor,
     l: torch.Tensor,
     m: torch.Tensor,
@@ -162,7 +251,6 @@ def sh_first_derivative(
     phi: torch.Tensor,
     pole_angle_tol: float = 1e-5,
 ) -> torch.Tensor:
-    batch_size = theta.shape[0]
     l_max = int(l.max().cpu().item())
 
     cart_coords = pitn.tract.unit_sphere2xyz(theta=theta, phi=phi)
@@ -176,11 +264,12 @@ def sh_first_derivative(
     # Convenience function for indexing into l/m indexable matrices.
     bmask_l_m = lambda l_, m_: (Ellipsis, _broad_sh_mask(l_all=l, m_all=m, l=l_, m=m_))
 
-    P_l_m = _lagrange_poly(order=m, degree=l, x=torch.cos(elev_mrtrix))
-    N_l_m = _gen_sh_norm_coeff(
-        l_max=l_max, batch_size=batch_size, dtype=theta.dtype, device=theta.device
-    )
-    norm_P_l_m = N_l_m * P_l_m
+    # P_l_m = _lagrange_poly(order=m, degree=l, x=torch.cos(elev_mrtrix))
+    # N_l_m = _gen_sh_norm_coeff(
+    #     l_max=l_max, batch_size=batch_size, dtype=theta.dtype, device=theta.device
+    # )
+    # norm_P_l_m = N_l_m * P_l_m
+    norm_P_l_m = _norm_lagrange_poly(degree=l, order=m, theta=elev_mrtrix)
 
     nonzero_degrees = list(range(2, l_max + 1, 2))
     ds_delev_zonal = (
@@ -226,10 +315,9 @@ def sh_first_derivative(
     )
     ds_dazim = ds_dazim.sum(-1)
 
-    # This division by sin(theta) makes the result derivative differ from the finite-
-    # difference estimate. It's in the mrtrix derivative, but why?
-    # <https://github.com/MRtrix3/mrtrix3/blob/5e95b5a498da0358984d3dbc2d8c05e37610fb9d/core/math/SH.h#L643>
-    # ds_dazim /= torch.where(~at_pole, torch.sin(elev_mrtrix), 1.0)
+    # Scale ds/d azimuth to make this derivative into a gradient.
+    # <https://en.wikipedia.org/wiki/Spherical_coordinate_system#Integration_and_differentiation_in_spherical_coordinates>
+    ds_dazim /= torch.where(~at_pole, torch.sin(elev_mrtrix), 1.0)
 
     ds_delev = ds_delev_zonal + ds_delev_nonzone
 
@@ -262,22 +350,25 @@ def find_peak_grad_ascent(
 
     POLE_ANGLE_TOL = 1e-6
     grad_fn = partial(
-        sh_first_derivative,
+        sh_grad,
         sh_coeffs=sh_coeffs,
         l=l,
         m=m,
         pole_angle_tol=POLE_ANGLE_TOL,
     )
-
-    converged = torch.zeros_like(seed_theta).bool()
+    # If a batch has all zero phi angles or all zero sh coefficients, then that
+    # batch should not be optimized over, and should already be considered "converged"
+    converged = (seed_theta == 0.0) | (sh_coeffs == 0.0).all(-1)
+    # converged = torch.zeros_like(seed_theta).bool()
     nu_t = torch.zeros_like(params)
     epoch = 0
     if return_all_steps:
         param_steps.append(params)
 
     # Main gradient ascent loop.
-    while (not converged.all()) and (epoch < max_epochs):
-
+    if converged.all():
+        max_epochs = 0
+    for epoch in range(max_epochs):
         nu_tm1 = nu_t
         grad_t = grad_fn(theta=params[..., 0], phi=params[..., 1])
         nu_t = momentum * nu_tm1 + lr * grad_t
@@ -304,8 +395,9 @@ def find_peak_grad_ascent(
         )
 
         converged = converged | (arc_len_t_to_tp1 < tol_angular)
+        if converged.all():
+            break
 
-        epoch += 1
         params = params_tp1
         if return_all_steps:
             param_steps.append(params)
