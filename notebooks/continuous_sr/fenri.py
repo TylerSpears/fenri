@@ -370,18 +370,25 @@ num_load_and_tf_workers = 12
 
 
 # %%
-hcp_data_root_dir = Path("/data/srv/outputs/pitn/hcp")
-
-assert hcp_data_root_dir.exists()
-
-
-# %%
+# hcp_data_root_dir = Path("/data/srv/outputs/pitn/hcp")
+# assert hcp_data_root_dir.exists()
+# data_root_dir = hcp_data_root_dir
 # Set paths relative to the subj id root dir for each required image/file.
-rel_dwi_path = Path("ras/diffusion/dwi_norm.nii.gz")
-rel_grad_table_path = Path("ras/diffusion/ras_grad_mrtrix.b")
-rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
-rel_fivett_seg_path = Path("ras/segmentation/fivett_dwi-space_segmentation.nii.gz")
-rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
+# rel_dwi_path = Path("ras/diffusion/dwi_norm.nii.gz")
+# rel_grad_table_path = Path("ras/diffusion/ras_grad_mrtrix.b")
+# rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
+# rel_fivett_seg_path = Path("ras/segmentation/fivett_dwi-space_segmentation.nii.gz")
+# rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
+
+ismrm_data_root_dir = Path("/data/srv/outputs/pitn/ismrm_sim_dwi")
+assert ismrm_data_root_dir.exists()
+data_root_dir = ismrm_data_root_dir
+
+rel_dwi_path = Path("processed/diffusion/dwi_norm.nii.gz")
+rel_grad_table_path = Path("processed/diffusion/grad_mrtrix.b")
+rel_odf_path = Path("processed/odf/wm_norm_msmt_csd_fod.nii.gz")
+rel_fivett_seg_path = Path("processed/segmentation/fivett_segmentation.nii.gz")
+rel_brain_mask_path = Path("processed/brain_mask.nii.gz")
 
 
 # %%
@@ -447,7 +454,7 @@ train_subj_ids = p.train.subj_ids
 
 train_subj_dicts = list()
 for subj_id in train_subj_ids:
-    root_dir = hcp_data_root_dir / str(subj_id)
+    root_dir = data_root_dir / str(subj_id)
     d = dict(
         subj_id=str(subj_id),
         dwi_f=root_dir / rel_dwi_path,
@@ -499,7 +506,7 @@ val_subj_ids = p.val.subj_ids
 
 val_subj_dicts = list()
 for subj_id in val_subj_ids:
-    root_dir = hcp_data_root_dir / str(subj_id)
+    root_dir = data_root_dir / str(subj_id)
     d = dict(
         subj_id=str(subj_id),
         dwi_f=root_dir / rel_dwi_path,

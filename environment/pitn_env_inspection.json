@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "pip_version": "23.1.2",
+  "pip_version": "23.3.1",
   "installed": [
     {
       "metadata": {
@@ -7330,61 +7330,65 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "jax",
-        "version": "0.4.10",
+        "version": "0.4.19",
         "summary": "Differentiate, compile, and transform Numpy code.",
         "description_content_type": "text/markdown",
         "home_page": "https://github.com/google/jax",
         "author": "JAX team",
         "author_email": "jax-dev@google.com",
         "classifier": [
-          "Programming Language :: Python :: 3.8",
           "Programming Language :: Python :: 3.9",
           "Programming Language :: Python :: 3.10",
           "Programming Language :: Python :: 3.11"
         ],
         "requires_dist": [
-          "ml-dtypes (>=0.1.0)",
-          "numpy (>=1.21)",
+          "ml-dtypes >=0.2.0",
+          "numpy >=1.22",
           "opt-einsum",
-          "scipy (>=1.7)",
-          "protobuf (<4,>=3.13) ; extra == 'australis'",
-          "jaxlib (==0.4.9) ; extra == 'ci'",
-          "jaxlib (==0.4.10) ; extra == 'cpu'",
-          "jaxlib (==0.4.10+cuda11.cudnn86) ; extra == 'cuda'",
-          "jaxlib (==0.4.10+cuda11.cudnn82) ; extra == 'cuda11_cudnn82'",
-          "jaxlib (==0.4.10+cuda11.cudnn86) ; extra == 'cuda11_cudnn86'",
-          "jaxlib (==0.4.10+cuda11.cudnn86) ; extra == 'cuda11_local'",
-          "jaxlib (==0.4.10+cuda11.cudnn86) ; extra == 'cuda11_pip'",
-          "nvidia-cublas-cu11 (>=11.11) ; extra == 'cuda11_pip'",
-          "nvidia-cuda-cupti-cu11 (>=11.8) ; extra == 'cuda11_pip'",
-          "nvidia-cuda-nvcc-cu11 (>=11.8) ; extra == 'cuda11_pip'",
-          "nvidia-cuda-runtime-cu11 (>=11.8) ; extra == 'cuda11_pip'",
-          "nvidia-cudnn-cu11 (>=8.6) ; extra == 'cuda11_pip'",
-          "nvidia-cufft-cu11 (>=10.9) ; extra == 'cuda11_pip'",
-          "nvidia-cusolver-cu11 (>=11.4) ; extra == 'cuda11_pip'",
-          "nvidia-cusparse-cu11 (>=11.7) ; extra == 'cuda11_pip'",
-          "jaxlib (==0.4.10+cuda12.cudnn88) ; extra == 'cuda12_local'",
-          "jaxlib (==0.4.10+cuda12.cudnn88) ; extra == 'cuda12_pip'",
-          "nvidia-cublas-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cuda-cupti-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cuda-nvcc-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cuda-runtime-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cudnn-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cufft-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cusolver-cu12 ; extra == 'cuda12_pip'",
-          "nvidia-cusparse-cu12 ; extra == 'cuda12_pip'",
-          "jaxlib (==0.4.7) ; extra == 'minimum-jaxlib'",
-          "jaxlib (==0.4.10) ; extra == 'tpu'",
-          "libtpu-nightly (==0.1.dev20230511) ; extra == 'tpu'",
+          "scipy >=1.9",
+          "importlib-metadata >=4.6 ; python_version < \"3.10\"",
+          "numpy >=1.23.2 ; python_version >= \"3.11\"",
+          "numpy >=1.26.0 ; python_version >= \"3.12\"",
+          "scipy >=1.11.1 ; python_version >= \"3.12\"",
+          "protobuf <4,>=3.13 ; extra == 'australis'",
+          "jaxlib ==0.4.18 ; extra == 'ci'",
+          "jaxlib ==0.4.19 ; extra == 'cpu'",
+          "jaxlib ==0.4.19+cuda11.cudnn86 ; extra == 'cuda'",
+          "jaxlib ==0.4.19+cuda11.cudnn86 ; extra == 'cuda11_cudnn86'",
+          "jaxlib ==0.4.19+cuda11.cudnn86 ; extra == 'cuda11_local'",
+          "jaxlib ==0.4.19+cuda11.cudnn86 ; extra == 'cuda11_pip'",
+          "nvidia-cublas-cu11 >=11.11 ; extra == 'cuda11_pip'",
+          "nvidia-cuda-cupti-cu11 >=11.8 ; extra == 'cuda11_pip'",
+          "nvidia-cuda-nvcc-cu11 >=11.8 ; extra == 'cuda11_pip'",
+          "nvidia-cuda-runtime-cu11 >=11.8 ; extra == 'cuda11_pip'",
+          "nvidia-cudnn-cu11 >=8.8 ; extra == 'cuda11_pip'",
+          "nvidia-cufft-cu11 >=10.9 ; extra == 'cuda11_pip'",
+          "nvidia-cusolver-cu11 >=11.4 ; extra == 'cuda11_pip'",
+          "nvidia-cusparse-cu11 >=11.7 ; extra == 'cuda11_pip'",
+          "nvidia-nccl-cu11 >=2.18.3 ; extra == 'cuda11_pip'",
+          "jaxlib ==0.4.19+cuda12.cudnn89 ; extra == 'cuda12_local'",
+          "jaxlib ==0.4.19+cuda12.cudnn89 ; extra == 'cuda12_pip'",
+          "nvidia-cublas-cu12 >=12.2.5.6 ; extra == 'cuda12_pip'",
+          "nvidia-cuda-cupti-cu12 >=12.2.142 ; extra == 'cuda12_pip'",
+          "nvidia-cuda-nvcc-cu12 >=12.2.140 ; extra == 'cuda12_pip'",
+          "nvidia-cuda-runtime-cu12 >=12.2.140 ; extra == 'cuda12_pip'",
+          "nvidia-cudnn-cu12 >=8.9 ; extra == 'cuda12_pip'",
+          "nvidia-cufft-cu12 >=11.0.8.103 ; extra == 'cuda12_pip'",
+          "nvidia-cusolver-cu12 >=11.5.2 ; extra == 'cuda12_pip'",
+          "nvidia-cusparse-cu12 >=12.1.2.141 ; extra == 'cuda12_pip'",
+          "nvidia-nccl-cu12 >=2.18.3 ; extra == 'cuda12_pip'",
+          "nvidia-nvjitlink-cu12 >=12.2 ; extra == 'cuda12_pip'",
+          "jaxlib ==0.4.14 ; extra == 'minimum-jaxlib'",
+          "jaxlib ==0.4.19 ; extra == 'tpu'",
+          "libtpu-nightly ==0.1.dev20231018 ; extra == 'tpu'",
           "requests ; extra == 'tpu'"
         ],
-        "requires_python": ">=3.8",
+        "requires_python": ">=3.9",
         "provides_extra": [
           "australis",
           "ci",
           "cpu",
           "cuda",
-          "cuda11_cudnn82",
           "cuda11_cudnn86",
           "cuda11_local",
           "cuda11_pip",
@@ -7394,7 +7398,7 @@
           "tpu"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/jax-0.4.10.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/jax-0.4.19.dist-info",
       "installer": "pip",
       "requested": true
     },
@@ -7402,29 +7406,46 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "jaxlib",
-        "version": "0.4.10+cuda11.cudnn86",
-        "platform": [
-          "UNKNOWN"
-        ],
+        "version": "0.4.19+cuda12.cudnn89",
         "summary": "XLA library for JAX",
         "description_content_type": "text/markdown",
         "home_page": "https://github.com/google/jax",
         "author": "JAX team",
         "author_email": "jax-dev@google.com",
         "classifier": [
-          "Programming Language :: Python :: 3.8",
           "Programming Language :: Python :: 3.9",
           "Programming Language :: Python :: 3.10",
           "Programming Language :: Python :: 3.11"
         ],
         "requires_dist": [
-          "scipy (>=1.7)",
-          "numpy (>=1.21)",
-          "ml-dtypes (>=0.1.0)"
+          "scipy >=1.9",
+          "numpy >=1.22",
+          "ml-dtypes >=0.2.0",
+          "scipy >=1.11.1 ; python_version >= \"3.12\"",
+          "nvidia-cublas-cu11 >=11.11 ; extra == 'cuda11_pip'",
+          "nvidia-cuda-cupti-cu11 >=11.8 ; extra == 'cuda11_pip'",
+          "nvidia-cuda-nvcc-cu11 >=11.8 ; extra == 'cuda11_pip'",
+          "nvidia-cuda-runtime-cu11 >=11.8 ; extra == 'cuda11_pip'",
+          "nvidia-cudnn-cu11 >=8.8 ; extra == 'cuda11_pip'",
+          "nvidia-cufft-cu11 >=10.9 ; extra == 'cuda11_pip'",
+          "nvidia-cusolver-cu11 >=11.4 ; extra == 'cuda11_pip'",
+          "nvidia-cusparse-cu11 >=11.7 ; extra == 'cuda11_pip'",
+          "nvidia-cublas-cu12 ; extra == 'cuda12_pip'",
+          "nvidia-cuda-cupti-cu12 ; extra == 'cuda12_pip'",
+          "nvidia-cuda-nvcc-cu12 ; extra == 'cuda12_pip'",
+          "nvidia-cuda-runtime-cu12 ; extra == 'cuda12_pip'",
+          "nvidia-cudnn-cu12 >=8.9 ; extra == 'cuda12_pip'",
+          "nvidia-cufft-cu12 ; extra == 'cuda12_pip'",
+          "nvidia-cusolver-cu12 ; extra == 'cuda12_pip'",
+          "nvidia-cusparse-cu12 ; extra == 'cuda12_pip'"
         ],
-        "requires_python": ">=3.8"
+        "requires_python": ">=3.9",
+        "provides_extra": [
+          "cuda11_pip",
+          "cuda12_pip"
+        ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/jaxlib-0.4.10+cuda11.cudnn86.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/jaxlib-0.4.19+cuda12.cudnn89.dist-info",
       "installer": "pip",
       "requested": false
     },
@@ -9955,7 +9976,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "ml-dtypes",
-        "version": "0.1.0",
+        "version": "0.3.1",
         "description_content_type": "text/markdown",
         "author_email": "ml_dtypes authors <ml_dtypes@google.com>",
         "classifier": [
@@ -9965,16 +9986,17 @@
           "Intended Audience :: Science/Research"
         ],
         "requires_dist": [
-          "numpy (>1.20)",
-          "numpy (>=1.23.3) ; python_version > \"3.10\"",
-          "numpy (>=1.21.2) ; python_version > \"3.9\"",
+          "numpy >1.20",
+          "numpy >=1.23.3 ; python_version > \"3.10\"",
+          "numpy >=1.26.0 ; python_version > \"3.12\"",
+          "numpy >=1.21.2 ; python_version > \"3.9\"",
           "absl-py ; extra == 'dev'",
           "pytest ; extra == 'dev'",
           "pytest-xdist ; extra == 'dev'",
-          "pylint (>=2.6.0) ; extra == 'dev'",
+          "pylint >=2.6.0 ; extra == 'dev'",
           "pyink ; extra == 'dev'"
         ],
-        "requires_python": ">=3.7",
+        "requires_python": ">=3.9",
         "project_url": [
           "homepage, https://github.com/jax-ml/ml_dtypes",
           "repository, https://github.com/jax-ml/ml_dtypes"
@@ -9983,7 +10005,7 @@
           "dev"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/ml_dtypes-0.1.0.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/ml_dtypes-0.3.1.dist-info",
       "installer": "pip",
       "requested": false
     },
@@ -11420,8 +11442,8 @@
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cublas-cu11",
-        "version": "11.11.3.6",
+        "name": "nvidia-cublas-cu12",
+        "version": "12.3.2.9",
         "summary": "CUBLAS native runtime libraries",
         "keywords": [
           "cuda",
@@ -11459,15 +11481,15 @@
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cublas_cu11-11.11.3.6.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cublas_cu12-12.3.2.9.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cuda-cupti-cu11",
-        "version": "11.8.87",
+        "name": "nvidia-cuda-cupti-cu12",
+        "version": "12.3.52",
         "summary": "CUDA profiling tools runtime libs.",
         "keywords": [
           "cuda",
@@ -11505,15 +11527,15 @@
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_cupti_cu11-11.8.87.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_cupti_cu12-12.3.52.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cuda-nvcc-cu11",
-        "version": "11.8.89",
+        "name": "nvidia-cuda-nvcc-cu12",
+        "version": "12.3.52",
         "summary": "CUDA nvcc",
         "keywords": [
           "cuda",
@@ -11551,15 +11573,61 @@
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_nvcc_cu11-11.8.89.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_nvcc_cu12-12.3.52.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cuda-runtime-cu11",
-        "version": "11.8.89",
+        "name": "nvidia-cuda-nvrtc-cu12",
+        "version": "12.3.52",
+        "summary": "NVRTC native runtime libraries",
+        "keywords": [
+          "cuda",
+          "nvidia",
+          "runtime",
+          "machine learning",
+          "deep learning"
+        ],
+        "home_page": "https://developer.nvidia.com/cuda-zone",
+        "author": "Nvidia CUDA Installer Team",
+        "author_email": "cuda_installer@nvidia.com",
+        "classifier": [
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "Intended Audience :: Education",
+          "Intended Audience :: Science/Research",
+          "License :: Other/Proprietary License",
+          "Natural Language :: English",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3 :: Only",
+          "Topic :: Scientific/Engineering",
+          "Topic :: Scientific/Engineering :: Mathematics",
+          "Topic :: Scientific/Engineering :: Artificial Intelligence",
+          "Topic :: Software Development",
+          "Topic :: Software Development :: Libraries",
+          "Operating System :: Microsoft :: Windows",
+          "Operating System :: POSIX :: Linux"
+        ],
+        "requires_python": ">=3"
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_nvrtc_cu12-12.3.52.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "nvidia-cuda-runtime-cu12",
+        "version": "12.3.52",
         "summary": "CUDA Runtime native Libraries",
         "keywords": [
           "cuda",
@@ -11597,15 +11665,15 @@
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_runtime_cu11-11.8.89.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cuda_runtime_cu12-12.3.52.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cudnn-cu11",
-        "version": "8.9.1.23",
+        "name": "nvidia-cudnn-cu12",
+        "version": "8.9.5.30",
         "summary": "cuDNN runtime libraries",
         "keywords": [
           "cuda",
@@ -11642,19 +11710,20 @@
           "Operating System :: POSIX :: Linux"
         ],
         "requires_dist": [
-          "nvidia-cublas-cu11"
+          "nvidia-cublas-cu12",
+          "nvidia-cuda-nvrtc-cu12"
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cudnn_cu11-8.9.1.23.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cudnn_cu12-8.9.5.30.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cufft-cu11",
-        "version": "10.9.0.58",
+        "name": "nvidia-cufft-cu12",
+        "version": "11.0.11.19",
         "summary": "CUFFT native runtime libraries",
         "keywords": [
           "cuda",
@@ -11692,15 +11761,15 @@
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cufft_cu11-10.9.0.58.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cufft_cu12-11.0.11.19.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cusolver-cu11",
-        "version": "11.4.1.48",
+        "name": "nvidia-cusolver-cu12",
+        "version": "11.5.3.52",
         "summary": "CUDA solver native runtime libraries",
         "keywords": [
           "cuda",
@@ -11737,20 +11806,71 @@
           "Operating System :: POSIX :: Linux"
         ],
         "requires_dist": [
-          "nvidia-cublas-cu11"
+          "nvidia-cublas-cu12",
+          "nvidia-nvjitlink-cu12",
+          "nvidia-cusparse-cu12"
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cusolver_cu11-11.4.1.48.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cusolver_cu12-11.5.3.52.dist-info",
       "installer": "pip",
       "requested": false
     },
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "nvidia-cusparse-cu11",
-        "version": "11.7.5.86",
+        "name": "nvidia-cusparse-cu12",
+        "version": "12.1.3.153",
         "summary": "CUSPARSE native runtime libraries",
+        "keywords": [
+          "cuda",
+          "nvidia",
+          "runtime",
+          "machine learning",
+          "deep learning"
+        ],
+        "home_page": "https://developer.nvidia.com/cuda-zone",
+        "author": "Nvidia CUDA Installer Team",
+        "author_email": "cuda_installer@nvidia.com",
+        "classifier": [
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "Intended Audience :: Education",
+          "Intended Audience :: Science/Research",
+          "License :: Other/Proprietary License",
+          "Natural Language :: English",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3 :: Only",
+          "Topic :: Scientific/Engineering",
+          "Topic :: Scientific/Engineering :: Mathematics",
+          "Topic :: Scientific/Engineering :: Artificial Intelligence",
+          "Topic :: Software Development",
+          "Topic :: Software Development :: Libraries",
+          "Operating System :: Microsoft :: Windows",
+          "Operating System :: POSIX :: Linux"
+        ],
+        "requires_dist": [
+          "nvidia-nvjitlink-cu12"
+        ],
+        "requires_python": ">=3"
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cusparse_cu12-12.1.3.153.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "nvidia-nccl-cu12",
+        "version": "2.19.3",
+        "summary": "NVIDIA Collective Communication Library (NCCL) Runtime",
         "keywords": [
           "cuda",
           "nvidia",
@@ -11787,7 +11907,53 @@
         ],
         "requires_python": ">=3"
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_cusparse_cu11-11.7.5.86.dist-info",
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_nccl_cu12-2.19.3.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "nvidia-nvjitlink-cu12",
+        "version": "12.3.52",
+        "summary": "Nvidia JIT LTO Library",
+        "keywords": [
+          "cuda",
+          "nvidia",
+          "runtime",
+          "machine learning",
+          "deep learning"
+        ],
+        "home_page": "https://developer.nvidia.com/cuda-zone",
+        "author": "Nvidia CUDA Installer Team",
+        "author_email": "cuda_installer@nvidia.com",
+        "classifier": [
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "Intended Audience :: Education",
+          "Intended Audience :: Science/Research",
+          "License :: Other/Proprietary License",
+          "Natural Language :: English",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.5",
+          "Programming Language :: Python :: 3.6",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3 :: Only",
+          "Topic :: Scientific/Engineering",
+          "Topic :: Scientific/Engineering :: Mathematics",
+          "Topic :: Scientific/Engineering :: Artificial Intelligence",
+          "Topic :: Software Development",
+          "Topic :: Software Development :: Libraries",
+          "Operating System :: Microsoft :: Windows",
+          "Operating System :: POSIX :: Linux"
+        ],
+        "requires_python": ">=3"
+      },
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/nvidia_nvjitlink_cu12-12.3.52.dist-info",
       "installer": "pip",
       "requested": false
     },
@@ -12504,7 +12670,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "pip",
-        "version": "23.1.2",
+        "version": "23.3.1",
         "summary": "The PyPA recommended tool for installing Python packages.",
         "home_page": "https://pip.pypa.io/",
         "author": "The pip developers",
@@ -12522,6 +12688,7 @@
           "Programming Language :: Python :: 3.9",
           "Programming Language :: Python :: 3.10",
           "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12",
           "Programming Language :: Python :: Implementation :: CPython",
           "Programming Language :: Python :: Implementation :: PyPy"
         ],
@@ -12532,7 +12699,9 @@
           "Changelog, https://pip.pypa.io/en/stable/news/"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/pip-23.1.2-py3.11.egg-info"
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/pip-23.3.1.dist-info",
+      "installer": "pip",
+      "requested": true
     },
     {
       "metadata": {
@@ -17318,7 +17487,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "torch",
-        "version": "2.0.1",
+        "version": "2.1.0",
         "summary": "Tensors and Dynamic neural networks in Python with strong GPU acceleration",
         "description_content_type": "text/markdown",
         "keywords": [
@@ -17353,14 +17522,18 @@
           "sympy",
           "networkx",
           "jinja2",
+          "fsspec",
+          "jinja2 ; extra == \"dynamo\"",
+          "pytorch-triton==2.1.0+e6216047b8 ; extra == \"dynamo\"",
           "opt-einsum>=3.3 ; extra == \"opt-einsum\""
         ],
         "requires_python": ">=3.8.0",
         "provides_extra": [
-          "opt-einsum"
+          "opt-einsum",
+          "dynamo"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/torch-2.0.1-py3.10.egg-info"
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/torch-2.1.0-py3.10.egg-info"
     },
     {
       "metadata": {
@@ -17659,8 +17832,9 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "torchvision",
-        "version": "0.15.2",
+        "version": "0.16.0",
         "summary": "image and video datasets and models for torch deep learning",
+        "description_content_type": "text/markdown",
         "home_page": "https://github.com/pytorch/vision",
         "author": "PyTorch Core Team",
         "author_email": "soumith@pytorch.org",
@@ -17676,7 +17850,7 @@
           "scipy"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/torchvision-0.15.2-py3.10.egg-info"
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/torchvision-0.16.0-py3.10.egg-info"
     },
     {
       "metadata": {
@@ -17905,7 +18079,7 @@
       "metadata": {
         "metadata_version": "2.1",
         "name": "triton",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "summary": "A language and compiler for custom Deep Learning operations",
         "keywords": [
           "Compiler",
@@ -17919,13 +18093,16 @@
           "Intended Audience :: Developers",
           "Topic :: Software Development :: Build Tools",
           "License :: OSI Approved :: MIT License",
-          "Programming Language :: Python :: 3.6"
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11"
         ],
         "requires_dist": [
-          "cmake",
           "filelock",
-          "torch",
-          "lit",
+          "cmake>=3.18 ; extra == \"build\"",
+          "lit ; extra == \"build\"",
           "autopep8 ; extra == \"tests\"",
           "flake8 ; extra == \"tests\"",
           "isort ; extra == \"tests\"",
@@ -17937,11 +18114,12 @@
           "tabulate ; extra == \"tutorials\""
         ],
         "provides_extra": [
+          "build",
           "tests",
           "tutorials"
         ]
       },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/triton-2.0.0-py3.10.egg-info"
+      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/triton-2.1.0-py3.10.egg-info"
     },
     {
       "metadata": {

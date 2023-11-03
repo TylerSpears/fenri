@@ -2,82 +2,47 @@
 # $ conda create --name <env> --file <this file>
 # platform: linux-64
 @EXPLICIT
-https://conda.anaconda.org/nvidia/linux-64/cuda-samples-11.6.101-h8efea70_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pybind11-abi-4-hd8ed1ab_3.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/ca-certificates-2023.7.22-hbcca054_0.conda
-https://conda.anaconda.org/nvidia/linux-64/cuda-cccl-11.7.91-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-cudart-11.8.89-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-cuobjdump-11.7.91-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-cupti-11.8.87-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-cuxxfilt-11.7.91-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-demo-suite-12.0.76-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-documentation-12.0.76-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-driver-dev-11.7.99-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-gdb-11.8.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-memcheck-11.8.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nsight-11.8.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvcc-11.7.99-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvdisasm-11.8.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvml-dev-11.7.91-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvprof-11.8.87-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvprune-11.7.91-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvrtc-11.8.89-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvtx-11.8.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-sanitizer-api-11.8.86-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-cudart-12.1.105-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-cupti-12.1.105-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-nvrtc-12.1.105-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-nvtx-12.1.105-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-opencl-12.3.52-0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/font-ttf-dejavu-sans-mono-2.37-hab24e00_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/font-ttf-inconsolata-3.000-h77eed37_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/font-ttf-source-code-pro-2.038-h77eed37_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/font-ttf-ubuntu-0.83-hab24e00_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/kernel-headers_linux-64-2.6.32-he073ed8_15.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/ld_impl_linux-64-2.40-h41732ed_0.conda
-https://conda.anaconda.org/nvidia/linux-64/libcublas-11.11.3.6-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcufft-10.9.0.58-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcufile-1.4.0.31-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcurand-10.3.0.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcusolver-11.4.1.48-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcusparse-11.7.5.86-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libcublas-12.1.0.26-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libcufft-11.0.2.4-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libcufile-1.8.0.34-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libcurand-10.3.4.52-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libcusolver-11.4.4.55-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libcusparse-12.0.2.55-0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libgcc-devel_linux-64-12.1.0-h1ec3361_17.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libgfortran5-12.1.0-hdcd56e2_17.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libnpp-11.8.0.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libnvjpeg-11.9.0.86-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libnpp-12.0.2.50-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libnvjitlink-12.1.105-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/libnvjpeg-12.1.1.14-0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-12.1.0-ha89aaad_17.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/mkl-include-2022.1.0-h84fe81f_915.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/nsight-compute-2022.3.0.22-0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pandoc-2.19-ha770c72_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/python_abi-3.10-3_cp310.conda
 https://conda.anaconda.org/pytorch/noarch/pytorch-mutex-1.0-cuda.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/tzdata-2022c-h191b570_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/utfcpp-3.2.2-ha770c72_0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-command-line-tools-11.7.1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-compiler-11.7.1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-cudart-dev-11.7.99-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-libraries-11.8.0-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nsight-compute-11.8.0-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvrtc-dev-11.7.99-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-nvvp-11.8.87-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-libraries-12.1.0-0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/fonts-conda-forge-1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/gds-tools-1.4.0.31-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcublas-dev-11.11.3.6-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcufft-dev-10.9.0.58-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcufile-dev-1.4.0.31-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcurand-dev-10.3.0.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcusolver-dev-11.4.1.48-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libcusparse-dev-11.7.5.86-0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libgfortran-ng-12.1.0-h69a702a_17.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libgomp-12.1.0-h8d9b700_17.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libnpp-dev-11.8.0.86-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/libnvjpeg-dev-11.9.0.86-0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/sysroot_linux-64-2.12-he073ed8_15.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/binutils_impl_linux-64-2.40-hf600244_0.conda
-https://conda.anaconda.org/nvidia/linux-64/cuda-libraries-dev-11.7.1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-runtime-11.8.0-0.tar.bz2
+https://conda.anaconda.org/nvidia/linux-64/cuda-runtime-12.1.0-0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/fonts-conda-ecosystem-1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-visual-tools-11.7.1-0.tar.bz2
-https://conda.anaconda.org/pytorch/linux-64/pytorch-cuda-11.8-h7e8668a_5.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-tools-11.7.1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-toolkit-11.7.1-0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cuda-11.7.1-0.tar.bz2
+https://conda.anaconda.org/pytorch/linux-64/pytorch-cuda-12.1-ha16c6d3_5.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-2_kmp_llvm.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libgcc-ng-12.1.0-h8d9b700_17.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/alsa-lib-1.2.8-h166bdaf_0.tar.bz2
@@ -86,7 +51,6 @@ https://conda.anaconda.org/conda-forge/linux-64/attr-2.5.1-h166bdaf_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-h7f98852_4.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/c-ares-1.18.1-h7f98852_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/charls-2.3.4-h9c3ff4c_0.tar.bz2
-https://conda.anaconda.org/nvidia/linux-64/cudatoolkit-11.7.0-hd8887f6_10.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/dav1d-1.0.0-h166bdaf_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/double-conversion-3.2.0-h27087fc_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/eigen-3.4.0-h4bd325d_0.tar.bz2
@@ -99,7 +63,7 @@ https://conda.anaconda.org/conda-forge/linux-64/gmp-6.2.1-h58526e2_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/graphite2-1.3.13-h58526e2_1001.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/gstreamer-orc-0.4.33-h166bdaf_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/icu-70.1-h27087fc_0.tar.bz2
-https://conda.anaconda.org/conda-forge/linux-64/jpeg-9e-h0b41bf4_3.conda
+https://conda.anaconda.org/conda-forge/linux-64/jpeg-9e-h166bdaf_2.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/jsoncpp-1.9.5-h4bd325d_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/jxrlib-1.1-h7f98852_2.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/keyutils-1.6.1-h166bdaf_0.tar.bz2
@@ -116,6 +80,7 @@ https://conda.anaconda.org/conda-forge/linux-64/libffi-3.4.2-h7f98852_5.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libgcc-7.2.0-h69d50b8_2.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libglu-9.0.0-he1b5a44_1001.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libiconv-1.17-h166bdaf_0.tar.bz2
+https://conda.anaconda.org/pytorch/linux-64/libjpeg-turbo-2.0.0-h9bf148f_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libnsl-2.0.0-h7f98852_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libogg-1.3.4-h7f98852_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/libopenblas-0.3.21-pthreads_h78a6416_3.tar.bz2
@@ -143,7 +108,7 @@ https://conda.anaconda.org/conda-forge/linux-64/nettle-3.8.1-hc379101_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/ninja-1.11.0-h924138e_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/nspr-4.35-h27087fc_0.conda
 https://conda.anaconda.org/conda-forge/linux-64/openh264-2.3.0-h27087fc_0.tar.bz2
-https://conda.anaconda.org/conda-forge/linux-64/openssl-3.1.3-hd590300_0.conda
+https://conda.anaconda.org/conda-forge/linux-64/openssl-3.1.4-hd590300_0.conda
 https://conda.anaconda.org/conda-forge/linux-64/pcre-8.45-h9c3ff4c_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pixman-0.40.0-h36c2ea0_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pkg-config-0.29.2-h36c2ea0_1008.tar.bz2
@@ -169,7 +134,6 @@ https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-h7f98852_2.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/yaml-cpp-0.7.0-h27087fc_2.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/zfp-1.0.0-h27087fc_3.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.0.6-h166bdaf_0.tar.bz2
-https://conda.anaconda.org/conda-forge/linux-64/cudnn-8.4.1.50-hed8a83a_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/expat-2.5.0-hcb278e6_1.conda
 https://conda.anaconda.org/conda-forge/linux-64/gcc_impl_linux-64-12.1.0-hea43390_17.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/jack-1.9.22-h11f4161_0.conda
@@ -198,7 +162,6 @@ https://conda.anaconda.org/conda-forge/linux-64/libzip-1.9.2-hc929e4a_1.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/llvm-openmp-14.0.4-he0ac6c6_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/mpfr-4.2.0-hb012696_0.conda
 https://conda.anaconda.org/conda-forge/linux-64/mysql-common-8.0.32-hf1915f5_2.conda
-https://conda.anaconda.org/conda-forge/linux-64/nccl-2.14.3.1-h0800d71_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/openblas-0.3.21-pthreads_h320a7e8_3.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/p11-kit-0.24.1-hc5aa10d_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pcre2-10.40-hc3806b6_0.tar.bz2
@@ -334,12 +297,14 @@ https://conda.anaconda.org/conda-forge/linux-64/mypy_extensions-0.4.3-py310hff52
 https://conda.anaconda.org/conda-forge/noarch/natsort-8.1.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/nest-asyncio-1.5.5-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/networkx-2.8.5-pyhd8ed1ab_0.tar.bz2
-# no URL for: nvidia_cublas_cu11-11.11.3.6.dist-info
-# no URL for: nvidia_cuda_cupti_cu11-11.8.87.dist-info
-# no URL for: nvidia_cuda_nvcc_cu11-11.8.89.dist-info
-# no URL for: nvidia_cuda_runtime_cu11-11.8.89.dist-info
-# no URL for: nvidia_cufft_cu11-10.9.0.58.dist-info
-# no URL for: nvidia_cusparse_cu11-11.7.5.86.dist-info
+# no URL for: nvidia_cublas_cu12-12.3.2.9.dist-info
+# no URL for: nvidia_cuda_cupti_cu12-12.3.52.dist-info
+# no URL for: nvidia_cuda_nvcc_cu12-12.3.52.dist-info
+# no URL for: nvidia_cuda_nvrtc_cu12-12.3.52.dist-info
+# no URL for: nvidia_cuda_runtime_cu12-12.3.52.dist-info
+# no URL for: nvidia_cufft_cu12-11.0.11.19.dist-info
+# no URL for: nvidia_nccl_cu12-2.19.3.dist-info
+# no URL for: nvidia_nvjitlink_cu12-12.3.52.dist-info
 https://conda.anaconda.org/conda-forge/linux-64/openjpeg-2.5.0-h7d73246_1.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/ordered-set-4.1.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/orjson-3.9.1-py310h1e2579a_0.conda
@@ -348,6 +313,7 @@ https://conda.anaconda.org/conda-forge/noarch/parso-0.8.3-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pastel-0.2.1-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pathspec-0.9.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pickleshare-0.7.5-py_1003.tar.bz2
+# no URL for: pip-23.3.1.dist-info
 https://conda.anaconda.org/conda-forge/noarch/pkginfo-1.8.3-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pkgutil-resolve-name-1.3.10-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/platformdirs-2.5.2-pyhd8ed1ab_1.tar.bz2
@@ -474,13 +440,12 @@ https://conda.anaconda.org/conda-forge/linux-64/mkl-2022.1.0-h84fe81f_915.tar.bz
 https://conda.anaconda.org/conda-forge/noarch/mock-4.0.3-pyhd8ed1ab_4.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/multiprocess-0.70.14-py310h5764c6d_3.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/nodeenv-1.7.0-pyhd8ed1ab_0.tar.bz2
-# no URL for: nvidia_cudnn_cu11-8.9.1.23.dist-info
-# no URL for: nvidia_cusolver_cu11-11.4.1.48.dist-info
+# no URL for: nvidia_cudnn_cu12-8.9.5.30.dist-info
+# no URL for: nvidia_cusparse_cu12-12.1.3.153.dist-info
 https://conda.anaconda.org/conda-forge/noarch/packaging-20.9-pyh44b312d_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/partd-1.3.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pexpect-4.8.0-pyh1a96a4e_2.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pillow-9.2.0-py310h454ad03_3.tar.bz2
-https://conda.anaconda.org/conda-forge/noarch/pip-23.1.2-pyhd8ed1ab_0.conda
 # no URL for: plotly-5.10.0.dist-info
 https://conda.anaconda.org/conda-forge/noarch/ppft-1.7.6.6-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/pretty_errors-1.2.25-pyhd8ed1ab_0.tar.bz2
@@ -543,6 +508,7 @@ https://conda.anaconda.org/conda-forge/noarch/lightning-utilities-0.8.0-pyhd8ed1
 https://conda.anaconda.org/conda-forge/noarch/markdown-3.4.1-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/mdit-py-plugins-0.3.1-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/mkl-devel-2022.1.0-ha770c72_916.tar.bz2
+# no URL for: nvidia_cusolver_cu12-11.5.3.52.dist-info
 https://conda.anaconda.org/conda-forge/noarch/pathos-0.3.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pydantic-1.9.2-py310h5764c6d_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/pyproj-3.3.1-py310hf94497c_1.tar.bz2
@@ -588,7 +554,6 @@ https://conda.anaconda.org/conda-forge/noarch/jupytext-1.14.0-pyheef035f_0.tar.b
 https://conda.anaconda.org/conda-forge/linux-64/keyring-23.8.2-py310hff52083_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/liblapacke-3.9.0-16_linux64_mkl.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/librsvg-2.54.4-h7abd40a_0.tar.bz2
-https://conda.anaconda.org/conda-forge/linux-64/magma-2.5.4-hc72dce7_4.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/nbclient-0.6.6-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/nbstripout-0.6.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/numpy-1.24.4-py310ha4c1d20_0.conda
@@ -608,7 +573,7 @@ https://conda.anaconda.org/conda-forge/noarch/ipdb-0.13.9-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/ipykernel-6.15.1-pyh210e3f2_0.tar.bz2
 # no URL for: jaxtyping-0.2.19.dist-info
 https://conda.anaconda.org/conda-forge/linux-64/matplotlib-base-3.5.2-py310h5701ce4_1.tar.bz2
-# no URL for: ml_dtypes-0.1.0.dist-info
+# no URL for: ml_dtypes-0.3.1.dist-info
 https://conda.anaconda.org/conda-forge/noarch/nbconvert-core-6.5.3-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/linux-64/nibabel-5.1.0-py310hff52083_2.conda
 https://conda.anaconda.org/conda-forge/linux-64/numba-0.57.1-py310h0f6aa51_0.conda
@@ -636,8 +601,8 @@ https://conda.anaconda.org/conda-forge/noarch/ensureconda-1.4.3-pyhd8ed1ab_0.tar
 https://conda.anaconda.org/conda-forge/noarch/fslpy-3.10.0-pyhd8ed1ab_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/fury-0.8.0-pyh6c4a22f_0.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/google-auth-2.10.0-pyh6c4a22f_0.tar.bz2
-# no URL for: jax-0.4.10.dist-info
-# no URL for: jaxlib-0.4.10+cuda11.cudnn86.dist-info
+# no URL for: jax-0.4.19.dist-info
+# no URL for: jaxlib-0.4.19+cuda12.cudnn89.dist-info
 https://conda.anaconda.org/conda-forge/noarch/jupyter_server-1.23.4-pyhd8ed1ab_0.conda
 https://conda.anaconda.org/conda-forge/noarch/lightning-cloud-0.5.38-pyhd8ed1ab_0.conda
 https://conda.anaconda.org/conda-forge/linux-64/matplotlib-3.5.2-py310hff52083_1.tar.bz2
@@ -697,7 +662,7 @@ https://conda.anaconda.org/conda-forge/noarch/torchmetrics-0.10.0-pyhd8ed1ab_0.t
 https://conda.anaconda.org/conda-forge/noarch/pytorch-lightning-2.0.3-pyhd8ed1ab_0.conda
 https://conda.anaconda.org/conda-forge/noarch/lightning-2.1.0-pyhd8ed1ab_0.conda
 # no URL for: pitn-0.0.post1.dev291+ge9e5f58.d20230531.dist-info
-https://conda.anaconda.org/pytorch/linux-64/pytorch-2.0.1-py3.10_cuda11.8_cudnn8.7.0_0.tar.bz2
-https://conda.anaconda.org/pytorch/linux-64/torchtriton-2.0.0-py310.tar.bz2
-https://conda.anaconda.org/pytorch/linux-64/torchvision-0.15.2-py310_cu118.tar.bz2
+https://conda.anaconda.org/pytorch/linux-64/pytorch-2.1.0-py3.10_cuda12.1_cudnn8.9.2_0.tar.bz2
+https://conda.anaconda.org/pytorch/linux-64/torchtriton-2.1.0-py310.tar.bz2
+https://conda.anaconda.org/pytorch/linux-64/torchvision-0.16.0-py310_cu121.tar.bz2
 https://conda.anaconda.org/conda-forge/noarch/timm-0.4.12-pyhd8ed1ab_0.tar.bz2

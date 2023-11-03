@@ -27,11 +27,15 @@ if __name__ == "__main__":
     affine = warped_fivett_im.affine
     brain_mask_im = nib.load(brain_mask_f)
     brain_mask = brain_mask_im.get_fdata().astype(bool)
-
+    assert np.isclose(brain_mask_im.affine, affine).all()
     comp_1_pv_im = nib.load(comp_1_pv_f)
     comp_2_pv_im = nib.load(comp_2_pv_f)
     comp_3_pv_im = nib.load(comp_3_pv_f)
     comp_4_pv_im = nib.load(comp_4_pv_f)
+    assert np.isclose(comp_1_pv_im.affine, affine).all()
+    assert np.isclose(comp_2_pv_im.affine, affine).all()
+    assert np.isclose(comp_3_pv_im.affine, affine).all()
+    assert np.isclose(comp_4_pv_im.affine, affine).all()
     comp_1_pv = comp_1_pv_im.get_fdata()
     comp_2_pv = comp_2_pv_im.get_fdata()
     wm_pv = comp_1_pv + comp_2_pv

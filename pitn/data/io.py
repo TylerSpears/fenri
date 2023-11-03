@@ -60,9 +60,14 @@ def load_vol(
         src2target_ornt = nib.orientations.ornt_transform(src_ornt, target_ornt)
         vol_im = vol_im.as_reoriented(src2target_ornt)
 
-    vol = torch.from_numpy(
-        vol_im.get_fdata(caching="unchanged", dtype=vol_im.get_data_dtype())
-    )
+    try:
+        vol = torch.from_numpy(
+            vol_im.get_fdata(caching="unchanged", dtype=vol_im.get_data_dtype())
+        )
+    except ValueError:
+        vol = torch.from_numpy(
+            vol_im.get_fdata(caching="unchanged").astype(vol_im.get_data_dtype())
+        )
     if vol.ndim == 4:
         vol = einops.rearrange(vol, "a b c channel -> channel a b c")
     # Create a channel dimension if requested.

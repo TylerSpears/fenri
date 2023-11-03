@@ -703,3 +703,94 @@
 
 2023-10-22 20:59:07  (rev 11)
      lightning  {2.0.9.post0 (conda-forge/noarch) -> 2.1.0 (conda-forge/noarch)}
+
+2023-11-01 11:00:04  (rev 12)
+     cuda-cudart  {11.8.89 (nvidia/linux-64) -> 12.1.105 (nvidia/linux-64)}
+     cuda-cupti  {11.8.87 (nvidia/linux-64) -> 12.1.105 (nvidia/linux-64)}
+     cuda-libraries  {11.8.0 (nvidia/linux-64) -> 12.1.0 (nvidia/linux-64)}
+     cuda-nvrtc  {11.8.89 (nvidia/linux-64) -> 12.1.105 (nvidia/linux-64)}
+     cuda-nvtx  {11.8.86 (nvidia/linux-64) -> 12.1.105 (nvidia/linux-64)}
+     cuda-runtime  {11.8.0 (nvidia/linux-64) -> 12.1.0 (nvidia/linux-64)}
+     jpeg  {9e (conda-forge/linux-64) -> 9e (conda-forge/linux-64)}
+     libcublas  {11.11.3.6 (nvidia/linux-64) -> 12.1.0.26 (nvidia/linux-64)}
+     libcufft  {10.9.0.58 (nvidia/linux-64) -> 11.0.2.4 (nvidia/linux-64)}
+     libcufile  {1.4.0.31 (nvidia/linux-64) -> 1.8.0.34 (nvidia/linux-64)}
+     libcurand  {10.3.0.86 (nvidia/linux-64) -> 10.3.4.52 (nvidia/linux-64)}
+     libcusolver  {11.4.1.48 (nvidia/linux-64) -> 11.4.4.55 (nvidia/linux-64)}
+     libcusparse  {11.7.5.86 (nvidia/linux-64) -> 12.0.2.55 (nvidia/linux-64)}
+     libnpp  {11.8.0.86 (nvidia/linux-64) -> 12.0.2.50 (nvidia/linux-64)}
+     libnvjpeg  {11.9.0.86 (nvidia/linux-64) -> 12.1.1.14 (nvidia/linux-64)}
+     openssl  {3.1.3 (conda-forge/linux-64) -> 3.1.4 (conda-forge/linux-64)}
+     pytorch  {2.0.1 (pytorch/linux-64) -> 2.1.0 (pytorch/linux-64)}
+     pytorch-cuda  {11.8 (pytorch/linux-64) -> 12.1 (pytorch/linux-64)}
+     torchtriton  {2.0.0 (pytorch/linux-64) -> 2.1.0 (pytorch/linux-64)}
+     torchvision  {0.15.2 (pytorch/linux-64) -> 0.16.0 (pytorch/linux-64)}
+    +cuda-opencl-12.3.52 (nvidia/linux-64)
+    +libjpeg-turbo-2.0.0 (pytorch/linux-64)
+    +libnvjitlink-12.1.105 (nvidia/linux-64)
+
+2023-11-01 11:01:43  (rev 13)
+    -cudnn-8.4.1.50 (conda-forge/linux-64)
+
+2023-11-01 11:19:02  (rev 14)
+    -cuda-11.7.1 (nvidia/linux-64)
+
+2023-11-01 11:20:10  (rev 15)
+    -cuda-toolkit-11.7.1 (nvidia/linux-64)
+
+2023-11-01 11:28:49  (rev 16)
+    -cuda-command-line-tools-11.7.1 (nvidia/linux-64)
+    -cuda-compiler-11.7.1 (nvidia/linux-64)
+    -cuda-cudart-dev-11.7.99 (nvidia/linux-64)
+    -cuda-cuobjdump-11.7.91 (nvidia/linux-64)
+    -cuda-cuxxfilt-11.7.91 (nvidia/linux-64)
+    -cuda-driver-dev-11.7.99 (nvidia/linux-64)
+    -cuda-gdb-11.8.86 (nvidia/linux-64)
+    -cuda-libraries-dev-11.7.1 (nvidia/linux-64)
+    -cuda-nsight-11.8.86 (nvidia/linux-64)
+    -cuda-nsight-compute-11.8.0 (nvidia/linux-64)
+    -cuda-nvrtc-dev-11.7.99 (nvidia/linux-64)
+    -cuda-samples-11.6.101 (nvidia/linux-64)
+    -cuda-sanitizer-api-11.8.86 (nvidia/linux-64)
+    -cuda-tools-11.7.1 (nvidia/linux-64)
+    -cuda-visual-tools-11.7.1 (nvidia/linux-64)
+    -cudatoolkit-11.7.0 (nvidia/linux-64)
+    -magma-2.5.4 (conda-forge/linux-64)
+    -nccl-2.14.3.1 (conda-forge/linux-64)
+
+2023-11-01 11:32:05  (rev 17)
+    -cuda-memcheck-11.8.86 (nvidia/linux-64)
+    -cuda-nvcc-11.7.99 (nvidia/linux-64)
+    -cuda-nvdisasm-11.8.86 (nvidia/linux-64)
+    -cuda-nvml-dev-11.7.91 (nvidia/linux-64)
+    -cuda-nvprof-11.8.87 (nvidia/linux-64)
+    -cuda-nvprune-11.7.91 (nvidia/linux-64)
+    -cuda-nvvp-11.8.87 (nvidia/linux-64)
+    -libcublas-dev-11.11.3.6 (nvidia/linux-64)
+    -libcusolver-dev-11.4.1.48 (nvidia/linux-64)
+    -libcusparse-dev-11.7.5.86 (nvidia/linux-64)
+
+2023-11-01 11:33:33  (rev 18)
+    -libcufft-dev-10.9.0.58 (nvidia/linux-64)
+    -libcurand-dev-10.3.0.86 (nvidia/linux-64)
+
+2023-11-01 11:47:42  (rev 19)
+    -cuda-cccl-11.7.91 (nvidia/linux-64)
+    -pip-23.1.2 (conda-forge/noarch)
+
+2023-11-01 11:48:59  (rev 20)
+    -nsight-compute-2022.3.0.22 (nvidia/linux-64)
+
+2023-11-01 11:50:32  (rev 21)
+    -libnpp-dev-11.8.0.86 (nvidia/linux-64)
+    -libnvjpeg-dev-11.9.0.86 (nvidia/linux-64)
+
+2023-11-01 11:51:21  (rev 22)
+    -cuda-demo-suite-12.0.76 (nvidia/linux-64)
+    -cuda-documentation-12.0.76 (nvidia/linux-64)
+
+2023-11-01 11:51:59  (rev 23)
+    -libcufile-dev-1.4.0.31 (nvidia/linux-64)
+
+2023-11-01 11:52:29  (rev 24)
+    -gds-tools-1.4.0.31 (nvidia/linux-64)
