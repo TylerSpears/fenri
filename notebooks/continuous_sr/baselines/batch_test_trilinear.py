@@ -6,6 +6,7 @@ import collections
 import copy
 import datetime
 import functools
+import hashlib
 import inspect
 import io
 import itertools
@@ -25,6 +26,7 @@ import zipfile
 from functools import partial
 from pathlib import Path
 from pprint import pprint as ppr
+from typing import Union
 
 import dotenv
 import einops
@@ -50,6 +52,27 @@ from natsort import natsorted
 import pitn
 
 N_THREADS_MRTRIX = 10
+
+
+def log_prefix():
+    return f"{datetime.datetime.now().replace(microsecond=0)}"
+
+
+def create_subj_rng_seed(base_rng_seed: int, subj_id: Union[int, str]) -> int:
+    try:
+        subj_int = int(subj_id)
+    except ValueError as e:
+        if not isinstance(subj_id, str):
+            raise e
+        # Max hexdigest length that can fit into a 64-bit integer is length 8.
+        hash_str = (
+            hashlib.shake_128(subj_id.encode(), usedforsecurity=False)
+            .hexdigest(8)
+            .encode()
+        )
+        subj_int = int(hash_str, base=16)
+
+    return base_rng_seed ^ subj_int
 
 
 def fork_rng(rng: torch.Generator) -> torch.Generator:
@@ -146,13 +169,24 @@ if __name__ == "__main__":
         description="Test trilinear DWI upsampling + mrtrix msmt-csd odf fitting"
     )
     parser.add_argument(
+        "dataset_name",
+        type=str,
+        choices=("hcp", "ismrm-sim"),
+        help="Testing dataset choice",
+    )
+    parser.add_argument(
         "-i",
         "--input_subj_ids",
         type=Path,
         required=True,
-        # default="interp_test_subj_ids.txt",
-        # default="split_01.1_interp_test_subj_ids.txt",
         help=".txt file with subj ids to process",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        required=True,
+        help="Config file for testing params; can be JSON, YAML, or TOML",
     )
     parser.add_argument(
         "-d",
@@ -169,7 +203,7 @@ if __name__ == "__main__":
         help="Output directory for all estimated ODF volumes",
     )
     parser.add_argument(
-        "-c",
+        "-s",
         "--create_output_subdir",
         type=int,
         default=1,
@@ -223,27 +257,18 @@ if __name__ == "__main__":
     #     # Manually crop each side by 1 voxel to avoid NaNs in the LR resampling.
     #     manual_crop_lr_sides=((1, 1), (1, 1), (1, 1)),
     # )
-    # If a config file exists, override the defaults with those values.
-    try:
-        if "PITN_CONFIG" in os.environ.keys():
-            config_fname = Path(os.environ["PITN_CONFIG"])
-        else:
-            config_fname = pitn.utils.system.get_file_glob_unique(
-                Path("."), r"config.*"
-            )
-        f_type = config_fname.suffix.casefold()
-        if f_type in {".yaml", ".yml"}:
-            f_params = Box.from_yaml(filename=config_fname)
-        elif f_type == ".json":
-            f_params = Box.from_json(filename=config_fname)
-        elif f_type == ".toml":
-            f_params = Box.from_toml(filename=config_fname)
-        else:
-            raise RuntimeError()
-        p.merge_update(f_params)
-    except:
-        print("WARNING: Config file not loaded")
-        pass
+    # Load test parameters from the config file.
+    config_fname = args.config
+    f_type = config_fname.suffix.casefold()
+    if f_type in {".yaml", ".yml"}:
+        f_params = Box.from_yaml(filename=config_fname)
+    elif f_type == ".json":
+        f_params = Box.from_json(filename=config_fname)
+    elif f_type == ".toml":
+        f_params = Box.from_toml(filename=config_fname)
+    else:
+        raise RuntimeError()
+    p.merge_update(f_params)
     # Remove the default_box behavior now that params have been fully read in.
     _p = Box(default_box=False)
     _p.merge_update(p)
@@ -251,14 +276,25 @@ if __name__ == "__main__":
     ic(p.to_dict())
 
     # Load data
-    hcp_data_root_dir = Path(args.data_root_dir)
-    assert hcp_data_root_dir.exists()
+    data_root_dir = Path(args.data_root_dir)
+    assert data_root_dir.exists()
     # Set paths relative to the subj id root dir for each required image/file.
-    rel_dwi_path = Path("ras/diffusion/dwi_norm.nii.gz")
-    rel_grad_table_path = Path("ras/diffusion/ras_grad_mrtrix.b")
-    rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
-    rel_fivett_seg_path = Path("ras/segmentation/fivett_dwi-space_segmentation.nii.gz")
-    rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
+    if args.dataset_name == "hcp":
+        rel_dwi_path = Path("ras/diffusion/dwi_norm.nii.gz")
+        rel_grad_table_path = Path("ras/diffusion/ras_grad_mrtrix.b")
+        rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
+        rel_fivett_seg_path = Path(
+            "ras/segmentation/fivett_dwi-space_segmentation.nii.gz"
+        )
+        rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
+    elif args.dataset_name == "ismrm-sim":
+        rel_dwi_path = Path("processed/diffusion/dwi_norm.nii.gz")
+        rel_grad_table_path = Path("processed/diffusion/grad_mrtrix.b")
+        rel_odf_path = Path("processed/odf/wm_norm_msmt_csd_fod.nii.gz")
+        rel_fivett_seg_path = Path("processed/segmentation/fivett_segmentation.nii.gz")
+        rel_brain_mask_path = Path("processed/brain_mask.nii.gz")
+    else:
+        raise RuntimeError("ERROR: No valid dataset name given")
 
     # Set a common target set of gradient directions/strengths based on the standard HCP
     # protocol.
@@ -305,7 +341,9 @@ if __name__ == "__main__":
         )
         v = pitn.data.preproc.preproc_loaded_super_res_subj(v, **preproc_loaded_kwargs)
         # Perform random transforms with a set seed.
-        subj_rng_seed = int(p.test.rng_seed) ^ int(subj_files["subj_id"])
+        subj_rng_seed = create_subj_rng_seed(
+            int(p.test.rng_seed), subj_id=subj_files["subj_id"]
+        )
         rng_device = rng.device
         v = pitn.data.preproc.preproc_super_res_sample(
             v,
@@ -331,7 +369,7 @@ if __name__ == "__main__":
     test_subj_dicts = list()
     test_subj_files = dict()
     for subj_id in test_subj_ids:
-        root_dir = hcp_data_root_dir / str(subj_id)
+        root_dir = data_root_dir / str(subj_id)
         d = dict(
             subj_id=str(subj_id),
             dwi_f=root_dir / rel_dwi_path,
@@ -356,7 +394,7 @@ if __name__ == "__main__":
     for subj_data in map(load_and_tf_subj, test_subj_dicts):
         subj_id = subj_data["subj_id"]
 
-        print(f"{datetime.datetime.now().replace(microsecond=0)} | Starting {subj_id}")
+        print(f"{log_prefix()} | Starting {subj_id}")
         # Upsample degraded DWIs to the resolution of the ODFs.
         x = subj_data["lr_dwi"]
         x_affine_vox2real = subj_data["affine_lr_vox2real"].to(x.dtype)
@@ -386,6 +424,7 @@ if __name__ == "__main__":
         fivett_seg_f = test_subj_files[subj_id]["fivett_seg_f"]
         brain_mask_f = test_subj_files[subj_id]["brain_mask_f"]
 
+        print(f"{log_prefix()}| Fitting predicted DWI to ODF {subj_id}")
         with tempfile.TemporaryDirectory(
             prefix=f"trilinear_dwi-up_{subj_id}_"
         ) as tmp_dir_name:
@@ -406,4 +445,4 @@ if __name__ == "__main__":
                 tmp_dir=tmp_dir,
             )
 
-        print(f"{datetime.datetime.now().replace(microsecond=0)} | Finished {subj_id}")
+        print(f"{log_prefix()} | Finished {subj_id}")

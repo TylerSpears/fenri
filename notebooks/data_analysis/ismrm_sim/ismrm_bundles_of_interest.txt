@@ -1,0 +1,16 @@
+CC_temporal
+CC_u_shaped
+CC_ventro_striatal1
+CC_ventro_striatal2
+UF_left
+UF_right
+OR_left
+OR_right
+SLF_left
+SLF_right
+ILF_left
+ILF_right
+Cingulum_left
+Cingulum_right
+BPS_left
+BPS_right

@@ -8,6 +8,11 @@ import functools
 import itertools
 import math
 import os
+import sys
+import textwrap
+from functools import partial
+from pathlib import Path
+from typing import Callable, Optional, Tuple, Union
 
 # Disable cuda blocking **for debugging only!**
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -25,11 +30,7 @@ os.environ["NCCL_PROTO"] = "SIMPLE,LL,LL128"
 
 # utility libraries
 import pprint
-import textwrap
-from functools import partial
-from pathlib import Path
 from pprint import pprint as ppr
-from typing import Callable, Optional, Tuple
 
 import dipy
 import dipy.core
@@ -66,9 +67,94 @@ from icecream import ic
 
 import pitn
 
+# Add inr_networks module from a different directory
+sys.path.append(str(Path("../continuous_sr/").resolve()))
+from inr_networks import INREncoder, SimplifiedDecoder
+
 # Update any jax necessary jax configurations
 # jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_default_matmul_precision", 32)
+
+
+class FenriInterpFn:
+    def __init__(
+        self,
+        net_params: dict,
+        net_weights_f: Path,
+        input_dwi: torch.Tensor,
+        affine_vox2real: torch.Tensor,
+        brain_mask: torch.Tensor,
+        device,
+    ):
+        state_dict = torch.load(net_weights_f)
+        # Run forward inference with the encoder, then delete and just use the decoder.
+        encoder = INREncoder(**net_params["encoder"])
+        encoder.load_state_dict(state_dict["encoder"])
+        encoder.to(device)
+        encoder.eval()
+        # Construct encoder inputs.
+        x = input_dwi.to(device)
+        if x.ndim == 3:
+            x = x.unsqueeze(0)
+        if x.ndim == 4:
+            x = x.unsqueeze(0)
+        m = brain_mask.to(device)
+        if m.ndim == 3:
+            m = m.unsqueeze(0)
+        if m.ndim == 3:
+            m = m.unsqueeze(0)
+        # Mask out non-brain voxels in the input DWI.
+        x = x * m
+        self.ctx_affine_vox2real = affine_vox2real.to(device=device, dtype=x.dtype)
+        self.ctx_affine_vox2real = self.ctx_affine_vox2real.unsqueeze(0)
+        x_fov = pitn.affine.fov_bb_coords_from_vox_shape(
+            self.ctx_affine_vox2real[0], shape=x.shape[2:]
+        )
+        self.ctx_coords = pitn.transforms.functional.fov_coord_grid(
+            x_fov, self.ctx_affine_vox2real[0]
+        )
+        self.ctx_coords.unsqueeze_(0)
+
+        # Append LR coordinates to the end of the input LR DWIs.
+        x = torch.cat(
+            [x, einops.rearrange(self.ctx_coords, "b x y z coord -> b coord x y z")],
+            dim=1,
+        )
+        self.ctx_v = encoder(x)
+        del encoder, x, m
+        # Instantiate the decoder.
+        self.decoder = SimplifiedDecoder(**net_params["decoder"])
+        self.decoder.load_state_dict(state_dict["decoder"])
+        self.decoder.to(device)
+        self.decoder.eval()
+
+    def __call__(self, real_coords_xyz_flat: torch.Tensor) -> torch.Tensor:
+        # Reshape to be "volume-like"
+        query_coords = einops.rearrange(
+            real_coords_xyz_flat, "b coord -> 1 b 1 1 coord"
+        )
+        # All coordinates are to be considered.
+        query_coords_mask = torch.ones(
+            tuple(query_coords.shape[:-1]) + (1,),
+            dtype=torch.bool,
+            device=query_coords.device,
+        )
+        # query_coords_mask = torch.ones_like(query_coords, dtype=torch.bool)
+
+        pred_sh = self.decoder(
+            context_v=self.ctx_v,
+            context_real_coords=self.ctx_coords,
+            query_real_coords=query_coords,
+            query_coords_mask=query_coords_mask,
+            affine_context_vox2real=self.ctx_affine_vox2real,
+            # Spacing values aren't actually used.
+            context_spacing=None,
+            query_spacing=None,
+        )
+
+        # Reshape to move the spatial dimension as the batch dimension.
+        pred_sh = einops.rearrange(pred_sh, "1 sh b 1 1 -> b sh")
+        return pred_sh
 
 
 def log_prefix():
@@ -205,7 +291,7 @@ def tractography_batch(
     # Loop window centers on the streamline point t, but also needs information from
     # points t-1 and t+1.
     for t in range(1, t_max + 1):
-        if t % 50 == 0:
+        if t % 25 == 0:
             print(f"{t}...", end="", flush=True)
         continue_t_mask = pitn.tract.stopping.to_continue_mask(
             streamline_status_tm1
@@ -363,12 +449,20 @@ if __name__ == "__main__":
     torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
 
     parser = argparse.ArgumentParser(
-        description="Perform tractography using trilinear interpolation of ODFs"
+        description="Perform tractography using trilinear ODF interpolation or FENRI on DWIs"
     )
     parser.add_argument(
-        "odf",
+        "tracking_interp",
+        type=str,
+        choices=("trilinear", "fenri"),
+        help="Select type of interpolation to perform during tracking",
+    )
+    parser.add_argument(
+        "src_vol",
         type=Path,
-        help="Predicted ODF spherical harmonic coefficients NIFTI file",
+        help="Input NIFTI file. "
+        + "Should likely be an upsampled ODF if testing trilinear interp tracking, "
+        + "or a downsampled DWI if testing FENRI tracking.",
     )
     parser.add_argument(
         "seeds",
@@ -376,7 +470,7 @@ if __name__ == "__main__":
         help="Seeds .csv file that contains real (xyz in mm) coordinates of all seed points",
     )
     parser.add_argument(
-        "config",
+        "tracking_config",
         type=Path,
         help="Parameters file to control tractography behavior; JSON, YAML, or TOML",
     )
@@ -392,7 +486,21 @@ if __name__ == "__main__":
         "--output",
         type=Path,
         required=True,
-        help="Output directory for all track files",
+        help="Output .tck file",
+    )
+    parser.add_argument(
+        "-w",
+        "--weights",
+        type=Path,
+        help="Pytorch .pt weights file with trained network weights; "
+        + "required if using 'fenri' tracking",
+    )
+    parser.add_argument(
+        "-n",
+        "--network_config",
+        type=Path,
+        help="Config file to determine network hyperparams, can be JSON, YAML, or TOML; "
+        + "required if using 'fenri' tracking",
     )
     parser.add_argument(
         "-d",
@@ -453,7 +561,7 @@ if __name__ == "__main__":
 
     p = Box(default_box=True, default_box_none_transform=False)
     # Load user config file.
-    config_fname = args.config
+    config_fname = args.tracking_config
     f_type = config_fname.suffix.casefold()
     if f_type in {".yaml", ".yml"}:
         f_params = Box.from_yaml(filename=config_fname)
@@ -469,10 +577,10 @@ if __name__ == "__main__":
     _p.merge_update(p)
     p = Box(_p, default_box=False, frozen_box=True)
 
-    src_vol_f = args.odf
+    src_vol_f = args.src_vol
     mask_f = args.mask
     seeds_f = args.seeds
-    out_dir = args.output
+    out_dir = args.output.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     log_stream = args.log
 
@@ -480,14 +588,45 @@ if __name__ == "__main__":
     log_stream.write(
         textwrap.dedent(
             f"""{log_prefix()}| Tracking parameters:
+        Tracking interpolation method {args.tracking_interp}
         Source vol {str(src_vol_f)}
         Brain mask {str(mask_f)}
         Seeds file {str(seeds_f)}
         PyTorch device {str(device)}
-        Config file {str(args.config)} with params:
-        {pprint.pformat(p.to_dict())}\n\n"""
+        Config file {str(args.tracking_config)} with params:
+        {pprint.pformat(p.to_dict())}\n"""
         )
     )
+    if args.tracking_interp == "fenri":
+        # Load network config file
+        net_p = Box(default_box=True, default_box_none_transform=False)
+        # Load config file.
+        net_config_fname = args.network_config
+        f_type = net_config_fname.suffix.casefold()
+        if f_type in {".yaml", ".yml"}:
+            net_f_params = Box.from_yaml(filename=net_config_fname)
+        elif f_type == ".json":
+            net_f_params = Box.from_json(filename=net_config_fname)
+        elif f_type == ".toml":
+            net_f_params = Box.from_toml(filename=net_config_fname)
+        else:
+            raise RuntimeError()
+        net_p.merge_update(net_f_params)
+
+        # Remove the default_box behavior now that params have been fully read in.
+        _net_p = Box(default_box=False)
+        _net_p.merge_update(net_p)
+        net_p = Box(_net_p, default_box=False, frozen_box=True)
+        log_stream.write(
+            textwrap.dedent(
+                f"""Network weights file {str(args.weights)}
+                Network config file {str(args.network_config)} with params:
+                {pprint.pformat(net_p.to_dict())}\n"""
+            )
+        )
+    else:
+        net_p = None
+    log_stream.write("\n")
 
     ############# Data loading #############
     log_stream.write(f"{log_prefix()}| Loading data\n")
@@ -530,34 +669,47 @@ if __name__ == "__main__":
     # Accepts theta, phi; returns [B x n_coeffs] matrix.
     fn_sh_basis = partial(pitn.tract.sh_basis_mrtrix3, degree=_l, order=_m)
 
-    # Main ODF prediction/interpolation function
-    def interp_odf_at_coords(
-        real_coords_xyz_flat: torch.Tensor,
-        odf_vol: torch.Tensor,
-        affine_vox2real: torch.Tensor,
-    ) -> torch.Tensor:
-        # All coordinates are being sampled from the same volume, so the batch size
-        # should be 1, and the coordinates should have spatial dimensions.
-        real_coords_xyz = einops.rearrange(
-            real_coords_xyz_flat, "b coord -> 1 b 1 1 coord"
-        )
-        affine_vox2real = affine_vox2real.unsqueeze(0)
+    ## Main ODF prediction/interpolation function
+    # Trilinear interpolation tractography
+    if args.tracking_interp == "trilinear":
 
-        pred_sh = pitn.affine.sample_vol(
-            odf_vol,
-            coords_mm_xyz=real_coords_xyz,
-            affine_vox2mm=affine_vox2real,
-            mode="trilinear",
-            padding_mode="zeros",
-            align_corners=True,
-        )
-        # Reshape to move the spatial dimension as the batch dimension.
-        pred_sh = einops.rearrange(pred_sh, "1 sh b 1 1 -> b sh")
-        return pred_sh
+        def interp_odf_at_coords(
+            real_coords_xyz_flat: torch.Tensor,
+            odf_vol: torch.Tensor,
+            affine_vox2real: torch.Tensor,
+        ) -> torch.Tensor:
+            # All coordinates are being sampled from the same volume, so the batch size
+            # should be 1, and the coordinates should have spatial dimensions.
+            real_coords_xyz = einops.rearrange(
+                real_coords_xyz_flat, "b coord -> 1 b 1 1 coord"
+            )
+            affine_vox2real = affine_vox2real.unsqueeze(0)
 
-    fn_interp_odf_at_coords = partial(
-        interp_odf_at_coords, odf_vol=src_vol, affine_vox2real=affine_vox2real
-    )
+            pred_sh = pitn.affine.sample_vol(
+                odf_vol,
+                coords_mm_xyz=real_coords_xyz,
+                affine_vox2mm=affine_vox2real,
+                mode="trilinear",
+                padding_mode="zeros",
+                align_corners=True,
+            )
+            # Reshape to move the spatial dimension as the batch dimension.
+            pred_sh = einops.rearrange(pred_sh, "1 sh b 1 1 -> b sh")
+            return pred_sh
+
+        fn_interp_odf_at_coords = partial(
+            interp_odf_at_coords, odf_vol=src_vol, affine_vox2real=affine_vox2real
+        )
+    # FENRI tractography
+    elif args.tracking_interp == "fenri":
+        fn_interp_odf_at_coords = FenriInterpFn(
+            net_p.to_dict(),
+            net_weights_f=args.weights,
+            input_dwi=src_vol,
+            affine_vox2real=affine_vox2real,
+            brain_mask=brain_mask,
+            device=device,
+        )
 
     # Function that composes interpolation and peak finding for a general
     # (spatial coord, incoming direction) -> outgoing direction
@@ -592,10 +744,11 @@ if __name__ == "__main__":
     # starting (coordinate, angle) per row in the seed table.
     n_starts_per_seed = 2 * p.seed.peaks if find_seed_angles else 1
     n_total_seeds = n_seed_positions * n_starts_per_seed
+
     n_batches = math.ceil(n_total_seeds / p.batch_size)
     batch_idx = list(range(0, n_seed_positions, p.batch_size // n_starts_per_seed))
 
-    if n_seed_positions % (p.batch_size // n_starts_per_seed) != 0:
+    if batch_idx[-1] != (n_seed_positions - 1):
         batch_idx.append(n_seed_positions - 1)
 
     all_streamlines = list()
@@ -628,14 +781,21 @@ if __name__ == "__main__":
             f"{log_prefix()}| Seeds completed {total_completed_seeds}/{n_seed_positions}\n"
         )
 
+    # Merge streamlines that may share the same starting point, but should be one
+    # streamline.
+    merged_streamlines = pitn.tract.join_streamlines(
+        all_streamlines,
+        min_match_arc_len=90 * (np.pi / 180),
+        antipodal_arc_len_thresh=p.stopping.max_tangent_angle_diff,
+    )
     log_stream.write(f"{log_prefix()}| Finished tractography\n")
 
     log_stream.write(f"{log_prefix()}| Saving streamlines\n")
     tracto = dipy.io.streamline.StatefulTractogram(
-        all_streamlines,
+        merged_streamlines,
         space=dipy.io.stateful_tractogram.Space.RASMM,
         reference=src_vol_im.header,
     )
-    tractogram_fname = out_dir / "tracts.tck"
+    tractogram_fname = args.output
     dipy.io.streamline.save_tck(tracto, str(tractogram_fname))
     log_stream.write(f"{log_prefix()}| Finished saving streamlines\n")

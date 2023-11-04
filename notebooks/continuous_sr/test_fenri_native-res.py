@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # imports
+# import ipdb; ipdb.set_trace()
 import argparse
 import collections
 import concurrent.futures
 import copy
 import datetime
 import functools
+import hashlib
 import inspect
 import io
 import itertools
@@ -27,10 +29,10 @@ import zipfile
 from functools import partial
 from pathlib import Path
 from pprint import pprint as ppr
+from typing import Union
 
 import dotenv
 import einops
-import lightning
 
 # visualization libraries
 import matplotlib as mpl
@@ -50,10 +52,27 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import Decoder, INREncoder, SimplifiedDecoder
+from inr_networks import INREncoder, SimplifiedDecoder
 from natsort import natsorted
 
 import pitn
+
+
+def create_subj_rng_seed(base_rng_seed: int, subj_id: Union[int, str]) -> int:
+    try:
+        subj_int = int(subj_id)
+    except ValueError as e:
+        if not isinstance(subj_id, str):
+            raise e
+        # Max hexdigest length that can fit into a 64-bit integer is length 8.
+        hash_str = (
+            hashlib.shake_128(subj_id.encode(), usedforsecurity=False)
+            .hexdigest(8)
+            .encode()
+        )
+        subj_int = int(hash_str, base=16)
+
+    return base_rng_seed ^ subj_int
 
 
 def log_prefix():
@@ -61,7 +80,6 @@ def log_prefix():
 
 
 def pad_vol_to_template_mrtrix(vol_f: Path, template_f: Path, output_f: Path):
-
     cmd = rf"""set -eou pipefail
     mrconvert -quiet "{vol_f}" - |
         mrgrid -force -quiet \
@@ -87,7 +105,13 @@ def pad_vol_to_template_mrtrix(vol_f: Path, template_f: Path, output_f: Path):
 if __name__ == "__main__":
     # Take some parameters from the command line.
     parser = argparse.ArgumentParser(
-        description="Test trilinear DWI upsampling + mrtrix msmt-csd odf fitting"
+        description="Generate FENRI SH coeff predictions at data's native resolution"
+    )
+    parser.add_argument(
+        "dataset_name",
+        type=str,
+        choices=("hcp", "ismrm-sim"),
+        help="Testing dataset choice",
     )
     parser.add_argument(
         "-i",
@@ -97,6 +121,13 @@ if __name__ == "__main__":
         # default="split_01.1_test_subj_ids.txt",
         required=True,
         help=".txt file with subj ids to process",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        required=True,
+        help="Config file for network & testing params; can be JSON, YAML, or TOML",
     )
     parser.add_argument(
         "-w",
@@ -121,7 +152,7 @@ if __name__ == "__main__":
         help="Output directory for all estimated ODF volumes",
     )
     parser.add_argument(
-        "-c",
+        "-s",
         "--create_output_subdir",
         type=int,
         default=1,
@@ -205,41 +236,44 @@ if __name__ == "__main__":
         n_internal_features=256,
         n_internal_layers=3,
     )
-    # If a config file exists, override the defaults with those values.
-    try:
-        if "PITN_CONFIG" in os.environ.keys():
-            config_fname = Path(os.environ["PITN_CONFIG"])
-        else:
-            config_fname = pitn.utils.system.get_file_glob_unique(
-                Path("."), r"config.*"
-            )
-        f_type = config_fname.suffix.casefold()
-        if f_type in {".yaml", ".yml"}:
-            f_params = Box.from_yaml(filename=config_fname)
-        elif f_type == ".json":
-            f_params = Box.from_json(filename=config_fname)
-        elif f_type == ".toml":
-            f_params = Box.from_toml(filename=config_fname)
-        else:
-            raise RuntimeError()
-        p.merge_update(f_params)
-    except:
-        print("WARNING: Config file not loaded")
-        pass
+    # Load config file and override defaults.
+    config_fname = args.config
+    f_type = config_fname.suffix.casefold()
+    if f_type in {".yaml", ".yml"}:
+        f_params = Box.from_yaml(filename=config_fname)
+    elif f_type == ".json":
+        f_params = Box.from_json(filename=config_fname)
+    elif f_type == ".toml":
+        f_params = Box.from_toml(filename=config_fname)
+    else:
+        raise RuntimeError()
+    p.merge_update(f_params)
     # Remove the default_box behavior now that params have been fully read in.
     _p = Box(default_box=False)
     _p.merge_update(p)
     p = _p
 
     # Prep data loading functions.
-    hcp_data_root_dir = Path(args.data_root_dir)
-    assert hcp_data_root_dir.exists()
+    data_root_dir = Path(args.data_root_dir)
+    assert data_root_dir.exists()
     # Set paths relative to the subj id root dir for each required image/file.
-    rel_dwi_path = Path("ras/diffusion/dwi_norm.nii.gz")
-    rel_grad_table_path = Path("ras/diffusion/ras_grad_mrtrix.b")
-    rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
-    rel_fivett_seg_path = Path("ras/segmentation/fivett_dwi-space_segmentation.nii.gz")
-    rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
+    if args.dataset_name == "hcp":
+        rel_dwi_path = Path("ras/diffusion/dwi_norm.nii.gz")
+        rel_grad_table_path = Path("ras/diffusion/ras_grad_mrtrix.b")
+        rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
+        rel_fivett_seg_path = Path(
+            "ras/segmentation/fivett_dwi-space_segmentation.nii.gz"
+        )
+        rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
+    elif args.dataset_name == "ismrm-sim":
+        rel_dwi_path = Path("processed/diffusion/dwi_norm.nii.gz")
+        rel_grad_table_path = Path("processed/diffusion/grad_mrtrix.b")
+        rel_odf_path = Path("processed/odf/wm_norm_msmt_csd_fod.nii.gz")
+        rel_fivett_seg_path = Path("processed/segmentation/fivett_segmentation.nii.gz")
+        rel_brain_mask_path = Path("processed/brain_mask.nii.gz")
+    else:
+        raise RuntimeError("ERROR: No valid dataset name given")
+
     # Set a common target set of gradient directions/strengths based on the standard HCP
     # protocol.
     first_n_b0s = 9
@@ -269,6 +303,7 @@ if __name__ == "__main__":
         patch_sampling_w_erosion=p.preproc_loaded.patch_sampling_w_erosion,
         resample_target_grad_table=target_grad_table,
     )
+
     # Make one-param callable for map(), but with undefined values already defined on
     # the outer scope (bound).
     def load_and_tf_subj(subj_files: dict):
@@ -285,7 +320,9 @@ if __name__ == "__main__":
         )
         v = pitn.data.preproc.preproc_loaded_super_res_subj(v, **preproc_loaded_kwargs)
         # Perform random transforms with a set seed.
-        subj_rng_seed = int(p.test.rng_seed) ^ int(subj_files["subj_id"])
+        subj_rng_seed = create_subj_rng_seed(
+            int(p.test.rng_seed), subj_id=subj_files["subj_id"]
+        )
         rng_device = rng.device
         v = pitn.data.preproc.preproc_super_res_sample(
             v,
@@ -311,7 +348,7 @@ if __name__ == "__main__":
     test_subj_dicts = list()
     test_subj_files = dict()
     for subj_id in test_subj_ids:
-        root_dir = hcp_data_root_dir / str(subj_id)
+        root_dir = data_root_dir / str(subj_id)
         d = dict(
             subj_id=str(subj_id),
             dwi_f=root_dir / rel_dwi_path,
@@ -374,7 +411,7 @@ if __name__ == "__main__":
             for sample_dict in map(load_and_tf_subj, test_subj_dicts):
                 subj_id = sample_dict["subj_id"]
                 print(f"{log_prefix()}| Starting subj {subj_id}", flush=True)
-
+                # breakpoint()
                 x = sample_dict["lr_dwi"].unsqueeze(0).to(device)
                 batch_size = x.shape[0]
                 x_affine_vox2real = sample_dict["affine_lr_vox2real"].unsqueeze(0).to(x)
@@ -422,6 +459,7 @@ if __name__ == "__main__":
                     x, "b coord x y z -> b x y z coord"
                 )
 
+                print(f"{log_prefix()}| Starting inference subj {subj_id}", flush=True)
                 pred_odf = monai.inferers.sliding_window_inference(
                     y_slide_window,
                     roi_size=(72, 72, 72),
@@ -439,6 +477,7 @@ if __name__ == "__main__":
                     overlap=0,
                     padding_mode="replicate",
                 )
+                print(f"{log_prefix()}| Finished inference subj {subj_id}", flush=True)
                 # Mask prediction.
                 pred_odf = pred_odf * y_mask
                 # Pad/align prediction volume with the full input volume shape. Should
@@ -450,6 +489,7 @@ if __name__ == "__main__":
                 affine_pred = sample_dict["affine_vox2real"].cpu().numpy()
                 out_pred_f = out_dir / f"{subj_id}_fenri-pred_wm_msmt_csd_odf.nii.gz"
                 template_f = test_subj_files[subj_id]["brain_mask_f"]
+                print(f"{log_prefix()}| Saving prediction subj {subj_id}", flush=True)
                 with tempfile.TemporaryDirectory(prefix="test_fenri_") as tmp_dir_name:
                     tmp_dir = Path(tmp_dir_name)
                     pred_im = nib.Nifti1Image(pred_odf, affine_pred, dtype=np.float32)

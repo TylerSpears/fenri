@@ -17,6 +17,7 @@ from ._utils import (
     wrap_bound_modulo,
     xyz2unit_sphere_theta_phi,
     sh_basis_mrtrix3,
+    join_streamlines,
 )
 from . import peak_finding, seed, stopping
 from ._tract import gen_tract_step_rk4
