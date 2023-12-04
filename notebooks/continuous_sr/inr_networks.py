@@ -1032,7 +1032,7 @@ class SimplifiedDecoder(torch.nn.Module):
         return y
 
 
-class StaticSizeUpsampleEncoder(torch.nn.Module):
+class FixedUpsampleEncoder(torch.nn.Module):
     def __init__(
         self,
         spatial_upscale_factor: float,
@@ -1168,7 +1168,7 @@ class StaticSizeUpsampleEncoder(torch.nn.Module):
         return y
 
 
-class StaticSizeDecoder(torch.nn.Module):
+class FixedDecoder(torch.nn.Module):
     def __init__(
         self,
         in_channels: int,

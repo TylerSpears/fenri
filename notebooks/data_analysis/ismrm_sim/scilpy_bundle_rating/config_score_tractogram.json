@@ -1,0 +1,99 @@
+{
+  "CC_temporal": {
+    "gt_mask": "bundles/CC_temporal.tck",
+    "all_mask": "ROI/all_masks/CC_temporal.nii.gz",
+    "head": "ROI/endpoints/CC_ventral_left.nii.gz",
+    "tail": "ROI/endpoints/CC_ventral_right.nii.gz"
+  },
+  "CC_u_shaped": {
+    "gt_mask": "bundles/CC_u_shaped.tck",
+    "all_mask": "ROI/all_masks/CC_u_shaped.nii.gz",
+    "any_mask": "ROI/any_masks/CC_u_shaped_inclusion_mask.nii.gz",
+    "head": "ROI/endpoints/CC_striatal_left.nii.gz",
+    "tail": "ROI/endpoints/CC_striatal_right.nii.gz"
+  },
+  "CC_ventro_striatal1": {
+    "gt_mask": "bundles/CC_ventro_striatal1.tck",
+    "all_mask": "ROI/all_masks/CC_ventro_striatal1.nii.gz",
+    "head": "ROI/endpoints/CC_ventral_right.nii.gz",
+    "tail": "ROI/endpoints/CC_striatal_left.nii.gz"
+  },
+  "CC_ventro_striatal2": {
+    "gt_mask": "bundles/CC_ventro_striatal2.tck",
+    "all_mask": "ROI/all_masks/CC_ventro_striatal2.nii.gz",
+    "head": "ROI/endpoints/CC_ventral_left.nii.gz",
+    "tail": "ROI/endpoints/CC_striatal_right.nii.gz"
+  },
+  "UF_left": {
+    "gt_mask": "bundles/UF_left.tck",
+    "all_mask": "ROI/all_masks/UF_left.nii.gz",
+    "head": "ROI/endpoints/UF_left_head.nii.gz",
+    "tail": "ROI/endpoints/UF_left_tail.nii.gz"
+  },
+  "UF_right": {
+    "gt_mask": "bundles/UF_right.tck",
+    "all_mask": "ROI/all_masks/UF_right.nii.gz",
+    "head": "ROI/endpoints/UF_right_head.nii.gz",
+    "tail": "ROI/endpoints/UF_right_tail.nii.gz"
+  },
+  "OR_left": {
+    "gt_mask": "bundles/OR_left.tck",
+    "all_mask": "ROI/all_masks/OR_left.nii.gz",
+    "head": "ROI/endpoints/occipital_left.nii.gz",
+    "tail": "ROI/endpoints/OR_left_tail.nii.gz"
+  },
+  "OR_right": {
+    "gt_mask": "bundles/OR_right.tck",
+    "all_mask": "ROI/all_masks/OR_right.nii.gz",
+    "head": "ROI/endpoints/occipital_right.nii.gz",
+    "tail": "ROI/endpoints/OR_right_tail.nii.gz"
+  },
+  "SLF_left": {
+    "gt_mask": "bundles/SLF_left.tck",
+    "all_mask": "ROI/all_masks/SLF_left.nii.gz",
+    "head": "ROI/endpoints/SLF_left_head.nii.gz",
+    "tail": "ROI/endpoints/SLF_left_tail.nii.gz"
+  },
+  "SLF_right": {
+    "gt_mask": "bundles/SLF_right.tck",
+    "all_mask": "ROI/all_masks/SLF_right.nii.gz",
+    "head": "ROI/endpoints/SLF_right_head.nii.gz",
+    "tail": "ROI/endpoints/SLF_right_tail.nii.gz"
+  },
+  "ILF_left": {
+    "gt_mask": "bundles/ILF_left.tck",
+    "all_mask": "ROI/all_masks/ILF_left.nii.gz",
+    "head": "ROI/endpoints/occipital_left.nii.gz",
+    "tail": "ROI/endpoints/ILF_left_tail.nii.gz"
+  },
+  "ILF_right": {
+    "gt_mask": "bundles/ILF_right.tck",
+    "all_mask": "ROI/all_masks/ILF_right.nii.gz",
+    "head": "ROI/endpoints/occipital_right.nii.gz",
+    "tail": "ROI/endpoints/ILF_right_tail.nii.gz"
+  },
+  "Cingulum_left": {
+    "gt_mask": "bundles/Cingulum_left.tck",
+    "all_mask": "ROI/all_masks/Cingulum_left.nii.gz",
+    "head": "ROI/endpoints/Cingulum_left_head.nii.gz",
+    "tail": "ROI/endpoints/Cingulum_left_tail.nii.gz"
+  },
+  "Cingulum_right": {
+    "gt_mask": "bundles/Cingulum_right.tck",
+    "all_mask": "ROI/all_masks/Cingulum_right.nii.gz",
+    "head": "ROI/endpoints/Cingulum_right_head.nii.gz",
+    "tail": "ROI/endpoints/Cingulum_right_tail.nii.gz"
+  },
+  "BPS_left": {
+    "gt_mask": "bundles/BPS_left.tck",
+    "all_mask": "ROI/all_masks/BPS_left.nii.gz",
+    "head": "ROI/endpoints/brainstem.nii.gz",
+    "tail": "ROI/endpoints/BPS_left_tail.nii.gz"
+  },
+  "BPS_right": {
+    "gt_mask": "bundles/BPS_right.tck",
+    "all_mask": "ROI/all_masks/BPS_right.nii.gz",
+    "head": "ROI/endpoints/brainstem.nii.gz",
+    "tail": "ROI/endpoints/BPS_right_tail.nii.gz"
+  }
+}

@@ -52,10 +52,13 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import INREncoder, SimplifiedDecoder
 from natsort import natsorted
 
 import pitn
+
+# Add inr_networks module from a different directory
+sys.path.append(str(Path("../").resolve()))
+from inr_networks import FixedDecoder, FixedUpsampleEncoder
 
 
 def create_subj_rng_seed(base_rng_seed: int, subj_id: Union[int, str]) -> int:
@@ -105,7 +108,7 @@ def pad_vol_to_template_mrtrix(vol_f: Path, template_f: Path, output_f: Path):
 if __name__ == "__main__":
     # Take some parameters from the command line.
     parser = argparse.ArgumentParser(
-        description="Generate FENRI SH coeff predictions at data's native resolution"
+        description="Generate fixed-net SH coeff predictions at data's native resolution"
     )
     parser.add_argument(
         "dataset_name",
@@ -133,6 +136,7 @@ if __name__ == "__main__":
         "-w",
         "--input_weights_file",
         type=Path,
+        # default="/data/srv/outputs/pitn/results/tmp/2023-10-15T01_59_59/best_val_score_state_dict_epoch_41_step_24529.pt",
         required=True,
         help="Pytorch .pt weights file with trained network weights",
     )
@@ -140,6 +144,7 @@ if __name__ == "__main__":
         "-d",
         "--data_root_dir",
         type=Path,
+        default=Path("/data/srv/outputs/pitn/hcp"),
         help="Root directory that contains subj data",
     )
     parser.add_argument(
@@ -214,26 +219,8 @@ if __name__ == "__main__":
 
     # Experiment parameters, some should be set in a config file
     p = Box(default_box=True, default_box_none_transform=False)
-    p.experiment_name = "fenri_test_native_res"
-    # Network/model parameters.
-    p.encoder = dict(
-        in_channels=9 + 45 + 45 + 3,
-        interior_channels=80,
-        out_channels=96,
-        n_res_units=3,
-        n_dense_units=3,
-        activate_fn="relu",
-        input_coord_channels=True,
-        post_batch_norm=True,
-    )
-    p.decoder = dict(
-        context_v_features=96,
-        out_features=45,
-        m_encode_num_freqs=36,
-        sigma_encode_scale=3.0,
-        n_internal_features=256,
-        n_internal_layers=3,
-    )
+    p.experiment_name = "fixed-net_test_native_res"
+
     # Load config file and override defaults.
     config_fname = args.config
     f_type = config_fname.suffix.casefold()
@@ -383,10 +370,10 @@ if __name__ == "__main__":
         system_state_dict = torch.load(weights_f)
         encoder_state_dict = system_state_dict["encoder"]
         decoder_state_dict = system_state_dict["decoder"]
-        encoder = INREncoder(**p.encoder.to_dict())
+        encoder = FixedUpsampleEncoder(**p.encoder.to_dict())
         encoder.load_state_dict(encoder_state_dict)
         encoder.to(device)
-        decoder = SimplifiedDecoder(**p.decoder.to_dict())
+        decoder = FixedDecoder(**p.decoder.to_dict())
         decoder.load_state_dict(decoder_state_dict)
         decoder.to(device)
         del (
@@ -439,42 +426,11 @@ if __name__ == "__main__":
                     [x, einops.rearrange(x_coords, "b x y z coord -> b coord x y z")],
                     dim=1,
                 )
-                ctx_v = encoder(x)
-
-                # Whole-volume inference is memory-prohibitive, so use a sliding
-                # window inference method on the encoded volume.
-                # Transform y_coords into a coordinates-first shape, for the interface,
-                # and attach the mask for compatibility with the sliding inference
-                # function.
-                y_slide_window = torch.cat(
-                    [
-                        einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
-                        y_mask.to(y_coords),
-                    ],
-                    dim=1,
-                )
-                fn_coordify = lambda x: einops.rearrange(
-                    x, "b coord x y z -> b x y z coord"
+                pred_odf = decoder(encoder(x))
+                pred_odf = decoder.crop_pad_to_match_gt_shape(
+                    model_output=pred_odf, ground_truth=y_mask, mode="constant"
                 )
 
-                print(f"{log_prefix()}| Starting inference subj {subj_id}", flush=True)
-                pred_odf = monai.inferers.sliding_window_inference(
-                    y_slide_window,
-                    roi_size=(72, 72, 72),
-                    sw_batch_size=y_coords.shape[0],
-                    predictor=lambda q: decoder(
-                        # Rearrange back into coord-last format.
-                        query_real_coords=fn_coordify(q[:, :-1]),
-                        query_coords_mask=fn_coordify(q[:, -1:].bool()),
-                        context_v=ctx_v,
-                        context_real_coords=x_coords,
-                        affine_context_vox2real=x_affine_vox2real,
-                        context_spacing=x_spacing,
-                        query_spacing=y_spacing,
-                    ),
-                    overlap=0,
-                    padding_mode="replicate",
-                )
                 print(f"{log_prefix()}| Finished inference subj {subj_id}", flush=True)
                 # Mask prediction.
                 pred_odf = pred_odf * y_mask
@@ -485,7 +441,9 @@ if __name__ == "__main__":
                     "coeff x y z -> x y z coeff",
                 )
                 affine_pred = sample_dict["affine_vox2real"].cpu().numpy()
-                out_pred_f = out_dir / f"{subj_id}_fenri-pred_wm_msmt_csd_odf.nii.gz"
+                out_pred_f = (
+                    out_dir / f"{subj_id}_fixed-net-pred_wm_msmt_csd_odf.nii.gz"
+                )
                 template_f = test_subj_files[subj_id]["brain_mask_f"]
                 print(f"{log_prefix()}| Saving prediction subj {subj_id}", flush=True)
                 with tempfile.TemporaryDirectory(prefix="test_fenri_") as tmp_dir_name:

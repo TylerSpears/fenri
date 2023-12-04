@@ -1,0 +1,61 @@
+experiment_name: "fixed_net_ismrm-sim_split_02"
+baseline_lr_spacing_scale: 2.222222
+baseline_snr: 30
+train_val_test_split_file: "../data_splits/ISMRM-HCP-sim_train-val-test_split_02.csv"
+train:
+    patch_size: [36, 36, 36]
+    batch_size: 6
+    samples_per_subj_per_epoch: 300
+    max_epochs: 50
+    dwi_recon_epoch_proportion: 0.0
+    patch_sampling:
+        rng: "default"
+    patch_tf:
+        downsample_factor_range: [2.222222, 2.222222]
+        noise_snr_range: [30, 35]
+        prefilter_sigma_scale_coeff: 2.0
+        rng: "default"
+    optim:
+        encoder:
+            lr: 1.0E-4
+        decoder:
+            lr: 1.0E-4
+    dataloader:
+        num_workers: 16
+        persistent_workers: True
+        prefetch_factor: 3
+preproc_loaded:
+    S0_noise_b0_quantile: 0.99
+    patch_sampling_w_erosion: 20
+val:
+    rng_seed: 3967417599011123030
+    vol_tf:
+        downsample_factor_range: [2.222222, 2.222222]
+        noise_snr_range: [30, 30]
+        prefilter_sigma_scale_coeff: 2.0
+        manual_crop_lr_sides: [[1, 1], [1, 1], [1, 1]]
+# Network/model parameters.
+encoder:
+    spatial_upscale_factor: 2.222222
+    in_channels: 102
+    input_coord_channels: True
+    interior_channels: 80
+    post_batch_norm: True
+    out_channels: 96
+    n_res_units: 3
+    n_dense_units: 3
+    activate_fn: "relu"
+decoder:
+    in_channels: 96
+    interior_channels: 48
+    out_channels: 45
+    n_res_units: 2
+    n_dense_units: 2
+    activate_fn: "relu"
+test:
+    rng_seed: 3967417599011123030
+    vol_tf:
+        downsample_factor_range: [2.222222, 2.222222]
+        noise_snr_range: [30, 30]
+        prefilter_sigma_scale_coeff: 2.0
+        manual_crop_lr_sides: [[1, 1], [1, 1], [1, 1]]

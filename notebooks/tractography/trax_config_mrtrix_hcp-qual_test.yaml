@@ -1,0 +1,33 @@
+# Config file for tractography parameters.
+l_max: 8
+batch_size: 2400
+# out_f_chunk_size: 5000
+
+# Seed point creation
+seed:
+    peaks: 1
+    min_odf_amplitude: 0.1
+    min_peak_separation_arc_len: 0.34906585
+    # Possible values: symmetric362, symmetric642, symmetric724, repulsion724,
+    # repulsion100, repulsion200
+    dipy_sphere: 'repulsion100'
+
+# Streamline tracking parameters
+tracking:
+    step_size_mm: 0.3125
+    alpha_exponential_moving_avg: 0.8
+
+# Peak finding parameters.
+peak_finding:
+    lr: 0.1
+    momentum: 0.5
+    max_epochs: 100
+    tol_arc_len: 0.00017453292519943296
+
+# Stopping criteria
+stopping:
+    min_streamline_len: 6.25
+    max_streamline_len: 250
+    min_gfa: 0.1
+    min_odf_amplitude: 0.1
+    max_tangent_angle_diff: 1.0471975511965976

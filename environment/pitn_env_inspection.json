@@ -5,6 +5,317 @@
     {
       "metadata": {
         "metadata_version": "2.1",
+        "name": "argcomplete",
+        "version": "3.1.6",
+        "platform": [
+          "MacOS X",
+          "Posix"
+        ],
+        "summary": "Bash tab completion for argparse",
+        "description_content_type": "text/x-rst",
+        "home_page": "https://github.com/kislyuk/argcomplete",
+        "author": "Andrey Kislyuk",
+        "author_email": "kislyuk@gmail.com",
+        "classifier": [
+          "Environment :: Console",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "Operating System :: MacOS :: MacOS X",
+          "Operating System :: POSIX",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy",
+          "Development Status :: 5 - Production/Stable",
+          "Topic :: Software Development",
+          "Topic :: Software Development :: Libraries :: Python Modules",
+          "Topic :: System :: Shells",
+          "Topic :: Terminals"
+        ],
+        "requires_dist": [
+          "coverage ; extra == 'test'",
+          "pexpect ; extra == 'test'",
+          "wheel ; extra == 'test'",
+          "ruff ; extra == 'test'",
+          "mypy ; extra == 'test'"
+        ],
+        "requires_python": ">=3.8",
+        "project_url": [
+          "Documentation, https://kislyuk.github.io/argcomplete",
+          "Source Code, https://github.com/kislyuk/argcomplete",
+          "Issue Tracker, https://github.com/kislyuk/argcomplete/issues",
+          "Change Log, https://github.com/kislyuk/argcomplete/blob/master/Changes.rst"
+        ],
+        "provides_extra": [
+          "test"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/argcomplete-3.1.6.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "click",
+        "version": "8.1.7",
+        "summary": "Composable command line interface toolkit",
+        "description_content_type": "text/x-rst",
+        "home_page": "https://palletsprojects.com/p/click/",
+        "maintainer": "Pallets",
+        "maintainer_email": "contact@palletsprojects.com",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: BSD License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python"
+        ],
+        "requires_dist": [
+          "colorama ; platform_system == \"Windows\"",
+          "importlib-metadata ; python_version < \"3.8\""
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Donate, https://palletsprojects.com/donate",
+          "Documentation, https://click.palletsprojects.com/",
+          "Changes, https://click.palletsprojects.com/changes/",
+          "Source Code, https://github.com/pallets/click/",
+          "Issue Tracker, https://github.com/pallets/click/issues/",
+          "Chat, https://discord.gg/pallets"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/click-8.1.7.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "packaging",
+        "version": "23.2",
+        "summary": "Core utilities for Python packages",
+        "description_content_type": "text/x-rst",
+        "author_email": "Donald Stufft <donald@stufft.io>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "License :: OSI Approved :: BSD License",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy",
+          "Typing :: Typed"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Documentation, https://packaging.pypa.io/",
+          "Source, https://github.com/pypa/packaging"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/packaging-23.2.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "pipx",
+        "version": "1.3.3",
+        "summary": "Install and Run Python Applications in Isolated Environments",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "Virtual Environment",
+          "cli",
+          "install",
+          "pip",
+          "workflow"
+        ],
+        "author_email": "Chad Smith <chadsmith.software@gmail.com>",
+        "classifier": [
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12"
+        ],
+        "requires_dist": [
+          "argcomplete>=1.9.4",
+          "colorama>=0.4.4; sys_platform == 'win32'",
+          "packaging>=20",
+          "platformdirs>=2.1",
+          "tomli; python_version < '3.11'",
+          "userpath!=1.9.0,>=1.6"
+        ],
+        "requires_python": ">=3.8",
+        "project_url": [
+          "Bug Tracker, https://github.com/pypa/pipx/issues",
+          "Documentation, https://pipx.pypa.io",
+          "Homepage, https://pipx.pypa.io",
+          "Release Notes, https://pipx.pypa.io/latest/changelog/",
+          "Source Code, https://github.com/pypa/pipx"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/pipx-1.3.3.dist-info",
+      "installer": "pip",
+      "requested": true
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "platformdirs",
+        "version": "4.1.0",
+        "summary": "A small Python package for determining appropriate platform-specific dirs, e.g. a \"user data dir\".",
+        "description_content_type": "text/x-rst",
+        "keywords": [
+          "appdirs",
+          "application",
+          "cache",
+          "directory",
+          "log",
+          "user"
+        ],
+        "maintainer_email": "Bern\u00e1t G\u00e1bor <gaborjbernat@gmail.com>, Julian Berman <Julian@GrayVines.com>, Ofek Lev <oss@ofek.dev>, Ronny Pfannschmidt <opensource@ronnypfannschmidt.de>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy",
+          "Topic :: Software Development :: Libraries :: Python Modules"
+        ],
+        "requires_dist": [
+          "furo>=2023.7.26; extra == 'docs'",
+          "proselint>=0.13; extra == 'docs'",
+          "sphinx-autodoc-typehints>=1.24; extra == 'docs'",
+          "sphinx>=7.1.1; extra == 'docs'",
+          "appdirs==1.4.4; extra == 'test'",
+          "covdefaults>=2.3; extra == 'test'",
+          "pytest-cov>=4.1; extra == 'test'",
+          "pytest-mock>=3.11.1; extra == 'test'",
+          "pytest>=7.4; extra == 'test'"
+        ],
+        "requires_python": ">=3.8",
+        "project_url": [
+          "Documentation, https://platformdirs.readthedocs.io",
+          "Homepage, https://github.com/platformdirs/platformdirs",
+          "Source, https://github.com/platformdirs/platformdirs",
+          "Tracker, https://github.com/platformdirs/platformdirs/issues"
+        ],
+        "provides_extra": [
+          "docs",
+          "test"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/platformdirs-4.1.0.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "tomli",
+        "version": "2.0.1",
+        "summary": "A lil' TOML parser",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "toml"
+        ],
+        "author_email": "Taneli Hukkinen <hukkin@users.noreply.github.com>",
+        "classifier": [
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: MacOS",
+          "Operating System :: Microsoft :: Windows",
+          "Operating System :: POSIX :: Linux",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy",
+          "Topic :: Software Development :: Libraries :: Python Modules",
+          "Typing :: Typed"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Changelog, https://github.com/hukkin/tomli/blob/master/CHANGELOG.md",
+          "Homepage, https://github.com/hukkin/tomli"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/tomli-2.0.1.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
+        "name": "userpath",
+        "version": "1.9.1",
+        "summary": "Cross-platform tool for adding locations to the user PATH",
+        "description_content_type": "text/markdown",
+        "keywords": [
+          "path",
+          "user path"
+        ],
+        "author_email": "Ofek Lev <oss@ofek.dev>",
+        "classifier": [
+          "Development Status :: 4 - Beta",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: MIT License",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python :: 3.7",
+          "Programming Language :: Python :: 3.8",
+          "Programming Language :: Python :: 3.9",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy"
+        ],
+        "requires_dist": [
+          "click"
+        ],
+        "requires_python": ">=3.7",
+        "project_url": [
+          "Funding, https://github.com/sponsors/ofek",
+          "History, https://github.com/ofek/userpath/blob/master/HISTORY.rst",
+          "Issues, https://github.com/ofek/userpath/issues",
+          "Source, https://github.com/ofek/userpath"
+        ]
+      },
+      "metadata_location": "/home/tas6hh/.local/lib/python3.10/site-packages/userpath-1.9.1.dist-info",
+      "installer": "pip",
+      "requested": false
+    },
+    {
+      "metadata": {
+        "metadata_version": "2.1",
         "name": "APScheduler",
         "version": "3.6.3",
         "summary": "In-process task scheduler with Cron-like capabilities",
@@ -3329,48 +3640,6 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/cleo-0.8.1.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/cleo_1639678626660/work",
-        "dir_info": {}
-      },
-      "installer": "conda",
-      "requested": true
-    },
-    {
-      "metadata": {
-        "metadata_version": "2.1",
-        "name": "click",
-        "version": "8.1.3",
-        "summary": "Composable command line interface toolkit",
-        "description_content_type": "text/x-rst",
-        "home_page": "https://palletsprojects.com/p/click/",
-        "author": "Armin Ronacher",
-        "author_email": "armin.ronacher@active-4.com",
-        "maintainer": "Pallets",
-        "maintainer_email": "contact@palletsprojects.com",
-        "classifier": [
-          "Development Status :: 5 - Production/Stable",
-          "Intended Audience :: Developers",
-          "License :: OSI Approved :: BSD License",
-          "Operating System :: OS Independent",
-          "Programming Language :: Python"
-        ],
-        "requires_dist": [
-          "colorama ; platform_system == \"Windows\"",
-          "importlib-metadata ; python_version < \"3.8\""
-        ],
-        "requires_python": ">=3.7",
-        "project_url": [
-          "Donate, https://palletsprojects.com/donate",
-          "Documentation, https://click.palletsprojects.com/",
-          "Changes, https://click.palletsprojects.com/changes/",
-          "Source Code, https://github.com/pallets/click/",
-          "Issue Tracker, https://github.com/pallets/click/issues/",
-          "Twitter, https://twitter.com/PalletsTeam",
-          "Chat, https://discord.gg/pallets"
-        ]
-      },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/click-8.1.3.dist-info",
-      "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/click_1666798198223/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -12193,50 +12462,6 @@
     {
       "metadata": {
         "metadata_version": "2.1",
-        "name": "packaging",
-        "version": "20.9",
-        "platform": [
-          "UNKNOWN"
-        ],
-        "summary": "Core utilities for Python packages",
-        "description_content_type": "text/x-rst",
-        "home_page": "https://github.com/pypa/packaging",
-        "author": "Donald Stufft and individual contributors",
-        "author_email": "donald@stufft.io",
-        "classifier": [
-          "Development Status :: 5 - Production/Stable",
-          "Intended Audience :: Developers",
-          "License :: OSI Approved :: Apache Software License",
-          "License :: OSI Approved :: BSD License",
-          "Programming Language :: Python",
-          "Programming Language :: Python :: 2",
-          "Programming Language :: Python :: 2.7",
-          "Programming Language :: Python :: 3",
-          "Programming Language :: Python :: 3.4",
-          "Programming Language :: Python :: 3.5",
-          "Programming Language :: Python :: 3.6",
-          "Programming Language :: Python :: 3.7",
-          "Programming Language :: Python :: 3.8",
-          "Programming Language :: Python :: 3.9",
-          "Programming Language :: Python :: Implementation :: CPython",
-          "Programming Language :: Python :: Implementation :: PyPy"
-        ],
-        "requires_dist": [
-          "pyparsing (>=2.0.2)"
-        ],
-        "requires_python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*"
-      },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/packaging-20.9.dist-info",
-      "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/packaging_1612459636436/work",
-        "dir_info": {}
-      },
-      "installer": "conda",
-      "requested": true
-    },
-    {
-      "metadata": {
-        "metadata_version": "2.1",
         "name": "pandas",
         "version": "1.5.2",
         "platform": [
@@ -12822,67 +13047,6 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/pkgutil_resolve_name-1.3.10.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/pkgutil-resolve-name_1633981968097/work",
-        "dir_info": {}
-      },
-      "installer": "conda",
-      "requested": true
-    },
-    {
-      "metadata": {
-        "metadata_version": "2.1",
-        "name": "platformdirs",
-        "version": "2.5.2",
-        "summary": "A small Python module for determining appropriate platform-specific dirs, e.g. a \"user data dir\".",
-        "description_content_type": "text/x-rst",
-        "keywords": [
-          "application",
-          "cache",
-          "directory",
-          "log",
-          "user"
-        ],
-        "maintainer_email": "Bern\u00e1t G\u00e1bor <gaborjbernat@gmail.com>, Julian Berman <Julian@GrayVines.com>, Ofek Lev <oss@ofek.dev>, Ronny Pfannschmidt <opensource@ronnypfannschmidt.de>",
-        "classifier": [
-          "Development Status :: 5 - Production/Stable",
-          "Intended Audience :: Developers",
-          "License :: OSI Approved :: MIT License",
-          "Operating System :: OS Independent",
-          "Programming Language :: Python",
-          "Programming Language :: Python :: 3",
-          "Programming Language :: Python :: 3 :: Only",
-          "Programming Language :: Python :: 3.10",
-          "Programming Language :: Python :: 3.7",
-          "Programming Language :: Python :: 3.8",
-          "Programming Language :: Python :: 3.9",
-          "Programming Language :: Python :: Implementation :: CPython",
-          "Programming Language :: Python :: Implementation :: PyPy",
-          "Topic :: Software Development :: Libraries :: Python Modules"
-        ],
-        "requires_dist": [
-          "furo>=2021.7.5b38; extra == 'docs'",
-          "proselint>=0.10.2; extra == 'docs'",
-          "sphinx-autodoc-typehints>=1.12; extra == 'docs'",
-          "sphinx>=4; extra == 'docs'",
-          "appdirs==1.4.4; extra == 'test'",
-          "pytest-cov>=2.7; extra == 'test'",
-          "pytest-mock>=3.6; extra == 'test'",
-          "pytest>=6; extra == 'test'"
-        ],
-        "requires_python": ">=3.7",
-        "project_url": [
-          "Documentation, https://platformdirs.readthedocs.io",
-          "Homepage, https://github.com/platformdirs/platformdirs",
-          "Source, https://github.com/platformdirs/platformdirs",
-          "Tracker, https://github.com/platformdirs/platformdirs/issues"
-        ],
-        "provides_extra": [
-          "docs",
-          "test"
-        ]
-      },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/platformdirs-2.5.2.dist-info",
-      "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/platformdirs_1657729053205/work",
         "dir_info": {}
       },
       "installer": "conda",
@@ -17379,46 +17543,6 @@
       "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/toml-0.10.2.dist-info",
       "direct_url": {
         "url": "file:///home/conda/feedstock_root/build_artifacts/toml_1604308577558/work",
-        "dir_info": {}
-      },
-      "installer": "conda",
-      "requested": true
-    },
-    {
-      "metadata": {
-        "metadata_version": "2.1",
-        "name": "tomli",
-        "version": "2.0.1",
-        "summary": "A lil' TOML parser",
-        "description_content_type": "text/markdown",
-        "keywords": [
-          "toml"
-        ],
-        "author_email": "Taneli Hukkinen <hukkin@users.noreply.github.com>",
-        "classifier": [
-          "License :: OSI Approved :: MIT License",
-          "Operating System :: MacOS",
-          "Operating System :: Microsoft :: Windows",
-          "Operating System :: POSIX :: Linux",
-          "Programming Language :: Python :: 3 :: Only",
-          "Programming Language :: Python :: 3.7",
-          "Programming Language :: Python :: 3.8",
-          "Programming Language :: Python :: 3.9",
-          "Programming Language :: Python :: 3.10",
-          "Programming Language :: Python :: Implementation :: CPython",
-          "Programming Language :: Python :: Implementation :: PyPy",
-          "Topic :: Software Development :: Libraries :: Python Modules",
-          "Typing :: Typed"
-        ],
-        "requires_python": ">=3.7",
-        "project_url": [
-          "Changelog, https://github.com/hukkin/tomli/blob/master/CHANGELOG.md",
-          "Homepage, https://github.com/hukkin/tomli"
-        ]
-      },
-      "metadata_location": "/opt/mambaforge/envs/pitn/lib/python3.10/site-packages/tomli-2.0.1.dist-info",
-      "direct_url": {
-        "url": "file:///home/conda/feedstock_root/build_artifacts/tomli_1644342247877/work",
         "dir_info": {}
       },
       "installer": "conda",

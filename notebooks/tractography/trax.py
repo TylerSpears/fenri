@@ -554,6 +554,8 @@ if __name__ == "__main__":
             # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
             torch.backends.cudnn.allow_tf32 = True
     else:
+        # Assumes only 1 CPU?
+        jax.config.update("jax_default_device", jax.devices("cpu")[0])
         device = torch.device("cpu")
     # keep device as the cpu
     # device = torch.device('cpu')

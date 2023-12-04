@@ -33,7 +33,6 @@ def odf_peaks_mrtrix(
     match_peaks_vol: Optional[torch.Tensor] = None,
     mrtrix_nthreads: Optional[int] = None,
 ) -> tuple[torch.Tensor, nib.spatialimages.DataobjImage]:
-
     batch_size = odf.shape[0]
     if batch_size != 1:
         raise NotImplementedError("ERROR: Batch size != 1 not implemented")
@@ -178,6 +177,7 @@ MAX_COS_SIM = 1.0 - torch.finfo(torch.float32).eps
 MIN_COS_SIM = 0.0 + torch.finfo(torch.float32).eps
 MAX_ARC_LEN = (torch.pi / 2) - torch.finfo(torch.float32).eps
 MIN_ARC_LEN = 0.0 + torch.finfo(torch.float32).eps
+HCP_MEDIAN_NORM_PEAK = 0.0073
 
 
 @torch.no_grad()
@@ -190,21 +190,32 @@ def waae(
     n_peaks: int,
     odf_integral_theta: torch.Tensor,
     odf_integral_phi: torch.Tensor,
+    fp_fn_w: float,
 ) -> torch.Tensor:
     batch_size = odf_pred.shape[0]
     if batch_size != 1:
         raise NotImplementedError("ERROR: Batch size != 1 not implemented")
 
-    # Only select the first N x 3 peaks
+    # Assume that all peaks are ordered by amplitude.
+    # Only select the first N x 3 peaks for the ground truth, but keep all available
+    # peaks in the prediction.
     max_coord_idx = 3 * n_peaks
     peaks_gt = peaks_gt[..., :max_coord_idx]
-    peaks_pred = peaks_pred[..., :max_coord_idx]
-    # Only select voxels where the ground truth has a peak. All others are 0s.
-    gt_has_peaks_mask = ~torch.isclose(peaks_gt, peaks_gt.new_zeros(1)).all(-1)
-    peaks_gt = peaks_gt[gt_has_peaks_mask]
-    peaks_pred = peaks_pred[gt_has_peaks_mask]
+    assert peaks_pred.shape[-1] % 3 == 0
+    n_peaks_pred = peaks_pred.shape[-1] // 3
+    # Only select voxels where either the ground truth or the prediction has a peak. All
+    # others are 0s.
+    gt_has_peaks_mask = (
+        ~torch.isclose(peaks_gt, peaks_gt.new_zeros(1)).all(-1)
+    ) & mask.squeeze(1)
+    pred_has_peaks_mask = (
+        ~torch.isclose(peaks_pred, peaks_pred.new_zeros(1)).all(-1)
+    ) & mask.squeeze(1)
+    peaks_gt = peaks_gt[gt_has_peaks_mask | pred_has_peaks_mask]
+    peaks_pred = peaks_pred[gt_has_peaks_mask | pred_has_peaks_mask]
 
     # Integral across the sphere for the GT odfs, for finding the "W" in "WAAE".
+    # Only select voxels where the ground truth has a peak. All others are 0s.
     gt_sphere_samples = pitn.odf.sample_sphere_coords(
         odf_gt,
         theta=odf_integral_theta,
@@ -216,8 +227,31 @@ def waae(
     gt_sphere_samples = einops.rearrange(
         gt_sphere_samples, "b dirs x y z -> b x y z dirs"
     )
-    gt_sphere_integral = gt_sphere_samples[gt_has_peaks_mask].sum(dim=-1, keepdims=True)
+    gt_sphere_integral = gt_sphere_samples[gt_has_peaks_mask | pred_has_peaks_mask].sum(
+        dim=-1, keepdims=True
+    )
+    gt_sphere_integral.clamp_(min=torch.finfo(gt_sphere_integral.dtype).eps)
     del gt_sphere_samples
+
+    # Integral across the sphere for the pred odfs, for finding the "W" in "WAAE" in
+    # cases of a false positive peak.
+    # Only select voxels where the prediction has a peak. All others are 0s.
+    # pred_sphere_samples = pitn.odf.sample_sphere_coords(
+    #     odf_pred,
+    #     theta=odf_integral_theta,
+    #     phi=odf_integral_phi,
+    #     mask=pred_has_peaks_mask.unsqueeze(1),
+    #     sh_order=8,
+    #     force_nonnegative=True,
+    # )
+    # pred_sphere_samples = einops.rearrange(
+    #     pred_sphere_samples, "b dirs x y z -> b x y z dirs"
+    # )
+    # pred_sphere_integral = pred_sphere_samples[
+    #     gt_has_peaks_mask | pred_has_peaks_mask
+    # ].sum(dim=-1, keepdims=True)
+    # pred_sphere_integral.clamp_(min=torch.finfo(pred_sphere_integral.dtype).eps)
+    # del pred_sphere_samples
 
     # Reshape peaks to split along each peak.
     peaks_gt = einops.rearrange(
@@ -235,39 +269,66 @@ def waae(
         (peaks_pred[..., -1, None] < 0).expand_as(peaks_pred), -peaks_pred, peaks_pred
     )
 
+    FALSE_ARC_LEN_INDICATOR = torch.inf
     # Keep a running sum of each GT peak's waae.
     # (1, 1, x, y, z)
     running_waae = torch.zeros_like(odf_gt[:, 0:1])
     # Iterate over all peaks/"fixels" in the GT.
     for i_peak in range(n_peaks):
         peaks_gt_i = peaks_gt[i_peak]
-        peaks_pred_i = peaks_pred[i_peak]
-
-        gt_has_peak_i_mask = ~torch.isclose(peaks_gt_i, peaks_gt_i.new_zeros(1)).all(
-            -1, keepdim=True
+        gt_has_peak_i_mask = ~(
+            torch.isclose(peaks_gt_i, peaks_gt_i.new_zeros(1)).all(-1, keepdim=True)
         )
-        pred_has_peak_i_mask = ~torch.isclose(
-            peaks_pred_i, peaks_pred_i.new_zeros(1)
-        ).all(-1, keepdim=True)
-        pred_missing_peak_i_mask = gt_has_peak_i_mask & (~pred_has_peak_i_mask)
-        pred_false_pos_peak_i_mask = (~gt_has_peak_i_mask) & pred_has_peak_i_mask
+        # Determine the prediction peak based on the minimum arc len from the gt peak.
+        arc_lens_pred_i = list()
+        for j_pred_peak in range(n_peaks_pred):
+            peaks_pred_ij = peaks_pred[j_pred_peak]
+            pred_gt_arc_len_ij = (
+                pitn.transforms.functional._functional._antipodal_sym_arc_len(
+                    peaks_pred_ij, peaks_gt_i
+                )
+            )
+            pred_has_peak_ij_mask = ~(
+                torch.isclose(peaks_pred_ij, peaks_pred_ij.new_zeros(1)).all(
+                    -1, keepdim=True
+                )
+            )
+            fp = (~gt_has_peak_i_mask) & pred_has_peak_ij_mask
+            fn = gt_has_peak_i_mask & (~pred_has_peak_ij_mask)
+            pred_gt_arc_len_ij.masked_fill_(
+                fp.squeeze(1) | fn.squeeze(1), FALSE_ARC_LEN_INDICATOR
+            )
+            arc_lens_pred_i.append(pred_gt_arc_len_ij)
+        arc_lens_pred_i = torch.stack(arc_lens_pred_i, dim=0)
+        peaks_pred_i = torch.take_along_dim(
+            peaks_pred,
+            torch.argmin(arc_lens_pred_i.unsqueeze(-1), dim=0, keepdim=True),
+            dim=0,
+        )
+        peaks_pred_i.squeeze_(0)
+        # peaks_pred_i = torch.take_along_dim(peaks_pred, torch.argmin(arc_lens_pred_i, dim=0), dim=0)
+        # peaks_pred_i = peaks_pred[torch.argmin(arc_lens_pred_i, dim=0)]
+        del (
+            arc_lens_pred_i,
+            pred_gt_arc_len_ij,
+            fp,
+            fn,
+            peaks_pred_ij,
+        )
 
-        norm_gt_i = torch.linalg.norm(peaks_gt_i, ord=2, dim=-1, keepdims=True)
-        norm_gt_i.masked_fill_(norm_gt_i == 0, 1.0)
-        # norm_pred_i = torch.linalg.norm(peaks_pred_i, ord=2, dim=-1, keepdims=True)
-        # norm_pred_i.masked_fill_(norm_pred_i == 0, 1.0)
+        pred_has_peak_i_mask = ~(
+            torch.isclose(peaks_pred_i, peaks_pred_i.new_zeros(1)).all(-1, keepdim=True)
+        )
+        # False negatives
+        pred_fn_mask = gt_has_peak_i_mask & (~pred_has_peak_i_mask)
+        # False positives
+        pred_fp_mask = (~gt_has_peak_i_mask) & pred_has_peak_i_mask
 
-        # # Calculate cosine similarity, ranges between -1 (least similar) and +1 (most
-        # # similar).
-        # cos_sim = (
-        #     (peaks_gt_i / norm_gt_i).to(torch.float64)
-        #     * (peaks_pred_i / norm_pred_i).to(torch.float64)
-        # ).sum(-1, keepdims=True)
+        peak_height_gt_i = torch.linalg.norm(peaks_gt_i, ord=2, dim=-1, keepdims=True)
+        # peak_height_pred_i = torch.linalg.norm(
+        #     peaks_pred_i, ord=2, dim=-1, keepdims=True
+        # )
 
-        # # When the prediction fixel does not exist, but should, assign the minimum cos
-        # # similarity score.
-        # # cos_sim.masked_fill_(pred_missing_peak_i_mask, MIN_COS_SIM)
-        # # 0.0 is the midpoint between max and min cosine similarity.
         gt_pred_arc_len = (
             pitn.transforms.functional._functional._antipodal_sym_arc_len(
                 peaks_pred_i.to(torch.float64), peaks_gt_i.to(torch.float64)
@@ -275,26 +336,21 @@ def waae(
             .unsqueeze(-1)
             .to(peaks_pred_i)
         )
-        gt_pred_arc_len.masked_fill_(pred_missing_peak_i_mask, MAX_ARC_LEN)
-        gt_pred_arc_len.masked_fill_(pred_false_pos_peak_i_mask, MAX_ARC_LEN)
-        # cos_sim.masked_fill_(
-        #     pred_missing_peak_i_mask,
-        # )  #!TESTING
-        # cos_sim.masked_fill_(pred_false_pos_peak_i_mask, 0.0)  #!TESTING
+        # False positives and false negatives both get maximum arc length penalty.
+        gt_pred_arc_len.masked_fill_(pred_fn_mask | pred_fp_mask, MAX_ARC_LEN)
         gt_pred_arc_len.clamp_(min=MIN_ARC_LEN, max=MAX_ARC_LEN)
-        # gt_pred_arc_len = torch.arccos(cos_sim).to(peaks_gt.dtype)
-        # del cos_sim
 
         # Amplitude of GT fixel normalized by the entire GT's volume.
-        w_i = norm_gt_i / gt_sphere_integral
-        # If the gt peak does not exist at this fixel, do not include this fixel in the
-        # WAAE.
-        # w_i[~gt_has_peak_i_mask] = 0.0
+        w_i = peak_height_gt_i / gt_sphere_integral
+        # Zero out the weight of this fixel if this is a true negative fixel.
         w_i[(~gt_has_peak_i_mask) & (~pred_has_peak_i_mask)] = 0.0
-        # w_i[~pred_has_peak_i_mask] = 0.0  #!TESTING
-        running_waae[gt_has_peaks_mask.unsqueeze(1)] += (gt_pred_arc_len * w_i).squeeze(
-            -1
-        )
+        # # Handle false positives by assigning W to be the predicted peak height.
+        # w_fp_i = peak_height_pred_i / pred_sphere_integral
+        w_i = torch.where(pred_fp_mask | pred_fn_mask, fp_fn_w, w_i)
+
+        running_waae[(gt_has_peaks_mask | pred_has_peaks_mask).unsqueeze(1)] += (
+            gt_pred_arc_len * w_i
+        ).squeeze(-1)
         del w_i, gt_pred_arc_len
 
     return running_waae
@@ -411,7 +467,6 @@ class NormRMSEMetric(torch.nn.Module):
 def psnr_batch_channel_regularized(
     x, y, range_min: torch.Tensor, range_max: torch.Tensor
 ):
-
     # Calculate the per-batch-per-channel range.
     range_min = range_min.to(y)
     range_max = range_max.to(y)
@@ -434,7 +489,6 @@ def psnr_batch_channel_regularized(
 
 
 def _bc_y_range(y):
-
     # Calculate the per-batch-per-channel range.
     n_spatial_dims = len(y.shape[2:])
     reduce_str = "b c ... -> b c " + " ".join(itertools.repeat("1", n_spatial_dims))
@@ -449,7 +503,6 @@ def ssim_y_range(
     y: torch.Tensor,
     **ssim_kwargs,
 ) -> torch.Tensor:
-
     x_np = x.detach().cpu().numpy()
     y_np = y.detach().cpu().numpy()
     y_range = _bc_y_range(y)

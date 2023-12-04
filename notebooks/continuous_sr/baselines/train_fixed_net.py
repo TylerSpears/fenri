@@ -17,7 +17,7 @@
 # ---
 
 # %% [markdown]
-# # Continuous-Space Super-Resolution of fODFs in Diffusion MRI
+# # Fixed-Size Upsampling with CARN-style Networks
 #
 # Code by:
 #
@@ -86,12 +86,15 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from icecream import ic
-from inr_networks import Decoder, INREncoder, SimplifiedDecoder
 
 # from lightning_fabric.fabric import Fabric
 from natsort import natsorted
 
 import pitn
+
+# Add inr_networks module from a different directory
+sys.path.append(str(Path("../").resolve()))
+from inr_networks import FixedDecoder, FixedUpsampleEncoder
 
 plt.rcParams.update({"figure.autolayout": True})
 plt.rcParams.update({"figure.facecolor": [1.0, 1.0, 1.0, 1.0]})
@@ -102,6 +105,7 @@ np.set_printoptions(suppress=True, threshold=100, linewidth=88)
 torch.set_printoptions(sci_mode=False, threshold=100, linewidth=88)
 
 # monai.data.set_track_meta(False)
+
 
 # %%
 def create_subj_rng_seed(base_rng_seed: int, subj_id: Union[int, str]) -> int:
@@ -216,22 +220,19 @@ p = Box(default_box=True)
 
 # General experiment-wide params
 ###############################################
-p.experiment_name = "FENRI_hcp_split-03.1"
+p.experiment_name = "fixed_net_hcp_split-01.1"
 p.override_experiment_name = False
 p.results_dir = "/data/srv/outputs/pitn/results/runs"
 p.tmp_results_dir = "/data/srv/outputs/pitn/results/tmp"
-p.train_val_test_split_file = (
-    Path("./data_splits") / "HCP_train-val-test_split_03.1.csv"
-)
-# p.train_val_test_split_file = random.choice(
-#     list(Path("./data_splits").glob("HCP*train-val-test_split*.csv"))
+# p.train_val_test_split_file = (
+#     Path("./data_splits") / "HCP_train-val-test_split_01.1.csv"
 # )
 p.aim_logger = dict(
     repo="aim://dali.cpe.virginia.edu:53800",
     # repo="/data/srv/outputs/pitn/results/aim/tmp",
-    experiment="PITN_FENRI",
+    experiment="PITN_fixed_net",
     meta_params=dict(run_name=p.experiment_name),
-    tags=("PITN", "INR", "HCP", "super-res", "dMRI", "FENRI"),
+    tags=("PITN", "HCP", "super-res", "dMRI"),
 )
 p.checkpoint_epoch_ratios = (0.33, 0.5)
 ###############################################
@@ -243,9 +244,8 @@ p.baseline_snr = 30
 p.train = dict(
     patch_size=(36, 36, 36),
     batch_size=6,
-    samples_per_subj_per_epoch=130,
+    # samples_per_subj_per_epoch=130,
     max_epochs=50,
-    # dwi_recon_epoch_proportion=1 / 99,
     dwi_recon_epoch_proportion=0.0,
 )
 p.train.patch_sampling = dict(rng="default")
@@ -260,26 +260,27 @@ p.train.patch_tf = dict(
 p.train.optim.encoder.lr = 5e-4
 p.train.optim.decoder.lr = 5e-4
 # Train dataloader kwargs.
-p.train.dataloader = dict(num_workers=16, persistent_workers=True, prefetch_factor=3)
+p.train.dataloader = dict(num_workers=17, persistent_workers=True, prefetch_factor=3)
 # p.train.dataloader = dict(num_workers=0)
 
 # Network/model parameters.
 p.encoder = dict(
+    in_channels=102,
     interior_channels=80,
+    input_coord_channels=True,
     out_channels=96,
     n_res_units=3,
     n_dense_units=3,
     activate_fn="relu",
-    input_coord_channels=True,
     post_batch_norm=True,
 )
 p.decoder = dict(
-    context_v_features=96,
-    out_features=45,
-    m_encode_num_freqs=36,
-    sigma_encode_scale=3.0,
-    n_internal_features=256,
-    n_internal_layers=3,
+    in_channels=96,
+    interior_channels=48,
+    out_channels=45,
+    n_res_units=2,
+    n_dense_units=2,
+    activate_fn="relu",
 )
 p.val.rng_seed = 3967417599011123030
 p.val.vol_tf = dict(
@@ -370,8 +371,6 @@ num_load_and_tf_workers = 12
 
 
 # %%
-
-## Directory structure for HCP training:
 hcp_data_root_dir = Path("/data/srv/outputs/pitn/hcp")
 assert hcp_data_root_dir.exists()
 data_root_dir = hcp_data_root_dir
@@ -382,7 +381,6 @@ rel_odf_path = Path("ras/odf/wm_msmt_csd_norm_odf.nii.gz")
 rel_fivett_seg_path = Path("ras/segmentation/fivett_dwi-space_segmentation.nii.gz")
 rel_brain_mask_path = Path("ras/brain_mask.nii.gz")
 
-## Directory structure for ISMRM training:
 # ismrm_data_root_dir = Path("/data/srv/outputs/pitn/ismrm_sim_dwi")
 # assert ismrm_data_root_dir.exists()
 # data_root_dir = ismrm_data_root_dir
@@ -429,6 +427,7 @@ preproc_loaded_kwargs = dict(
     patch_sampling_w_erosion=p.preproc_loaded.patch_sampling_w_erosion,
     resample_target_grad_table=target_grad_table,
 )
+
 
 # Worker function as a single-argument callable.
 def load_and_deterministic_tf_subj(subj_files: dict):
@@ -554,6 +553,7 @@ del preproc_val_dataset
 # %% [markdown]
 # ## Training
 
+
 # %%
 def setup_logger_run(run_kwargs: dict, logger_meta_params: dict, logger_tags: list):
     aim_run = aim.Run(
@@ -607,15 +607,12 @@ def validate_stage(
 
             x = batch_dict["lr_dwi"]
             batch_size = x.shape[0]
-            x_affine_vox2real = batch_dict["affine_lr_vox2real"].to(x.dtype)
-            x_spacing = batch_dict["lr_spacing"]
             x_coords = einops.rearrange(
                 batch_dict["lr_real_coords"], "b coord x y z -> b x y z coord"
             )
 
             y = batch_dict["odf"]
             y_mask = batch_dict["brain_mask"].bool()
-            y_spacing = batch_dict["full_res_spacing"]
             y_coords = einops.rearrange(
                 batch_dict["full_res_real_coords"], "b coord x y z -> b x y z coord"
             )
@@ -630,39 +627,10 @@ def validate_stage(
             x = torch.cat(
                 [x, einops.rearrange(x_coords, "b x y z coord -> b coord x y z")], dim=1
             )
-            ctx_v = encoder(x)
-
-            # Whole-volume inference is memory-prohibitive, so use a sliding
-            # window inference method on the encoded volume.
-            # Transform y_coords into a coordinates-first shape, for the interface, and
-            # attach the mask for compatibility with the sliding inference function.
-            y_slide_window = torch.cat(
-                [
-                    einops.rearrange(y_coords, "b x y z coord -> b coord x y z"),
-                    y_mask.to(y_coords),
-                ],
-                dim=1,
-            )
-            fn_coordify = lambda x: einops.rearrange(
-                x, "b coord x y z -> b x y z coord"
-            )
-
-            pred_fodf = monai.inferers.sliding_window_inference(
-                y_slide_window,
-                roi_size=(52, 52, 52),
-                sw_batch_size=y_coords.shape[0],
-                predictor=lambda q: decoder(
-                    # Rearrange back into coord-last format.
-                    query_real_coords=fn_coordify(q[:, :-1]),
-                    query_coords_mask=fn_coordify(q[:, -1:].bool()),
-                    context_v=ctx_v,
-                    context_real_coords=x_coords,
-                    affine_context_vox2real=x_affine_vox2real,
-                    context_spacing=x_spacing,
-                    query_spacing=y_spacing,
-                ),
-                overlap=0,
-                padding_mode="replicate",
+            y_pred = encoder(x)
+            pred_fodf = decoder(y_pred)
+            pred_fodf = decoder.crop_pad_to_match_gt_shape(
+                model_output=pred_fodf, ground_truth=y, mode="constant"
             )
 
             y_mask_broad = torch.broadcast_to(y_mask, y.shape)
@@ -824,14 +792,9 @@ aim_run = setup_logger_run(
     logger_meta_params=p.aim_logger.meta_params.to_dict(),
     logger_tags=p.aim_logger.tags,
 )
-if "in_channels" not in p.encoder:
-    in_channels = int(train_dataset[0]["lr_dwi"].shape[0]) + 3
-else:
-    in_channels = p.encoder.in_channels
 
 # Wrap the entire training & validation loop in a try...except statement.
 try:
-
     LOSS_ODF_COEFF_MEANS = torch.from_numpy(
         np.array([0.17] + [0.002] * 5 + [0.002] * 9 + [0.0] * 13 + [0.0] * 17)
     )
@@ -841,11 +804,12 @@ try:
     LOSS_ODF_COEFF_MEANS = LOSS_ODF_COEFF_MEANS[None, :, None, None, None].to(device)
     LOSS_ODF_COEFF_STDS = LOSS_ODF_COEFF_STDS[None, :, None, None, None].to(device)
 
-    encoder = INREncoder(**{**p.encoder.to_dict(), **{"in_channels": in_channels}})
-    # Initialize weight shape for the encoder.
+    encoder = FixedUpsampleEncoder(**p.encoder.to_dict())
+    decoder = FixedDecoder(**p.decoder.to_dict())
+    # Initialize weight shape for the encoder & decoder.
     with torch.no_grad():
-        encoder(torch.randn(1, in_channels, 20, 20, 20))
-    decoder = SimplifiedDecoder(**p.decoder.to_dict())
+        encoder(torch.randn(1, p.encoder.in_channels, 20, 20, 20))
+        decoder(torch.randn(1, p.decoder.in_channels, 20, 20, 20))
 
     fabric.print(p.to_dict())
     fabric.print(encoder)
@@ -908,10 +872,10 @@ try:
     checkpoint_epochs = np.floor(np.array(p.checkpoint_epoch_ratios) * epochs)
     checkpoint_epochs = set(checkpoint_epochs.astype(int).tolist())
     curr_checkpoint = 0
+
     for epoch in range(epochs):
         fabric.print(f"\nEpoch {epoch}\n", "=" * 10)
         for batch_dict in train_dataloader:
-
             x = batch_dict["lr_dwi"]
             x_affine_vox2real = batch_dict["affine_lr_vox2real"].to(x.dtype)
             x_spacing = batch_dict["lr_spacing"]
@@ -936,18 +900,13 @@ try:
                 [x, einops.rearrange(x_coords, "b x y z coord -> b coord x y z")], dim=1
             )
             ctx_v = encoder(x)
+            pred_fodf = decoder(ctx_v)
+            pred_fodf = decoder.crop_pad_to_match_gt_shape(
+                model_output=pred_fodf, ground_truth=y, mode="constant"
+            )
 
             y_mask_broad = torch.broadcast_to(y_mask, y.shape)
             y_coord_mask = einops.rearrange(y_mask, "b 1 x y z -> b x y z 1")
-            pred_fodf = decoder(
-                context_v=ctx_v,
-                context_real_coords=x_coords,
-                query_real_coords=y_coords,
-                query_coords_mask=y_coord_mask,
-                affine_context_vox2real=x_affine_vox2real,
-                context_spacing=x_spacing,
-                query_spacing=y_spacing,
-            )
 
             # Scale prediction and target to weigh the loss.
             # Transform coefficients to a standard normal distribution.
@@ -956,6 +915,8 @@ try:
                 pred_fodf - LOSS_ODF_COEFF_MEANS
             ) / LOSS_ODF_COEFF_STDS
             y_standardized = (y - LOSS_ODF_COEFF_MEANS) / LOSS_ODF_COEFF_STDS
+            # pred_fodf_standardized = pred_fodf  #!DEBUG
+            # y_standardized = y  #!DEBUG
             # Tissue weights
             tissue_weight_mask = y_mask.to(pred_fodf)
             tissue_weight_mask[batch_dict["gm_mask"]] = 0.3
@@ -1016,7 +977,7 @@ try:
         # volume inference inside validation step.
         del x, x_coords, y, y_coords, pred_fodf
 
-        fabric.print("\n==Validation==", flush=True)
+        fabric.print("\n==========Validation==========", flush=True)
         fabric.barrier()
         if fabric.is_global_zero:
             aim_run, val_viz_subj_id, val_scores = validate_stage(
