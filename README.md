@@ -1,10 +1,11 @@
-# Pain in the Net (PITN) Project Code
+# FENRI - Fiber Orientations from Explicit Neural Representations Project Code
 
-# Setup
+## Environment Installation
 
-## Development Environment Installation
+### Quickstart
 
-To re-create the anaconda environment used for development:
+To quickly recreate the development environment, install the anaconda packages found in
+`pitn.txt` and the pypi packages found in `requirements.txt`. For example:
 
 ```bash
 # Make sure to install mamba in your root anaconda env for package installation.
@@ -16,16 +17,34 @@ conda activate pitn
 # Install pip packages, try to constrain by the anaconda package versions, even if pip
 # does not detect some of them.
 pip install --requirement requirements.txt --constraint pitn_pip_constraints.txt
+# Install the pitn as a local editable package.
+pip install -e .
 ```
 
-See the `environment/` directory for more information regarding package versions.
+### Detailed Installation Notes
 
-## pitn Package Installation
+If the previous commands fail to install the environment (which it likely will), then
+the following notes should be sufficient to recreate the environment.
 
-To install as a python package, install directly from this repository (no pypi wheels yet!):
+* All package versions are recorded and kept up-to-date in the `environment/` directory. If you encounter issues, check these files for the exact versions used in this code. Further instructions are found in the directory's `README.md`.
+* All packages were installed and used on a Linux x86-64 system with Nvida GPUs. Using this code on Windows or Mac OSX is not supported.
+* This environment is managed by [`mamba`](https://github.com/mamba-org/mamba), which wraps `anaconda`. `mamba` requires that no packages come from the `defaults` anaconda channel (see <https://mamba.readthedocs.io/en/latest/user_guide/troubleshooting.html#using-the-defaults-channels> for details). All anaconda packages come from the following anaconda channels:
+  * `conda-forge`
+  * `pytorch`
+  * `nvidia`
+  * `simpleitk`
+  * `mrtrix3`
+  * `nodefaults` (simply excludes the `defaults` channel)
+* Various packages conflict between `anaconda` and pypi, and there's no great way to resolve this problem. Generally, you should install `anaconda` packages first, then `pip install` packages from pypi, handling conflicts on a case-by-case basis.
+* The `jax` and `jaxlib` packages are installed with `pip`, but are hosted on Google's repositories. So, installing from the `requirements.txt` will usually fail. See the `jax` installation docs at <https://jax.readthedocs.io/en/latest/installation.html#pip-installation-gpu-cuda-installed-via-pip-easier> for details on installing `jax` and `jaxlib`.
+
+
+### Package Installation
+
+To install as a python package, install directly from this repository:
 
 ```bash
-pip install git+ssh://git@github.com/TylerSpears/pitn.git
+pip install git+ssh://git@github.com/TylerSpears/fenri.git
 ```
 
 To install an editable version for development:
@@ -34,31 +53,13 @@ To install an editable version for development:
 pip install -e .
 ```
 
-## Environment Variables
+## Directory Structure
 
-Several configuration options in the form of environment variables are used in this code.
-In particular, env vars that define directories are needed to properly locate data
-and write results. For example, the `DATA_DIR`, `WRITE_DATA_DIR`, and `RESULTS_DIR`
-all designate directories for reading and writing.
 
-It is recommended that these variables be stored in a `.env` file. For convenience, you
-may want to set up [`direnv`](<https://direnv.net/>) for automatic variable loading. Your
-`.env` file should be specific to your system and may contain sensitive data or keys, so
-it is explicitly *not* version-controlled.
 
-See the `.env.template` file for all env vars and example values, and for a starting
-point for your own `.env` file.
+## Misc. Notes
 
-# Developers
-
-## Installing Packages
-
-Installing new python packages to the conda environment requires the following anaconda
-channels:
-
-- `pytorch`
-- `conda-forge`
-- `nvidia`
+### Installing Packages
 
 When installing a new python package, always use [`mamba`](https://github.com/mamba-org/mamba)
 for installation; this will save you so much time and effort. For example:
@@ -76,48 +77,3 @@ a git repository, then use `pip`:
 pip install ipyvolume
 ```
 
-## pre-commit Hooks
-
-This repository relies on [`pre-commit`](<https://pre-commit.com/>) to run basic cleanup
-and linting utilities before a commit can be made. Hooks are defined in the
-`.pre-commit-config.yaml` file. To set up pre-commit hooks:
-
-```bash
-# If pre-commit is not already in your conda environment
-mamba install -c conda-forge pre-commit
-pre-commit install
-# (Optional) run against all files
-pre-commit run --all-files
-```
-
-## git Filters
-
-The [`nbstripout`](<https://github.com/kynan/nbstripout>) application is set up as
-a git repository filter that strips jupyter/ipython notebooks (*.ipynb files) of output
-and metadata. Install `nbstripout` with:
-
-```bash
-# If not installed in your conda env already
-mamba install -c conda-forge nbstripout
-nbstripout --install --attributes .gitattributes
-```
-
-You may also install `nbstripout` as a `pre-commit` hook (see <https://github.com/kynan/nbstripout#using-nbstripout-as-a-pre-commit-hook>),
-but this causes your local working version to be stripped of output.
-
-You may selectively keep cell outputs in jupyter itself by tagging a cell with the
-`keep_output` tag. See <https://github.com/kynan/nbstripout#keeping-some-output> for
-details.
-
-## Docker Containers
-
-This project contains many custom-made `Dockerfile`s, found in the `docker/` directory.
-Most of these container definitions assume that you have an nvidia GPU installed and
-configured, with an up-to-date version of
-[`nvidia-container-runtime`](<https://github.com/NVIDIA/nvidia-container-runtime>) installed.
-
-Using the `run.sh` scripts for any GUI-based containers also requires
-[`x11docker`](<https://github.com/mviereck/x11docker>).
-
-Do **not** run these containers/scripts if security is a concern to you, these were not
-developed with security practices in mind.
