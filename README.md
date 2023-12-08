@@ -59,51 +59,55 @@ pip install -e .
 
 This repository has the following top-level directory layout:
 
-`./` ## Project root
-├── `README.md`
-├── `notebooks/` ## Notebooks and scripts for training, testing, and results analysis
-├── `environment/` ## Detailed specs for package versions
-├── `pitn/` ## Python package containing data loading/processing, metrics, etc.
-├── `results/` ## Experiment results directory; contents not tracked by git
-├── `sources/` ## Projects and sub-modules referenced in this project repository
-├── `docker/` ## Directory for any auxilary custom docker containers
-├── `tests/` ## Unit test scripts run by `pytest`
-├── `pitn.txt` ## Anaconda environment package specs
-├── `requirements.txt` ## Pypi-installed package specs
-└── `pip_constraints.txt` ## Constraints on pypi packages to help (slightly) differences between conda and pip
+```bash
+./ ## Project root
+├── README.md
+├── notebooks/ ## Notebooks and scripts for training, testing, and results analysis
+├── environment/ ## Detailed specs for package versions
+├── pitn/ ## Python package containing data loading/processing, metrics, etc.
+├── results/ ## Experiment results directory; contents not tracked by git
+├── sources/ ## Projects and sub-modules referenced in this project repository
+├── docker/ ## Directory for any auxilary custom docker containers
+├── tests/ ## Unit test scripts run by `pytest`
+├── pitn.txt ## Anaconda environment package specs
+├── requirements.txt ## Pypi-installed package specs
+└── pip_constraints.txt ## Constraints on pypi packages to help (slightly) differences between conda and pip
+```
 
 ## Notebooks
 
 While the `pitn` local package contains helper functions and classes, the actual training and testing of model code is in `notebooks/`. This directory is laid out as follows:
 
-`notebooks/`
-├── `continuous_sr/` ## Contains ODF prediction models
-│   ├── `fenri.py` ## FENRI training script
-│   ├── `inr_networks.py` ## FENRI and Fixed-Net network class definitions
-│   ├── `test_fenri_native-res.py` ## Test FENRI on native image resolution
-│   ├── `test_fenri_super-res.py` ## Predict ODF at arbitrary resolution with FENRI
-│   └── `baselines/` ## Comparison and baseline model scripts
-│       ├── `train_fixed_net.py` ## Fixed-Net training script
-│       ├── `test_fixed_net.py` ## Fixed-Net native-resolution testing script
-│       └── `batch_test_trilinear-dwi.py` ## Trilinear-DWI testing script
-├── `tractography/`
-│   └── `trax.py` ## Perform tractography with FENRI or trilinear interp on GPU or CPU
-├── `preprocessing/` ## Data preprocessing scripts
-│   ├── `fit_odf_hcp2.sh` ## Script for creating ODF SH images from HCP data
-│   └── `fit_odf_ismrm-2015-sims.sh` ## Script for creating ODF SH images from ISMRM-sim data
-├── `data_analysis/` ## Scripts and notebooks for analysing prediction results
-│   ├── `hcp/` ## Directory for results on HCP data
-│   │   ├── `quant_analysis.ipynb` ## Quantitative voxel-wise metrics on HCP ODF predictions
-│   │   └── `qualitative_viz_529549/` ## Qualitative results on a particular HCP subject
-│   ├── `ismrm_sim/` ## Directory for results on ISMRM-sim data
-│   │   ├── `scilpy_score_bundle_as_tracto.py` ## Helper script that calls scilpy bundle rating script
-│   │   ├── `config_score_tractogram.json` ## Config file for scilpy scoring
-│   │   └── `bundle_rating_analysis.ipynb` ## Notebook to compile scilpy bundle rating scores
-│   ├── `figs/` ## Result figs location
-│   └── `figs.ipynb` ## Notebook to gather result files and create final figures
-├── `data/` ## Directory for scripts and notebooks pertaining to data generation
-│   └── `ISMRM-sim/` ## Directory for creating ISMRM-sim dataset; see directory README.md for more info
-└── `sandbox/` ## Testing directory, not tracked by git
+```bash
+notebooks/
+├── continuous_sr/ ## Contains ODF prediction models
+│   ├── fenri.py ## FENRI training script
+│   ├── inr_networks.py ## FENRI and Fixed-Net network class definitions
+│   ├── test_fenri_native-res.py ## Test FENRI on native image resolution
+│   ├── test_fenri_super-res.py ## Predict ODF at arbitrary resolution with FENRI
+│   └── baselines/ ## Comparison and baseline model scripts
+│       ├── train_fixed_net.py ## Fixed-Net training script
+│       ├── test_fixed_net.py ## Fixed-Net native-resolution testing script
+│       └── batch_test_trilinear-dwi.py ## Trilinear-DWI testing script
+├── tractography/
+│   └── trax.py ## Perform tractography with FENRI or trilinear interp on GPU or CPU
+├── preprocessing/ ## Data preprocessing scripts
+│   ├── fit_odf_hcp2.sh ## Script for creating ODF SH images from HCP data
+│   └── fit_odf_ismrm-2015-sims.sh ## Script for creating ODF SH images from ISMRM-sim data
+├── data_analysis/ ## Scripts and notebooks for analysing prediction results
+│   ├── hcp/ ## Directory for results on HCP data
+│   │   ├── quant_analysis.ipynb ## Quantitative voxel-wise metrics on HCP ODF predictions
+│   │   └── qualitative_viz_529549/ ## Qualitative results on a particular HCP subject
+│   ├── ismrm_sim/ ## Directory for results on ISMRM-sim data
+│   │   ├── scilpy_score_bundle_as_tracto.py ## Helper script that calls scilpy bundle rating script
+│   │   ├── config_score_tractogram.json ## Config file for scilpy scoring
+│   │   └── bundle_rating_analysis.ipynb ## Notebook to compile scilpy bundle rating scores
+│   ├── figs/ ## Result figs location
+│   └── figs.ipynb ## Notebook to gather result files and create final figures
+├── data/ ## Directory for scripts and notebooks pertaining to data generation
+│   └── ISMRM-sim/ ## Directory for creating ISMRM-sim dataset; see directory README.md for more info
+└── sandbox/ ## Testing directory, not tracked by git
+```
 
 ## Misc. Notes
 
