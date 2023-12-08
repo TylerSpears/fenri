@@ -2,6 +2,14 @@
 
 This is the official project repository for FENRI - Fiber Orientations from Explicit Neural Representations. Model implementations are in Pytorch, with some jax functions used to fill in implementation gaps in the pytorch library.
 
+Project Links:
+
+Main FENRI Project Page: <https://osf.io/dvnxw/>
+
+Github Repo: <https://github.com/TylerSpears/fenri>
+
+ISMRM-sim Simulated DWI Dataset: <https://dataverse.lib.virginia.edu/dataset.xhtml?persistentId=doi:10.18130/V3/TJ2K5L>
+
 ## Environment Installation
 
 ### Quickstart
