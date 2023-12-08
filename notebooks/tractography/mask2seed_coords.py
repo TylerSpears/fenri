@@ -36,11 +36,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # args = Box()
-    # args.mask = Path("tmp_result/173536_seed_mask.nii.gz")
-    # args.seeds_per_vox = 2
-    # args.output_seeds = Path("tmp_result/seed_mask_points.csv")
-
     mask_im = nib.load(args.mask)
 
     mask = torch.from_numpy(mask_im.get_fdata().astype(bool))
