@@ -1,1 +1,0 @@
-mri_normalize -gentle -nosnr -n 1

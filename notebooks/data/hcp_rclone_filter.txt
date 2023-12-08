@@ -9,4 +9,5 @@
 + aparc*
 + wmparc*
 + Diffusion/**
++ Diffusion_7T/**
 - *
