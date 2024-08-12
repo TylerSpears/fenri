@@ -1,8 +1,10 @@
 # FENRI - Fiber Orientations from Explicit Neural Representations Project Code
 
-This is the official project repository for FENRI - Fiber Orientations from Explicit Neural Representations. Model implementations are in Pytorch, with some jax functions used to fill in implementation gaps in the pytorch library.
+This is the official project repository for FENRI - Fiber Orientations from Explicit Neural Representations, presented at ISBI 2024. Model implementations are in Pytorch, with some jax functions used to fill in implementation gaps in the pytorch library.
 
 Project Links:
+
+Arxiv Preprint: <https://arxiv.org/abs/2312.05721>
 
 Main FENRI Project Page: <https://osf.io/dvnxw/>
 
